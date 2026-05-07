@@ -22,18 +22,33 @@ def format_value(x):
 def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
     asset: Articulation = env.scene["robot"]
     joint_sdk_names = env.cfg.scene.robot.joint_sdk_names
-    joint_ids_map, _ = resolve_matching_names(asset.data.joint_names, joint_sdk_names, preserve_order=True)
+
+    # Filter asset joints to those declared in joint_sdk_names. Joints absent from
+    # the SDK ordering (e.g. Inspire hand joints on a separate USB-serial bus) are
+    # not deployed via DDS motor commands and must be excluded from the deploy map.
+    sdk_joint_set = set(n for n in joint_sdk_names if n)
+    deployable_indices = [i for i, n in enumerate(asset.data.joint_names) if n in sdk_joint_set]
+    deployable_joints = [asset.data.joint_names[i] for i in deployable_indices]
+
+    joint_ids_map, _ = resolve_matching_names(deployable_joints, joint_sdk_names, preserve_order=True)
 
     cfg = {}  # noqa: SIM904
     cfg["joint_ids_map"] = joint_ids_map
     cfg["step_dt"] = env.cfg.sim.dt * env.cfg.decimation
+
+    stiffness_full = asset.data.default_joint_stiffness[0].detach().cpu().numpy()
+    damping_full = asset.data.default_joint_damping[0].detach().cpu().numpy()
+    pos_full = asset.data.default_joint_pos[0].detach().cpu().numpy()
+
     stiffness = np.zeros(len(joint_sdk_names))
-    stiffness[joint_ids_map] = asset.data.default_joint_stiffness[0].detach().cpu().numpy().tolist()
+    stiffness[joint_ids_map] = stiffness_full[deployable_indices].tolist()
     cfg["stiffness"] = stiffness.tolist()
+
     damping = np.zeros(len(joint_sdk_names))
-    damping[joint_ids_map] = asset.data.default_joint_damping[0].detach().cpu().numpy().tolist()
+    damping[joint_ids_map] = damping_full[deployable_indices].tolist()
     cfg["damping"] = damping.tolist()
-    cfg["default_joint_pos"] = asset.data.default_joint_pos[0].detach().cpu().numpy().tolist()
+
+    cfg["default_joint_pos"] = pos_full[deployable_indices].tolist()
 
     # --- commands ---
     cfg["commands"] = {}
@@ -57,23 +72,18 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
             term_cfg.scale = [term_cfg.scale for _ in range(action_term.action_dim)]
         else:  # dict
             term_cfg.scale = action_term._scale[0].detach().cpu().numpy().tolist()
-
         if term_cfg.clip is not None:
             term_cfg.clip = action_term._clip[0].detach().cpu().numpy().tolist()
-
         if action_name in ["JointPositionAction", "JointVelocityAction"]:
             if term_cfg.use_default_offset:
                 term_cfg.offset = action_term._offset[0].detach().cpu().numpy().tolist()
             else:
                 term_cfg.offset = [0.0 for _ in range(action_term.action_dim)]
-
         # clean cfg
         term_cfg = term_cfg.to_dict()
-
         for _ in ["class_type", "asset_name", "debug_vis", "preserve_order", "use_default_offset"]:
             del term_cfg[_]
         cfg["actions"][action_name] = term_cfg
-
         if action_term._joint_ids == slice(None):
             cfg["actions"][action_name]["joint_ids"] = None
         else:
@@ -99,7 +109,6 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
             term_cfg.clip = list(term_cfg.clip)
         if term_cfg.history_length == 0:
             term_cfg.history_length = 1
-
         # clean cfg
         term_cfg = term_cfg.to_dict()
         for _ in ["func", "modifiers", "noise", "flatten_history_dim"]:

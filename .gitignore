@@ -73,3 +73,21 @@ datasets
 
 # Mimic
 *.npz
+
+# Local portability backups
+*.preportable-bak
+
+# Training outputs (machine-specific)
+logs/
+
+# Pycache (regenerates)
+__pycache__/
+*.pyc
+
+# Wandb local artifacts
+wandb/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp

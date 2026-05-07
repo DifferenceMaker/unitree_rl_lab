@@ -56,8 +56,10 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+# Stubbed: this module moved/renamed in current IsaacLab and we don't use pretrained checkpoints
+def get_published_pretrained_checkpoint(*args, **kwargs):
+    return None
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg, export_policy_as_jit, export_policy_as_onnx
 from isaaclab_tasks.utils import get_checkpoint_path
 
 import unitree_rl_lab.tasks  # noqa: F401
@@ -74,6 +76,18 @@ def main():
         use_fabric=not args_cli.disable_fabric,
         entry_point_key="play_env_cfg_entry_point",
     )
+
+    # Disable non-timeout terminations during playback so robots keep stepping
+    # even after they would normally fall. Lets us watch the full behavior pattern
+    # rather than restarting every ~3-50 steps. Time-out termination is preserved
+    # so episodes do eventually loop.
+    if hasattr(env_cfg, "terminations"):
+        for term_name in list(env_cfg.terminations.__dict__.keys()):
+            term = getattr(env_cfg.terminations, term_name)
+            if term is not None and getattr(term, "time_out", False) is False:
+                setattr(env_cfg.terminations, term_name, None)
+        # Also stretch the episode so timeouts come less often
+        env_cfg.episode_length_s = 60.0
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments
@@ -117,6 +131,7 @@ def main():
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if not hasattr(agent_cfg, "class_name") or agent_cfg.class_name == "OnPolicyRunner":
+        agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, version("rsl-rl-lib"))
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
         from rsl_rl.runners import DistillationRunner
@@ -135,8 +150,12 @@ def main():
         # version 2.3 onwards
         policy_nn = runner.alg.policy
     except AttributeError:
-        # version 2.2 and below
-        policy_nn = runner.alg.actor_critic
+        try:
+            # version 2.2 and below
+            policy_nn = runner.alg.actor_critic
+        except AttributeError:
+            # rsl-rl 5.0+: actor and critic are separate top-level attrs.
+            policy_nn = runner.alg.actor
 
     # extract the normalizer
     if hasattr(policy_nn, "actor_obs_normalizer"):
@@ -148,8 +167,11 @@ def main():
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    try:
+        export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
+        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    except (ValueError, AttributeError) as e:
+        print(f"[WARNING] Policy export skipped (rsl-rl 5.0+ exporter incompatibility): {e}")
 
     dt = env.unwrapped.step_dt
 

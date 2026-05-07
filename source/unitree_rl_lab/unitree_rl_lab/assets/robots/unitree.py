@@ -715,3 +715,98 @@ for a in UNITREE_G1_29DOF_MIMIC_CFG.actuators.values():
     for n in names:
         if n in e and n in s and s[n]:
             UNITREE_G1_29DOF_MIMIC_ACTION_SCALE[n] = 0.25 * e[n] / s[n]
+
+
+
+
+UNITREE_H1_2_CFG = UnitreeArticulationCfg(
+    spawn=UnitreeUrdfFileCfg(
+        asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2.urdf"),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 1.05),
+        joint_pos={
+            ".*_hip_pitch_joint": -0.16,
+            ".*_knee_joint": 0.36,
+            ".*_ankle_pitch_joint": -0.2,
+            ".*_ankle_roll_joint": 0.0,
+            ".*_shoulder_pitch_joint": 0.4,
+            ".*_elbow_pitch_joint": 0.3,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    actuators={
+        "hip": IdealPDActuatorCfg(
+            joint_names_expr=[".*_hip_yaw_joint", ".*_hip_roll_joint", ".*_hip_pitch_joint"],
+            effort_limit=200.0, velocity_limit=23.0,
+            stiffness=200.0, damping=2.5, armature=0.01,
+        ),
+        "knee": IdealPDActuatorCfg(
+            joint_names_expr=[".*_knee_joint"],
+            effort_limit=300.0, velocity_limit=14.0,
+            stiffness=300.0, damping=4.0, armature=0.01,
+        ),
+        "ankle": IdealPDActuatorCfg(
+            joint_names_expr=[".*_ankle_.*"],
+            effort_limit=60.0, velocity_limit=9.0,
+            stiffness=40.0, damping=2.0, armature=0.01,
+        ),
+        "torso": IdealPDActuatorCfg(
+            joint_names_expr=["torso_joint"],
+            effort_limit=200.0, velocity_limit=23.0,
+            stiffness=300.0, damping=6.0, armature=0.01,
+        ),
+        "shoulder_strong": IdealPDActuatorCfg(
+            joint_names_expr=[".*_shoulder_pitch_joint", ".*_shoulder_roll_joint"],
+            effort_limit=40.0, velocity_limit=9.0,
+            stiffness=100.0, damping=2.0, armature=0.01,
+        ),
+        "shoulder_yaw_elbow": IdealPDActuatorCfg(
+            joint_names_expr=[".*_shoulder_yaw_joint", ".*_elbow_pitch_joint"],
+            effort_limit=18.0, velocity_limit=20.0,
+            stiffness=50.0, damping=2.0, armature=0.01,
+        ),
+        "wrist": IdealPDActuatorCfg(
+            joint_names_expr=[".*_elbow_roll_joint", ".*_wrist_.*"],
+            effort_limit=19.0, velocity_limit=20.0,
+            stiffness=50.0, damping=2.0, armature=0.01,
+        ),
+        "hands": IdealPDActuatorCfg(
+            joint_names_expr=["[LR]_.*"],
+            effort_limit=5.0, velocity_limit=20.0,
+            stiffness=10.0, damping=0.5, armature=0.001,
+        ),
+    },
+    joint_sdk_names=[
+        # Body joints — SDK indices 0..26 from unitree_sdk2_python H1_2_JointIndex
+        "left_hip_yaw_joint",        # 0
+        "left_hip_pitch_joint",      # 1
+        "left_hip_roll_joint",       # 2
+        "left_knee_joint",           # 3
+        "left_ankle_pitch_joint",    # 4
+        "left_ankle_roll_joint",     # 5
+        "right_hip_yaw_joint",       # 6
+        "right_hip_pitch_joint",     # 7
+        "right_hip_roll_joint",      # 8
+        "right_knee_joint",          # 9
+        "right_ankle_pitch_joint",   # 10
+        "right_ankle_roll_joint",    # 11
+        "torso_joint",               # 12  (SDK: WaistYaw)
+        "left_shoulder_pitch_joint", # 13
+        "left_shoulder_roll_joint",  # 14
+        "left_shoulder_yaw_joint",   # 15
+        "left_elbow_pitch_joint",    # 16  (URDF: 2-DoF elbow; this is flexion)
+        "left_elbow_roll_joint",     # 17  (URDF: forearm rotation; SDK calls this WristRoll)
+        "left_wrist_pitch_joint",    # 18
+        "left_wrist_yaw_joint",      # 19
+        "right_shoulder_pitch_joint",# 20
+        "right_shoulder_roll_joint", # 21
+        "right_shoulder_yaw_joint",  # 22
+        "right_elbow_pitch_joint",   # 23
+        "right_elbow_roll_joint",    # 24
+        "right_wrist_pitch_joint",   # 25
+        "right_wrist_yaw_joint",     # 26
+        # SDK reserved kNotUsedJoint0..7 — H1_2_Num_Motors=35 total
+        "", "", "", "", "", "", "", "",
+    ],
+)

@@ -223,3 +223,27 @@ def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joint
         )
     reward *= 1 / len(mirror_joints) if len(mirror_joints) > 0 else 0
     return reward
+
+def stance_bonus(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg",
+    std: float = 0.15,
+) -> "torch.Tensor":
+    """Positive bonus for joint positions near default pose.
+
+    Returns exp(-||pos - default||^2 / std^2) per env. Bonus ~1.0 at default,
+    falls off rapidly with deviation. Use POSITIVE weight in RewardsCfg.
+    Distinct from joint_deviation_l1 (penalty) — this creates an active
+    gradient pulling the policy toward default pose.
+    """
+    asset = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None or (isinstance(joint_ids, slice) and joint_ids == slice(None)):
+        current = asset.data.joint_pos
+        default = asset.data.default_joint_pos
+    else:
+        current = asset.data.joint_pos[:, joint_ids]
+        default = asset.data.default_joint_pos[:, joint_ids]
+    deviation = current - default
+    sq_dist = torch.sum(deviation * deviation, dim=-1)
+    return torch.exp(-sq_dist / (std * std))

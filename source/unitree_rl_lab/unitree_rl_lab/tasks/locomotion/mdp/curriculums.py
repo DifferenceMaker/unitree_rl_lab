@@ -59,3 +59,43 @@ def ang_vel_cmd_levels(
             ).tolist()
 
     return torch.tensor(ranges.ang_vel_z[1], device=env.device)
+
+
+def push_velocity_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    event_term_name: str = "push_robot",
+    warmup_steps: int = 6000,
+    hold_steps: int = 5000,
+    levels: tuple = (0.30, 0.51, 0.72, 0.94, 1.15, 1.36, 1.57, 1.79, 2.00),
+) -> "torch.Tensor":
+    """Stepwise push velocity curriculum.
+ 
+    Holds at levels[0] for `warmup_steps`, then advances one level every
+    `hold_steps`. Once the highest level is reached, stays there.
+ 
+    All thresholds are in env.common_step_counter ticks.
+    With num_steps_per_env=24, 1 PPO iteration = 24 ticks.
+    Defaults: 6000 warmup steps (~250 iters), 5000 hold steps per level
+    (~208 iters/level), 9 levels = ~1900 iters total to reach 2.0 m/s.
+ 
+    Returns the current push velocity (x-axis upper bound) for logging.
+    """
+    step = env.common_step_counter
+ 
+    if step < warmup_steps:
+        target_vel = float(levels[0])
+    else:
+        # How many holds have elapsed since warmup ended
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(levels) - 1)
+        target_vel = float(levels[level_idx])
+ 
+    event_term = env.event_manager.get_term_cfg(event_term_name)
+    event_term.params["velocity_range"] = {
+        "x": (-target_vel, target_vel),
+        "y": (-target_vel, target_vel),
+    }
+ 
+    return torch.tensor(target_vel, device=env.device)
+ 
