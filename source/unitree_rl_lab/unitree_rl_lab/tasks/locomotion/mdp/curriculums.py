@@ -99,3 +99,60 @@ def push_velocity_curriculum(
  
     return torch.tensor(target_vel, device=env.device)
  
+# ============================================================
+# ADDITIONS to curriculums.py for arm curriculum (option I).
+# Append these to the existing curriculums.py — do NOT replace the file.
+# ============================================================
+
+
+def arm_amplitude_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 8000,
+    amplitude_levels: tuple = (0.05, 0.10, 0.20, 0.35, 0.50, 0.70),
+    resample_period_levels: tuple = (4.0, 4.0, 3.0, 2.0, 1.5, 1.0),
+) -> "torch.Tensor":
+    """Stepwise arm amplitude + resample period curriculum.
+
+    Holds at level 0 for `warmup_steps` (~250 iters at 4096 envs with
+    24 steps/iter), then advances one level every `hold_steps`.
+
+    Each level configures both:
+      - amplitude: max deviation in radians from default joint position
+        (e.g., 0.05 ~ 3 degrees, 0.70 ~ 40 degrees)
+      - resample_period_s: how often the target changes (lower = more
+        continuous motion, higher = more held poses)
+
+    The two arrays must be the same length. Levels progress together —
+    higher amplitude pairs with shorter resample period, simulating
+    increasingly demanding arm motion.
+
+    Returns the current amplitude (rad) for logging.
+    """
+    if len(amplitude_levels) != len(resample_period_levels):
+        raise ValueError(
+            f"amplitude_levels and resample_period_levels must have the "
+            f"same length. Got {len(amplitude_levels)} and "
+            f"{len(resample_period_levels)}."
+        )
+
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(amplitude_levels) - 1)
+
+    target_amplitude = float(amplitude_levels[level_idx])
+    target_period = float(resample_period_levels[level_idx])
+
+    # Update the command term's cfg in place. The command term reads these
+    # values every step in _update_command and _resample_command.
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.amplitude = target_amplitude
+    command_term.cfg.resample_period_s = target_period
+
+    return torch.tensor(target_amplitude, device=env.device)

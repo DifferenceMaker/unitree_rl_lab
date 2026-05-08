@@ -246,4 +246,83 @@ def stance_bonus(
         default = asset.data.default_joint_pos[:, joint_ids]
     deviation = current - default
     sq_dist = torch.sum(deviation * deviation, dim=-1)
+    return torch.exp(-sq_dist / (std * std))# ============================================================
+# ADDITIONS to rewards.py for arm curriculum (option I).
+# Append these to the existing rewards.py — do NOT replace the file.
+# ============================================================
+
+
+def arm_target_tracking(
+    env: "ManagerBasedRLEnv",
+    command_name: str,
+    asset_cfg: "SceneEntityCfg",
+    std: float = 0.20,
+) -> "torch.Tensor":
+    """Reward tracking the commanded arm joint pose.
+
+    Returns exp(-||target - actual||^2 / std^2) per env, in [0, 1].
+    Peaks at 1.0 when the arm joint positions match the command exactly,
+    falls off as deviation grows. Use POSITIVE weight in RewardsCfg.
+
+    The std parameter controls how forgiving the reward is. std=0.20 rad
+    means the reward is ~0.78 when each joint is off by 0.10 rad on
+    average, and ~0.37 when each is off by 0.20 rad. With 14 joints,
+    the squared-distance scales accordingly so std should be set
+    relative to expected per-joint error.
+    """
+    asset = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None or (isinstance(joint_ids, slice) and joint_ids == slice(None)):
+        actual = asset.data.joint_pos
+    else:
+        actual = asset.data.joint_pos[:, joint_ids]
+
+    # The command is the absolute target arm pose
+    target = env.command_manager.get_command(command_name)
+
+    deviation = actual - target
+    sq_dist = torch.sum(deviation * deviation, dim=-1)
     return torch.exp(-sq_dist / (std * std))
+
+
+def body_lin_vel_xy_l2(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg" = None,
+) -> "torch.Tensor":
+    """Penalize horizontal linear velocity of a specific body (not the base).
+
+    Used for torso (head proxy) stability. Returns sum of squared lin vel
+    components in world XY plane. Use NEGATIVE weight in RewardsCfg.
+
+    asset_cfg.body_ids must resolve to exactly one body — we use [:, body_id, :2]
+    to get xy components.
+    """
+    if asset_cfg is None:
+        from isaaclab.managers import SceneEntityCfg
+        asset_cfg = SceneEntityCfg("robot")
+    asset = env.scene[asset_cfg.name]
+    body_ids = asset_cfg.body_ids
+    # body_lin_vel_w shape: (num_envs, num_bodies, 3)
+    lin_vel_xy = asset.data.body_lin_vel_w[:, body_ids, :2]
+    # Sum over bodies (usually just one) and over xy components
+    return torch.sum(torch.sum(lin_vel_xy * lin_vel_xy, dim=-1), dim=-1)
+
+
+def body_ang_vel_l2(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg" = None,
+) -> "torch.Tensor":
+    """Penalize angular velocity of a specific body.
+
+    Used for torso (head proxy) stability — keep camera from rotating.
+    Returns sum of squared angular velocity over all axes. Use NEGATIVE
+    weight in RewardsCfg.
+    """
+    if asset_cfg is None:
+        from isaaclab.managers import SceneEntityCfg
+        asset_cfg = SceneEntityCfg("robot")
+    asset = env.scene[asset_cfg.name]
+    body_ids = asset_cfg.body_ids
+    # body_ang_vel_w shape: (num_envs, num_bodies, 3)
+    ang_vel = asset.data.body_ang_vel_w[:, body_ids, :]
+    return torch.sum(torch.sum(ang_vel * ang_vel, dim=-1), dim=-1)

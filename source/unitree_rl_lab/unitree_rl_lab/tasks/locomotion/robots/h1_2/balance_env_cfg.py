@@ -21,9 +21,17 @@ from unitree_rl_lab.assets.robots.unitree import UNITREE_H1_2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
 
 
+# Arm joint name regex — covers all 14 arm joints on H1-2.
+# Used by both the arm_pose_command term and the arm_target_tracking reward.
+ARM_JOINT_REGEX = [
+    ".*_shoulder_pitch.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*",
+    ".*_elbow.*", ".*_wrist.*",
+]
+
+
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
-    """Flat-ground scene for H1-2 pure-balance training."""
+    """Flat-ground scene for H1-2 balance + arm curriculum training."""
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -55,10 +63,8 @@ class RobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class EventCfg:
-    """Domain randomization and reset events. push_robot.velocity_range is
-    overridden each step by the push_velocity_curriculum term — the initial
-    value here is just the starting point at step 0.
-    """
+    """Domain randomization and reset events. Push is disabled in Phase A
+    (velocity_range is zero); Phase B re-enables it via curriculum."""
 
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
@@ -103,33 +109,41 @@ class EventCfg:
         },
     )
 
+    # PHASE A: push disabled (velocity_range zero). Phase B will re-enable
+    # via push_velocity_curriculum on a separate branch.
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
         interval_range_s=(8.0, 12.0),
-        params={"velocity_range": {"x": (-0.3, 0.3), "y": (-0.3, 0.3)}},
+        params={"velocity_range": {"x": (0.0, 0.0), "y": (0.0, 0.0)}},
     )
 
 
 @configclass
 class CurriculumCfg:
-    """Push velocity ramps stepwise from 0.3 to 2.0 m/s.
-    9 levels, ~200 iters per level. See curriculums.py for level values."""
+    """Phase A curriculum: arm motion amplitude only, no pushes.
 
-    push_velocity = CurrTerm(
-        func=mdp.push_velocity_curriculum,
+    Six amplitude levels expanding the random arm joint target range from
+    tiny (0.05 rad / ~3 degrees) up to full (0.70 rad / ~40 degrees).
+    Resample period also reduces, so arm targets change more frequently
+    at higher amplitudes (continuous motion vs. held poses).
+    """
+
+    arm_amplitude = CurrTerm(
+        func=mdp.arm_amplitude_curriculum,
         params={
-            "event_term_name": "push_robot",
-            "warmup_steps": 6000,        # ~250 iters
-            "hold_steps": 5000,           # ~208 iters per level
-            "levels": (0.30, 0.51, 0.72, 0.94, 1.15, 1.36, 1.57, 1.79, 2.00),
+            "command_term_name": "arm_pose_command",
+            "warmup_steps": 6000,             # ~250 iters at 4096 envs
+            "hold_steps": 8000,               # ~333 iters per amplitude level
+            "amplitude_levels": (0.05, 0.10, 0.20, 0.35, 0.50, 0.70),
+            "resample_period_levels": (4.0, 4.0, 3.0, 2.0, 1.5, 1.0),
         },
     )
 
 
 @configclass
 class CommandsCfg:
-    """Zero-command 'standing' velocity. Kept as a CommandTerm so the env builds cleanly."""
+    """Standing velocity command (zero) plus arm pose command for tracking."""
 
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
@@ -144,6 +158,17 @@ class CommandsCfg:
         limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
             lin_vel_x=(0.0, 0.0), lin_vel_y=(0.0, 0.0), ang_vel_z=(0.0, 0.0)
         ),
+    )
+
+    # NEW: arm pose command. Generates random arm joint targets each
+    # resample_period, scaled by amplitude (rad). Both are overridden by
+    # the arm_amplitude curriculum each step.
+    arm_pose_command = mdp.UniformArmPoseCommandCfg(
+        asset_name="robot",
+        joint_names=ARM_JOINT_REGEX,
+        amplitude=0.05,                # initial — overridden by curriculum
+        resample_period_s=4.0,         # initial — overridden by curriculum
+        debug_vis=False,
     )
 
 
@@ -167,6 +192,13 @@ class ObservationsCfg:
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
+        # NEW: commanded arm pose (14 dims). Tells the policy what arms
+        # should be tracking. Combined with joint_pos_rel (which contains
+        # actual arm positions), the policy can compute tracking error
+        # implicitly through its first hidden layer.
+        arm_pose_command = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
+        )
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -183,13 +215,20 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05)
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01)
         last_action = ObsTerm(func=mdp.last_action)
+        # NEW: critic gets the same arm command observation.
+        arm_pose_command = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
+        )
 
     critic: CriticCfg = CriticCfg()
 
 
 @configclass
 class RewardsCfg:
-    # Stand-still rewards (with command=0, these reward zero base velocity)
+    # ============================================================
+    # Existing balance rewards — kept as-is from v3_stance.
+    # ============================================================
+
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
         weight=1.0,
@@ -201,15 +240,11 @@ class RewardsCfg:
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
-    # alive bonus to keep the policy from learning to terminate quickly
     alive = RewTerm(func=mdp.is_alive, weight=20.0)
 
-    # base motion penalties (we want a still base — vertical motion still bad,
-    # since stepping is mostly horizontal lifting)
     base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
 
-    # action smoothness (prevents jittery motors)
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1e-6,
@@ -222,29 +257,16 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["left_.*", "right_.*", "torso_joint"])},
     )
 
-    # keep arms / torso near default pose
-    joint_deviation_arms = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-1.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[
-            ".*_shoulder_pitch.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*",
-            ".*_elbow.*", ".*_wrist.*",
-        ])},
-    )
     joint_deviation_torso = RewTerm(
         func=mdp.joint_deviation_l1, weight=-1.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["torso_joint"])},
     )
 
-    # WEAKENED: was -1.0, dropped to -0.3 to allow hip motion needed for
-    # hip strategy and stepping during recovery from larger pushes
     joint_deviation_hips = RewTerm(
         func=mdp.joint_deviation_l1, weight=-0.3,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
-    # stance recovery: positive bonus for being near default pose, scoped to
-    # legs+torso (where stance matters most). Tight std means only meaningful
-    # when actually close to default; creates active gradient toward ideal pose.
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
         weight=1.5,
@@ -257,11 +279,9 @@ class RewardsCfg:
         },
     )
 
-    # core balance signals
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
 
-    # contact penalty for non-foot collisions
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, weight=-1.0,
         params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg(
@@ -269,11 +289,40 @@ class RewardsCfg:
             body_names=["torso_link", ".*hip.*", ".*knee.*", ".*shoulder.*", ".*elbow.*"])},
     )
 
-    # REMOVED: feet_air_time. Was penalizing the very stepping recovery we
-    # need at higher push magnitudes. Anti-jumping is still enforced by
-    # base_linear_velocity (-2.0 on lin_vel_z) and base_height (-10.0 on
-    # height deviation), which prevent kangaroo-hopping without restricting
-    # brief foot lifts during stepping.
+    # ============================================================
+    # NEW for arm curriculum:
+    # ============================================================
+
+    # REPLACES joint_deviation_arms (was -1.0). Old reward penalized
+    # any arm deviation from default; now we positively reward tracking
+    # the COMMANDED arm pose. Gaussian: peaks at 1.0 when tracking is
+    # perfect, falls off with deviation. Std=0.20 rad means ~12 degrees
+    # of slack before reward decays significantly.
+    arm_target_tracking = RewTerm(
+        func=mdp.arm_target_tracking,
+        weight=5.0,
+        params={
+            "command_name": "arm_pose_command",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_REGEX),
+            "std": 0.20,
+        },
+    )
+
+    # NEW: head/camera stability proxies. H1-2 has no actuated head joint;
+    # head is rigidly mounted to torso_link, so penalizing torso linear
+    # and angular velocity is the proxy for "stable camera feed."
+    # Weighted heavier than base_* equivalents because head stability
+    # matters more than pelvis stability for our use case.
+    torso_lin_vel_xy = RewTerm(
+        func=mdp.body_lin_vel_xy_l2,
+        weight=-3.0,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
+    torso_ang_vel = RewTerm(
+        func=mdp.body_ang_vel_l2,
+        weight=-1.5,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
 
 
 @configclass
@@ -302,7 +351,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 60.0  # robot must stand indefinitely
+        self.episode_length_s = 60.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
@@ -314,4 +363,3 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.scene.num_envs = 32
