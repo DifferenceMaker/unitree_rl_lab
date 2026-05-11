@@ -248,9 +248,11 @@ class RewardsCfg:
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1e-6,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["left_.*", "right_.*", "torso_joint"])},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[
+            ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint",
+        ])},
     )
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.5)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.2)
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-5.0,
@@ -300,7 +302,7 @@ class RewardsCfg:
     # of slack before reward decays significantly.
     arm_target_tracking = RewTerm(
         func=mdp.arm_target_tracking,
-        weight=5.0,
+        weight=8.0,
         params={
             "command_name": "arm_pose_command",
             "asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_REGEX),
