@@ -326,3 +326,29 @@ def body_ang_vel_l2(
     # body_ang_vel_w shape: (num_envs, num_bodies, 3)
     ang_vel = asset.data.body_ang_vel_w[:, body_ids, :]
     return torch.sum(torch.sum(ang_vel * ang_vel, dim=-1), dim=-1)
+
+
+def action_rate_l2_scoped(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg" = None,
+) -> "torch.Tensor":
+    """Penalize action change rate, scoped to specific joint indices.
+
+    Differs from isaaclab.envs.mdp.action_rate_l2 by accepting an
+    asset_cfg whose resolved joint_ids map to specific action dimensions.
+    Used to penalize smoothness on legs+torso only, leaving arms free
+    to make large motions for tracking.
+    """
+    if asset_cfg is None:
+        from isaaclab.managers import SceneEntityCfg
+        asset_cfg = SceneEntityCfg("robot")
+
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None:
+        return torch.sum(
+            torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1
+        )
+
+    action = env.action_manager.action[:, joint_ids]
+    prev_action = env.action_manager.prev_action[:, joint_ids]
+    return torch.sum(torch.square(action - prev_action), dim=1)

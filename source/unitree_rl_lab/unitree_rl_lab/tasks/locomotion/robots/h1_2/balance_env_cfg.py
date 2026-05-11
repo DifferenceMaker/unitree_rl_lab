@@ -133,10 +133,10 @@ class CurriculumCfg:
         func=mdp.arm_amplitude_curriculum,
         params={
             "command_term_name": "arm_pose_command",
-            "warmup_steps": 6000,             # ~250 iters at 4096 envs
-            "hold_steps": 8000,               # ~333 iters per amplitude level
-            "amplitude_levels": (0.05, 0.10, 0.20, 0.35, 0.50, 0.70),
-            "resample_period_levels": (4.0, 4.0, 3.0, 2.0, 1.5, 1.0),
+            "warmup_steps": 6000,
+            "hold_steps": 12000,
+            "amplitude_levels": (0.05, 0.10, 0.20, 0.35, 0.50),
+            "resample_period_levels": (4.0, 4.0, 3.0, 2.0, 1.5),
         },
     )
 
@@ -252,7 +252,13 @@ class RewardsCfg:
             ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint",
         ])},
     )
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.2)
+    action_rate = RewTerm(
+        func=mdp.action_rate_l2_scoped,
+        weight=-0.5,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[
+            ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint",
+        ])},
+    )
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-5.0,
@@ -306,7 +312,7 @@ class RewardsCfg:
         params={
             "command_name": "arm_pose_command",
             "asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_REGEX),
-            "std": 0.20,
+            "std": 0.50,
         },
     )
 
