@@ -135,7 +135,7 @@ class CurriculumCfg:
         params={
             "command_term_name": "arm_pose_command",
             "warmup_steps": 6000,
-            "hold_steps": 75000,                       # ~3125 iters per level
+            "hold_steps": 24000,
             "amplitude_levels": (0.0, 0.5, 1.0, 1.5),
         },
     )
