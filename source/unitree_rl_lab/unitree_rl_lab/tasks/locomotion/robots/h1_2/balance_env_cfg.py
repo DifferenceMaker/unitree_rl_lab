@@ -21,8 +21,13 @@ from unitree_rl_lab.assets.robots.unitree import UNITREE_H1_2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
 
 
-# Arm joint name regex — covers all 14 arm joints on H1-2.
-# Used by both the arm_pose_command term and the arm_target_tracking reward.
+# Action space restricted to legs+torso (13 joints). Arms are commanded
+# externally by the arm_pose_command term via apply_directly=True.
+LEGS_TORSO_JOINT_REGEX = [
+    ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint",
+    "torso_joint",
+]
+# All 14 arm joints, for observation and external command
 ARM_JOINT_REGEX = [
     ".*_shoulder_pitch.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*",
     ".*_elbow.*", ".*_wrist.*",
@@ -31,7 +36,7 @@ ARM_JOINT_REGEX = [
 
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
-    """Flat-ground scene for H1-2 balance + arm curriculum training."""
+    """Flat-ground scene for H1-2 option (ii) Phase 1 training."""
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -63,8 +68,11 @@ class RobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class EventCfg:
-    """Domain randomization and reset events. Push is disabled in Phase A
-    (velocity_range is zero); Phase B re-enables it via curriculum."""
+    """Domain randomization and reset events.
+
+    No special arm-command event — option (ii) Phase 1 has the command
+    term itself write arm joint targets to sim (via apply_directly=True).
+    """
 
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
@@ -109,8 +117,7 @@ class EventCfg:
         },
     )
 
-    # PHASE A: push disabled (velocity_range zero). Phase B will re-enable
-    # via push_velocity_curriculum on a separate branch.
+    # Phase A scope: pushes disabled
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
@@ -121,29 +128,22 @@ class EventCfg:
 
 @configclass
 class CurriculumCfg:
-    """Phase A curriculum: arm motion amplitude only, no pushes.
+    """Option (ii) Phase 1 curriculum: shoulder_pitch amplitude ramps."""
 
-    Six amplitude levels expanding the random arm joint target range from
-    tiny (0.05 rad / ~3 degrees) up to full (0.70 rad / ~40 degrees).
-    Resample period also reduces, so arm targets change more frequently
-    at higher amplitudes (continuous motion vs. held poses).
-    """
-
-    arm_amplitude = CurrTerm(
-        func=mdp.arm_amplitude_curriculum,
+    arm_pose = CurrTerm(
+        func=mdp.arm_pose_curriculum_phase1,
         params={
             "command_term_name": "arm_pose_command",
             "warmup_steps": 6000,
-            "hold_steps": 12000,
-            "amplitude_levels": (0.05, 0.10, 0.20, 0.35, 0.50),
-            "resample_period_levels": (4.0, 4.0, 3.0, 2.0, 1.5),
+            "hold_steps": 75000,                       # ~3125 iters per level
+            "amplitude_levels": (0.0, 0.5, 1.0, 1.5),
         },
     )
 
 
 @configclass
 class CommandsCfg:
-    """Standing velocity command (zero) plus arm pose command for tracking."""
+    """Standing velocity (zero) + bilateral shoulder pitch disturbance."""
 
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
@@ -160,23 +160,25 @@ class CommandsCfg:
         ),
     )
 
-    # NEW: arm pose command. Generates random arm joint targets each
-    # resample_period, scaled by amplitude (rad). Both are overridden by
-    # the arm_amplitude curriculum each step.
     arm_pose_command = mdp.UniformArmPoseCommandCfg(
         asset_name="robot",
-        joint_names=ARM_JOINT_REGEX,
-        amplitude=0.05,                # initial — overridden by curriculum
-        resample_period_s=4.0,         # initial — overridden by curriculum
+        all_arm_joint_names=ARM_JOINT_REGEX,
+        amplitude=0.0,                  # initial — overridden by curriculum
+        apply_directly=True,            # this is what makes option (ii) work
         debug_vis=False,
     )
 
 
 @configclass
 class ActionsCfg:
+    """Policy commands ONLY legs+torso (13 joints).
+
+    Arm joints get their targets from arm_pose_command (option ii).
+    """
+
     JointPositionAction = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=["left_.*", "right_.*", "torso_joint"],
+        joint_names=LEGS_TORSO_JOINT_REGEX,
         scale=0.25,
         use_default_offset=True,
     )
@@ -192,10 +194,9 @@ class ObservationsCfg:
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
-        # NEW: commanded arm pose (14 dims). Tells the policy what arms
-        # should be tracking. Combined with joint_pos_rel (which contains
-        # actual arm positions), the policy can compute tracking error
-        # implicitly through its first hidden layer.
+        # Policy still observes the commanded arm pose so it can anticipate
+        # the disturbance. Key signal: "arms are at +0.5 pitch this episode,
+        # CoM is forward, lean back to compensate."
         arm_pose_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
         )
@@ -215,7 +216,6 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05)
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01)
         last_action = ObsTerm(func=mdp.last_action)
-        # NEW: critic gets the same arm command observation.
         arm_pose_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
         )
@@ -225,9 +225,20 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    # ============================================================
-    # Existing balance rewards — kept as-is from v3_stance.
-    # ============================================================
+    """Rewards for option (ii) Phase 1: balance only, no arm tracking.
+
+    Removed from option (i):
+    - arm_target_tracking (policy not responsible for arms)
+
+    Reduced from option (i):
+    - stance_bonus_legs_torso 1.5 -> 0.5 (less rigid stance, more
+      flexibility for hip strategies under arm disturbance)
+
+    Action_rate naturally applies to the 13-dim action vector (legs+torso),
+    matching the action space.
+    Joint_acc scoped to legs+torso (no smoothness penalty on arms — they
+    are externally driven so policy isn't responsible for their acc).
+    """
 
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
@@ -245,24 +256,19 @@ class RewardsCfg:
     base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
 
+    # Action rate on the policy's 13-dim action vector (legs+torso only —
+    # action space is restricted, so unscoped action_rate_l2 is correct here)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.5)
+    # Joint acc — penalize only the joints we control
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1e-6,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[
-            ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint",
-        ])},
-    )
-    action_rate = RewTerm(
-        func=mdp.action_rate_l2_scoped,
-        weight=-0.5,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[
-            ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint",
-        ])},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEGS_TORSO_JOINT_REGEX)},
     )
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["left_.*", "right_.*", "torso_joint"])},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEGS_TORSO_JOINT_REGEX)},
     )
 
     joint_deviation_torso = RewTerm(
@@ -275,9 +281,10 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
+    # Reduced from 1.5 -> 0.5 (less rigid stance, allow hip-knee strategies)
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
-        weight=1.5,
+        weight=0.5,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[
                 ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint",
@@ -297,30 +304,7 @@ class RewardsCfg:
             body_names=["torso_link", ".*hip.*", ".*knee.*", ".*shoulder.*", ".*elbow.*"])},
     )
 
-    # ============================================================
-    # NEW for arm curriculum:
-    # ============================================================
-
-    # REPLACES joint_deviation_arms (was -1.0). Old reward penalized
-    # any arm deviation from default; now we positively reward tracking
-    # the COMMANDED arm pose. Gaussian: peaks at 1.0 when tracking is
-    # perfect, falls off with deviation. Std=0.20 rad means ~12 degrees
-    # of slack before reward decays significantly.
-    arm_target_tracking = RewTerm(
-        func=mdp.arm_target_tracking,
-        weight=8.0,
-        params={
-            "command_name": "arm_pose_command",
-            "asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_REGEX),
-            "std": 0.50,
-        },
-    )
-
-    # NEW: head/camera stability proxies. H1-2 has no actuated head joint;
-    # head is rigidly mounted to torso_link, so penalizing torso linear
-    # and angular velocity is the proxy for "stable camera feed."
-    # Weighted heavier than base_* equivalents because head stability
-    # matters more than pelvis stability for our use case.
+    # Head/camera stability — proxy via torso body since H1-2 has no head joint
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
         weight=-3.0,
@@ -331,6 +315,8 @@ class RewardsCfg:
         weight=-1.5,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
+
+    # REMOVED: arm_target_tracking (policy isn't tracking arms in option ii)
 
 
 @configclass

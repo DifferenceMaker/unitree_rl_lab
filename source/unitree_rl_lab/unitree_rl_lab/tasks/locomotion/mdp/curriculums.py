@@ -156,3 +156,52 @@ def arm_amplitude_curriculum(
     command_term.cfg.resample_period_s = target_period
 
     return torch.tensor(target_amplitude, device=env.device)
+
+
+"""Curriculum for option (ii) Phase 1.
+
+Append to mdp/curriculums.py.
+
+Replaces arm_amplitude_curriculum from option (i). Different mechanism
+(amplitude defines a static-per-episode disturbance, not a moving target).
+Same structural pattern: stepwise level advancement based on env_step
+counter.
+"""
+def arm_pose_curriculum_phase1(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 75000,
+    amplitude_levels: tuple = (0.0, 0.5, 1.0, 1.5),
+) -> "torch.Tensor":
+    """Phase 1 curriculum: bilateral shoulder_pitch amplitude ramps over training.
+
+    Levels (Phase 1 — pitch only):
+        0: amplitude=0.0  — arms at default (warmstart sanity check)
+        1: amplitude=0.5  — small forward/backward pitch (~30 degrees)
+        2: amplitude=1.0  — medium pitch (~60 degrees)
+        3: amplitude=1.5  — large pitch — may hit upper joint limit at +0.4+1.5=1.9
+
+    Default warmup_steps=6000 (~250 iters at 4096 envs).
+    Default hold_steps=75000 (~3125 iters at 4096 envs) per level — generous
+    convergence time per level, per user preference.
+
+    Returns the current amplitude (rad) for logging.
+    """
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(amplitude_levels) - 1)
+
+    target_amplitude = float(amplitude_levels[level_idx])
+
+    # Update the command term's cfg in place. _resample_command reads this
+    # at episode reset.
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.amplitude = target_amplitude
+
+    return torch.tensor(target_amplitude, device=env.device)
