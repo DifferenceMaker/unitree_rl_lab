@@ -172,7 +172,7 @@ def arm_pose_curriculum_phase1(
     env_ids: "Sequence[int]",
     command_term_name: str = "arm_pose_command",
     warmup_steps: int = 6000,
-    hold_steps: int = 75000,
+    hold_steps: int = 24000,
     amplitude_levels: tuple = (0.0, 0.5, 1.0, 1.5),
 ) -> "torch.Tensor":
     """Phase 1 curriculum: bilateral shoulder_pitch amplitude ramps over training.
