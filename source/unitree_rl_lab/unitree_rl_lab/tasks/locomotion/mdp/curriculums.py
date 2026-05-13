@@ -205,3 +205,50 @@ def arm_pose_curriculum_phase1(
     command_term.cfg.amplitude = target_amplitude
 
     return torch.tensor(target_amplitude, device=env.device)
+"""Curriculum for option (ii) Phase 2.
+
+Append to mdp/curriculums.py.
+
+Phase 2 keeps shoulder_pitch amplitude fixed (at Phase 1 final value)
+and ramps shoulder_roll amplitude across levels. Same stepwise pattern
+as Phase 1, same iter-per-level math.
+"""
+
+
+def arm_pose_curriculum_phase2(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 24000,
+    pitch_amplitude: float = 1.5,
+    roll_amplitude_levels: tuple = (0.0, 0.3, 0.6, 1.0),
+) -> "torch.Tensor":
+    """Phase 2: pitch fixed, roll amplitude ramps stepwise.
+
+    Levels (Phase 2):
+        0 (warmup): roll=0.0  — just pitch (verify Phase 1 policy works)
+        1: roll=0.3  — small bilateral spread (~17°)
+        2: roll=0.6  — medium spread (~34°)
+        3: roll=1.0  — large spread (~57°)
+
+    Default hold_steps=24000 (~1000 iters per level).
+    Curriculum traverses in ~3250 iters from run start.
+
+    Returns the current roll amplitude (rad) for logging.
+    """
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(roll_amplitude_levels) - 1)
+
+    target_roll = float(roll_amplitude_levels[level_idx])
+
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.pitch_amplitude = pitch_amplitude   # stays constant
+    command_term.cfg.roll_amplitude = target_roll
+
+    return torch.tensor(target_roll, device=env.device)
