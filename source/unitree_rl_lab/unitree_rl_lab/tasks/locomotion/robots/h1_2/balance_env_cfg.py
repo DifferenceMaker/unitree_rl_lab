@@ -357,3 +357,11 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
+        # At play time env.common_step_counter starts at 0 so the
+        # training curriculum would lock at level 0 (amplitude=0.0).
+        # Set all curriculum levels to the trained-on max so any
+        # level the function picks gives the desired amplitude.
+        self.curriculum.arm_pose.params["amplitude_levels"] = (1.5, 1.5, 1.5, 1.5)
+        # Also set the command's initial amplitude in case curriculum
+        # doesn't fire before first episode reset
+        self.commands.arm_pose_command.amplitude = 1.5
