@@ -352,3 +352,55 @@ def action_rate_l2_scoped(
     action = env.action_manager.action[:, joint_ids]
     prev_action = env.action_manager.prev_action[:, joint_ids]
     return torch.sum(torch.square(action - prev_action), dim=1)
+"""Torso stability bonus reward — append to mdp/rewards.py.
+
+Positive bonus for keeping the torso (and thus the head/camera) still.
+Falls off exponentially with combined linear and angular velocity.
+
+Distinct from torso_lin_vel_l2 / torso_ang_vel_l2 which are pure penalties
+on motion magnitude. This term creates a positive gradient toward "be still"
+rather than just a cost gradient against motion.
+
+Similar to stance_bonus_legs_torso: at zero motion the reward is +1.0,
+falls off rapidly with motion. Weight +1.5 means stillness contributes
+0.75-1.5 to per-step reward, comparable to other shaping terms.
+"""
+
+import torch
+
+from isaaclab.assets import RigidObject
+from isaaclab.managers import SceneEntityCfg
+
+
+def torso_stability_bonus(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="torso_link"),
+    std_lin: float = 0.15,
+    std_ang: float = 0.30,
+) -> torch.Tensor:
+    """Bonus reward for stable torso (head/camera).
+
+    Args:
+        asset_cfg: SceneEntityCfg selecting torso body.
+        std_lin: Std for linear velocity falloff (m/s). At 0.15, bonus is
+                 ~e^(-1) = 0.37 when |lin_vel|=0.15 m/s.
+        std_ang: Std for angular velocity falloff (rad/s). At 0.30, bonus is
+                 ~e^(-1) = 0.37 when |ang_vel|=0.30 rad/s.
+
+    Returns:
+        Per-env bonus tensor in [0, 1].
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Get torso body velocities (world frame)
+    body_ids = asset_cfg.body_ids
+    lin_vel = asset.data.body_lin_vel_w[:, body_ids, :2]  # XY only — vertical motion is gravity
+    ang_vel = asset.data.body_ang_vel_w[:, body_ids, :]   # All 3 axes
+
+    # Squared norms per env
+    lin_sq = torch.sum(lin_vel ** 2, dim=-1).squeeze(-1)  # (num_envs,)
+    ang_sq = torch.sum(ang_vel ** 2, dim=-1).squeeze(-1)  # (num_envs,)
+
+    # Combined exponential bonus
+    bonus = torch.exp(-(lin_sq / (std_lin ** 2) + ang_sq / (std_ang ** 2)))
+    return bonus
