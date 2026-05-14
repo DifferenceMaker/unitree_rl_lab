@@ -312,7 +312,7 @@ class TerminationsCfg:
         func=mdp.illegal_contact,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["torso_link"]),
-            "threshold": 200.0,
+            "threshold": 50.0,
         },
     )
 
