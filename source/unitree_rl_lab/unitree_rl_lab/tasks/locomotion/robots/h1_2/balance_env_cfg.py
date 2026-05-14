@@ -33,7 +33,7 @@ ARM_JOINT_REGEX = [
 
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
-    """Flat-ground scene for H1-2 option (ii) Phase 3 training."""
+    """Flat-ground scene for H1-2 option (ii) Phase 4 training."""
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -118,24 +118,25 @@ class EventCfg:
 
 @configclass
 class CurriculumCfg:
-    """Phase 3 curriculum: pitch + roll fixed at Phase 2 max, elbow ramps."""
+    """Phase 4 curriculum: held pose fixed at Phase 3 max, wobble ramps."""
 
     arm_pose = CurrTerm(
-        func=mdp.arm_pose_curriculum_phase3,
+        func=mdp.arm_pose_curriculum_phase4,
         params={
             "command_term_name": "arm_pose_command",
             "warmup_steps": 6000,
-            "hold_steps": 24000,                              # ~1000 iters per level
-            "pitch_amplitude": 1.5,                           # Phase 2 max
-            "roll_amplitude": 1.0,                            # Phase 2 max
-            "elbow_amplitude_levels": (0.0, 0.5, 1.0, 1.5),
+            "hold_steps": 24000,
+            "pitch_amplitude": 1.5,
+            "roll_amplitude": 1.0,
+            "elbow_amplitude": 1.5,
+            "wobble_amplitude_levels": (0.0, 0.05, 0.10, 0.15),
         },
     )
 
 
 @configclass
 class CommandsCfg:
-    """Standing velocity (zero) + bilateral pitch + mirrored roll + bilateral elbow."""
+    """Standing velocity (zero) + bilateral held pose with wobble."""
 
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
@@ -157,7 +158,9 @@ class CommandsCfg:
         all_arm_joint_names=ARM_JOINT_REGEX,
         pitch_amplitude=1.5,                # set by curriculum
         roll_amplitude=1.0,                 # set by curriculum
-        elbow_amplitude=0.0,                # set by curriculum
+        elbow_amplitude=1.5,                # set by curriculum
+        wobble_amplitude=0.0,               # set by curriculum
+        wobble_frequency=2.0,               # 2 Hz
         apply_directly=True,
         debug_vis=False,
     )
@@ -185,6 +188,7 @@ class ObservationsCfg:
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
+        # Observes held pose only (wobble not in obs — it's a small reactive disturbance)
         arm_pose_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
         )
@@ -213,12 +217,10 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    """Phase 3 rewards. Changed from Phase 2:
-    - undesired_contacts body_names narrowed: removed .*shoulder.* and .*elbow.*
-      Reason: those bodies are part of the arms, which the policy does NOT
-      command. Penalizing the policy for self-contacts on bodies it can't
-      control is incoherent. Knees, hips, torso remain (policy controls these
-      and can avoid contact with them).
+    """Phase 4 rewards. Changed from Phase 3:
+    - torso_lin_vel_xy: -3.0 -> -6.0 (2x stricter on head stability)
+    - torso_ang_vel: -1.5 -> -3.0 (2x stricter on head rotation)
+    - undesired_contacts already excludes shoulder/elbow (Phase 3 carryover)
     """
 
     track_lin_vel_xy = RewTerm(
@@ -274,9 +276,6 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
 
-    # Phase 3 change: removed .*shoulder.* and .*elbow.* from body_names.
-    # Those are arm bodies — policy doesn't control them, shouldn't be
-    # penalized for self-contacts on them.
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, weight=-1.0,
         params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg(
@@ -284,27 +283,36 @@ class RewardsCfg:
             body_names=["torso_link", ".*hip.*", ".*knee.*"])},
     )
 
+    # DOUBLED from Phase 3 — stricter head stability (the camera)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
-        weight=-3.0,
+        weight=-6.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
     torso_ang_vel = RewTerm(
         func=mdp.body_ang_vel_l2,
-        weight=-1.5,
+        weight=-3.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
 
 @configclass
 class TerminationsCfg:
+    """Phase 4 terminations. Changed from Phase 3:
+    - base_contact threshold: 50.0 -> 200.0
+      Reason: arm-to-torso self-contact during extreme commanded poses
+      was triggering termination at 50N. Real falls produce >>200N
+      forces on torso. 200N filters out static arm pressure while
+      still catching genuine falls.
+    """
+
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_height = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.5})
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["torso_link"]),
-            "threshold": 50.0,
+            "threshold": 200.0,
         },
     )
 
@@ -335,7 +343,8 @@ class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         # Force max disturbance at play time
-        self.curriculum.arm_pose.params["elbow_amplitude_levels"] = (1.5, 1.5, 1.5, 1.5)
+        self.curriculum.arm_pose.params["wobble_amplitude_levels"] = (0.15, 0.15, 0.15, 0.15)
         self.commands.arm_pose_command.pitch_amplitude = 1.5
         self.commands.arm_pose_command.roll_amplitude = 1.0
         self.commands.arm_pose_command.elbow_amplitude = 1.5
+        self.commands.arm_pose_command.wobble_amplitude = 0.15

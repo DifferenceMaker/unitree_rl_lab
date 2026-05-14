@@ -302,3 +302,58 @@ def arm_pose_curriculum_phase3(
     command_term.cfg.elbow_amplitude = target_elbow
 
     return torch.tensor(target_elbow, device=env.device)
+"""Curriculum for option (ii) Phase 4.
+
+Append to mdp/curriculums.py.
+
+Phase 4 keeps the three held-pose amplitudes fixed at Phase 3 max
+values and ramps wobble_amplitude across levels. Wobble is a small
+sinusoidal motion on top of the held pose, mimicking manipulation
+micro-motions.
+"""
+
+
+def arm_pose_curriculum_phase4(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 24000,
+    pitch_amplitude: float = 1.5,
+    roll_amplitude: float = 1.0,
+    elbow_amplitude: float = 1.5,
+    wobble_amplitude_levels: tuple = (0.0, 0.05, 0.10, 0.15),
+) -> "torch.Tensor":
+    """Phase 4: held pose fixed, wobble amplitude ramps stepwise.
+
+    Levels (Phase 4):
+        0 (warmup): wobble=0.00  — Phase 3 baseline (no wobble)
+        1: wobble=0.05 rad  — small wobble (~3 deg amplitude)
+        2: wobble=0.10 rad  — moderate wobble (~6 deg)
+        3: wobble=0.15 rad  — significant wobble (~9 deg)
+
+    Mimics manipulation micro-motions: gripper finger movement,
+    hand articulation during grasping, small mass shifts during
+    object manipulation.
+
+    Default hold_steps=24000 (~1000 iters per level).
+
+    Returns the current wobble amplitude (rad) for logging.
+    """
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(wobble_amplitude_levels) - 1)
+
+    target_wobble = float(wobble_amplitude_levels[level_idx])
+
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.pitch_amplitude = pitch_amplitude   # constant
+    command_term.cfg.roll_amplitude = roll_amplitude     # constant
+    command_term.cfg.elbow_amplitude = elbow_amplitude   # constant
+    command_term.cfg.wobble_amplitude = target_wobble
+
+    return torch.tensor(target_wobble, device=env.device)
