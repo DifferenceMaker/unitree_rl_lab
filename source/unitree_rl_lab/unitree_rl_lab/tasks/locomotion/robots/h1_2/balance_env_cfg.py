@@ -33,7 +33,7 @@ ARM_JOINT_REGEX = [
 
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
-    """Flat-ground scene for H1-2 option (ii) Phase 2 training."""
+    """Flat-ground scene for H1-2 option (ii) Phase 3 training."""
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -65,10 +65,6 @@ class RobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class EventCfg:
-    """Domain randomization and reset events.
-    Arms commanded externally by UniformArmPoseCommand with apply_directly=True
-    (Phase 2 extension of Phase 1 mechanism — no event term needed)."""
-
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
         mode="startup",
@@ -112,7 +108,6 @@ class EventCfg:
         },
     )
 
-    # Phase A scope: pushes disabled
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
@@ -123,23 +118,24 @@ class EventCfg:
 
 @configclass
 class CurriculumCfg:
-    """Phase 2 curriculum: pitch fixed, roll amplitude ramps."""
+    """Phase 3 curriculum: pitch + roll fixed at Phase 2 max, elbow ramps."""
 
     arm_pose = CurrTerm(
-        func=mdp.arm_pose_curriculum_phase2,
+        func=mdp.arm_pose_curriculum_phase3,
         params={
             "command_term_name": "arm_pose_command",
             "warmup_steps": 6000,
             "hold_steps": 24000,                              # ~1000 iters per level
-            "pitch_amplitude": 1.5,                           # stays at Phase 1 max
-            "roll_amplitude_levels": (0.0, 0.3, 0.6, 1.0),
+            "pitch_amplitude": 1.5,                           # Phase 2 max
+            "roll_amplitude": 1.0,                            # Phase 2 max
+            "elbow_amplitude_levels": (0.0, 0.5, 1.0, 1.5),
         },
     )
 
 
 @configclass
 class CommandsCfg:
-    """Standing velocity (zero) + bilateral pitch + mirrored roll disturbance."""
+    """Standing velocity (zero) + bilateral pitch + mirrored roll + bilateral elbow."""
 
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
@@ -160,7 +156,8 @@ class CommandsCfg:
         asset_name="robot",
         all_arm_joint_names=ARM_JOINT_REGEX,
         pitch_amplitude=1.5,                # set by curriculum
-        roll_amplitude=0.0,                 # set by curriculum
+        roll_amplitude=1.0,                 # set by curriculum
+        elbow_amplitude=0.0,                # set by curriculum
         apply_directly=True,
         debug_vis=False,
     )
@@ -168,8 +165,7 @@ class CommandsCfg:
 
 @configclass
 class ActionsCfg:
-    """Policy commands ONLY legs+torso (13 joints).
-    Arm joints get targets from arm_pose_command."""
+    """Policy commands ONLY legs+torso (13 joints)."""
 
     JointPositionAction = mdp.JointPositionActionCfg(
         asset_name="robot",
@@ -189,8 +185,6 @@ class ObservationsCfg:
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
-        # Policy observes commanded arm pose (14-dim) so it can anticipate
-        # both pitch and roll disturbances.
         arm_pose_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "arm_pose_command"}
         )
@@ -219,7 +213,13 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    """Same rewards as Phase 1 — balance only, no arm tracking."""
+    """Phase 3 rewards. Changed from Phase 2:
+    - undesired_contacts body_names narrowed: removed .*shoulder.* and .*elbow.*
+      Reason: those bodies are part of the arms, which the policy does NOT
+      command. Penalizing the policy for self-contacts on bodies it can't
+      control is incoherent. Knees, hips, torso remain (policy controls these
+      and can avoid contact with them).
+    """
 
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
@@ -274,11 +274,14 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
 
+    # Phase 3 change: removed .*shoulder.* and .*elbow.* from body_names.
+    # Those are arm bodies — policy doesn't control them, shouldn't be
+    # penalized for self-contacts on them.
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, weight=-1.0,
         params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg(
             "contact_forces",
-            body_names=["torso_link", ".*hip.*", ".*knee.*", ".*shoulder.*", ".*elbow.*"])},
+            body_names=["torso_link", ".*hip.*", ".*knee.*"])},
     )
 
     torso_lin_vel_xy = RewTerm(
@@ -331,8 +334,8 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        # Force max disturbance at play time (curriculum would otherwise
-        # lock at level 0 because common_step_counter starts at 0).
-        self.curriculum.arm_pose.params["roll_amplitude_levels"] = (1.0, 1.0, 1.0, 1.0)
+        # Force max disturbance at play time
+        self.curriculum.arm_pose.params["elbow_amplitude_levels"] = (1.5, 1.5, 1.5, 1.5)
         self.commands.arm_pose_command.pitch_amplitude = 1.5
         self.commands.arm_pose_command.roll_amplitude = 1.0
+        self.commands.arm_pose_command.elbow_amplitude = 1.5

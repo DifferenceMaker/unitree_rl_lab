@@ -252,3 +252,53 @@ def arm_pose_curriculum_phase2(
     command_term.cfg.roll_amplitude = target_roll
 
     return torch.tensor(target_roll, device=env.device)
+"""Curriculum for option (ii) Phase 3.
+
+Append to mdp/curriculums.py.
+
+Phase 3 keeps shoulder_pitch and shoulder_roll amplitudes fixed at
+Phase 2 max values and ramps elbow_pitch amplitude across levels.
+"""
+
+
+def arm_pose_curriculum_phase3(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 24000,
+    pitch_amplitude: float = 1.5,
+    roll_amplitude: float = 1.0,
+    elbow_amplitude_levels: tuple = (0.0, 0.5, 1.0, 1.5),
+) -> "torch.Tensor":
+    """Phase 3: pitch + roll fixed, elbow amplitude ramps stepwise.
+
+    Levels (Phase 3):
+        0 (warmup): elbow=0.0  — Phase 2 baseline (no elbow bend)
+        1: elbow=0.5  — moderate bend (~29 deg from default)
+        2: elbow=1.0  — stronger bend (~57 deg)
+        3: elbow=1.5  — significant bend (~86 deg, arm folded inward)
+
+    Conservative cap at 1.5 leaves headroom from upper joint limit
+    (default 0.3 + 1.5 = 1.8 < 3.18 limit).
+
+    Default hold_steps=24000 (~1000 iters per level).
+
+    Returns the current elbow amplitude (rad) for logging.
+    """
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(elbow_amplitude_levels) - 1)
+
+    target_elbow = float(elbow_amplitude_levels[level_idx])
+
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.pitch_amplitude = pitch_amplitude  # constant
+    command_term.cfg.roll_amplitude = roll_amplitude    # constant
+    command_term.cfg.elbow_amplitude = target_elbow
+
+    return torch.tensor(target_elbow, device=env.device)

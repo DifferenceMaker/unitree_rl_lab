@@ -1,20 +1,19 @@
-"""Arm pose command for option (ii) Phase 2.
+"""Arm pose command for option (ii) Phase 3.
 
-Phase 2 extends Phase 1 by adding a second sampling dimension:
-shoulder_roll. Each episode now samples:
+Phase 3 extends Phase 2 by adding a third sampling dimension:
+elbow_pitch. Each episode now samples:
 - One shoulder_pitch delta (applied to both arms identically)
-- One shoulder_roll delta (applied mirrored — left positive, right
-  negative — so both arms spread outward symmetrically)
+- One shoulder_roll delta magnitude (mirrored: left +, right - for outward
+  spreading)
+- One elbow_pitch delta (applied to both arms identically — bilateral bend)
 
-Both held for the full episode. All other arm joints stay at default.
+All held for the full episode. shoulder_yaw and wrist joints stay at default.
 
-Bilateral roll mirroring:
-- shoulder_roll has asymmetric limits: left [-0.38, 3.4] (outward
-  is positive), right [-3.4, 0.38] (outward is negative)
-- For bilateral symmetric spreading, sample one roll_delta_magnitude,
-  then apply +delta to left and -delta to right (both spread outward)
-- If sampled delta is negative (e.g., -0.3), arms try to spread inward
-  (across body) but blocked by torso — joint limits clip silently
+H1-2 elbow_pitch joint:
+- Default: 0.3 rad (~17 deg, slight resting bend)
+- Limits: [-0.95, 3.18]
+- Positive direction = curl forearm toward shoulder (fold arm)
+- Negative direction = extend past straight
 """
 
 from __future__ import annotations
@@ -35,20 +34,18 @@ if TYPE_CHECKING:
 SHOULDER_PITCH_JOINT_REGEX = [".*_shoulder_pitch_joint"]
 LEFT_SHOULDER_ROLL_REGEX = ["left_shoulder_roll_joint"]
 RIGHT_SHOULDER_ROLL_REGEX = ["right_shoulder_roll_joint"]
+ELBOW_PITCH_JOINT_REGEX = [".*_elbow_pitch_joint"]
 
 
 class UniformArmPoseCommand(CommandTerm):
-    """Episode-stable bilateral shoulder pitch + roll disturbance.
+    """Episode-stable bilateral pitch + mirrored roll + bilateral elbow.
 
-    Phase 2 specifics:
-    - command_b stores per-env pitch_delta and roll_delta_magnitude
-    - shoulder_pitch: both arms get same delta (bilateral same-direction)
-    - shoulder_roll: left arm gets +delta_magnitude, right gets -delta_magnitude
-      (bilateral mirrored — both arms spread outward when delta is positive,
-      both spread inward when negative)
-    - All other arm joints stay at default values
-    - 14-dim observation vector: shows the full commanded arm pose so
-      the policy can anticipate the disturbance
+    Phase 3 specifics:
+    - 3 sampled values per episode: pitch_delta, roll_delta_mag, elbow_delta
+    - pitch: both arms get same delta
+    - roll: mirrored (left +delta, right -delta) for symmetric outward spread
+    - elbow: both arms get same delta (bilateral bend)
+    - shoulder_yaw and wrist joints stay at default values
     """
 
     cfg: "UniformArmPoseCommandCfg"
@@ -62,13 +59,11 @@ class UniformArmPoseCommand(CommandTerm):
         self.all_arm_joint_ids, self.all_arm_joint_names = self.robot.find_joints(cfg.all_arm_joint_names)
         self.num_arm_joints = len(self.all_arm_joint_ids)
 
-        # Shoulder pitch joints (bilateral, both arms get same delta)
+        # Joint subsets we're commanding
         self.pitch_joint_ids, _ = self.robot.find_joints(SHOULDER_PITCH_JOINT_REGEX)
-
-        # Shoulder roll joints — separate left and right because we
-        # apply mirrored deltas
         self.left_roll_joint_ids, _ = self.robot.find_joints(LEFT_SHOULDER_ROLL_REGEX)
         self.right_roll_joint_ids, _ = self.robot.find_joints(RIGHT_SHOULDER_ROLL_REGEX)
+        self.elbow_joint_ids, _ = self.robot.find_joints(ELBOW_PITCH_JOINT_REGEX)
 
         # Where in the 14-arm-joint observation vector are the relevant dims?
         self.pitch_indices_in_arm_obs = [
@@ -80,84 +75,85 @@ class UniformArmPoseCommand(CommandTerm):
         self.right_roll_indices_in_arm_obs = [
             self.all_arm_joint_ids.index(pid) for pid in self.right_roll_joint_ids
         ]
+        self.elbow_indices_in_arm_obs = [
+            self.all_arm_joint_ids.index(pid) for pid in self.elbow_joint_ids
+        ]
 
         # Per-env current deltas
         self.pitch_delta = torch.zeros(env.num_envs, device=env.device)
         self.roll_delta = torch.zeros(env.num_envs, device=env.device)
+        self.elbow_delta = torch.zeros(env.num_envs, device=env.device)
 
         # 14-dim observation vector
         self.command_b = torch.zeros(env.num_envs, self.num_arm_joints, device=env.device)
 
-        # Default joint positions (for absolute target computation)
+        # Default joint positions
         self.default_arm_pos = self.robot.data.default_joint_pos[:, self.all_arm_joint_ids].clone()
         self.default_pitch_pos = self.robot.data.default_joint_pos[:, self.pitch_joint_ids].clone()
         self.default_left_roll_pos = self.robot.data.default_joint_pos[:, self.left_roll_joint_ids].clone()
         self.default_right_roll_pos = self.robot.data.default_joint_pos[:, self.right_roll_joint_ids].clone()
+        self.default_elbow_pos = self.robot.data.default_joint_pos[:, self.elbow_joint_ids].clone()
 
     def __str__(self) -> str:
         return (
-            f"UniformArmPoseCommand(Phase 2, bilateral pitch + mirrored roll, "
-            f"pitch_amplitude={self.cfg.pitch_amplitude:.3f}, "
-            f"roll_amplitude={self.cfg.roll_amplitude:.3f}, "
+            f"UniformArmPoseCommand(Phase 3, bilateral pitch + mirrored roll "
+            f"+ bilateral elbow, pitch_amp={self.cfg.pitch_amplitude:.3f}, "
+            f"roll_amp={self.cfg.roll_amplitude:.3f}, "
+            f"elbow_amp={self.cfg.elbow_amplitude:.3f}, "
             f"apply_directly={self.cfg.apply_directly})"
         )
 
     @property
     def command(self) -> torch.Tensor:
-        """The 14-dim observation: default + deltas on the relevant dims."""
+        """14-dim observation: default + deltas on the relevant dims."""
         return self.default_arm_pos + self.command_b
 
     def _resample_command(self, env_ids):
-        """Resample pitch and roll deltas for the given envs (episode reset)."""
+        """Resample pitch, roll, elbow deltas at episode reset."""
         n = len(env_ids)
         if n == 0:
             return
 
-        # Sample pitch delta uniformly in [-pitch_amplitude, +pitch_amplitude]
+        # Sample uniformly in [-amplitude, +amplitude] for each dimension
         new_pitch = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.pitch_amplitude
-        self.pitch_delta[env_ids] = new_pitch
-
-        # Sample roll delta uniformly in [-roll_amplitude, +roll_amplitude]
-        # Positive = both arms spread outward, negative = both try inward (limit-blocked)
         new_roll = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.roll_amplitude
-        self.roll_delta[env_ids] = new_roll
+        new_elbow = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.elbow_amplitude
 
-        # Update the 14-dim observation vector for these envs
+        self.pitch_delta[env_ids] = new_pitch
+        self.roll_delta[env_ids] = new_roll
+        self.elbow_delta[env_ids] = new_elbow
+
+        # Update 14-dim observation vector for these envs
         self.command_b[env_ids] = 0.0
         for idx in self.pitch_indices_in_arm_obs:
             self.command_b[env_ids, idx] = new_pitch
-        # Left roll = +delta (outward direction is positive for left)
         for idx in self.left_roll_indices_in_arm_obs:
             self.command_b[env_ids, idx] = new_roll
-        # Right roll = -delta (outward direction is negative for right)
         for idx in self.right_roll_indices_in_arm_obs:
             self.command_b[env_ids, idx] = -new_roll
+        for idx in self.elbow_indices_in_arm_obs:
+            self.command_b[env_ids, idx] = new_elbow
 
     def _update_command(self):
-        """Apply targets to sim each step. No resampling — held for episode."""
+        """Apply targets to sim each step (held for episode)."""
         if not self.cfg.apply_directly:
             return
 
-        # Pitch: both arms get same target = default + pitch_delta
+        # Pitch: both arms get same target
         pitch_target = self.default_pitch_pos + self.pitch_delta.unsqueeze(1)
-        self.robot.set_joint_position_target(
-            pitch_target,
-            joint_ids=self.pitch_joint_ids,
-        )
+        self.robot.set_joint_position_target(pitch_target, joint_ids=self.pitch_joint_ids)
 
         # Left roll: default + delta (positive delta = outward for left arm)
         left_roll_target = self.default_left_roll_pos + self.roll_delta.unsqueeze(1)
-        self.robot.set_joint_position_target(
-            left_roll_target,
-            joint_ids=self.left_roll_joint_ids,
-        )
+        self.robot.set_joint_position_target(left_roll_target, joint_ids=self.left_roll_joint_ids)
 
-        # Right roll: default - delta (negative direction = outward for right arm)
+        # Right roll: default - delta (mirrored: negative direction = outward for right)
         right_roll_target = self.default_right_roll_pos - self.roll_delta.unsqueeze(1)
-        self.robot.set_joint_position_target(
-            right_roll_target,
-            joint_ids=self.right_roll_joint_ids,
-        )
+        self.robot.set_joint_position_target(right_roll_target, joint_ids=self.right_roll_joint_ids)
+
+        # Elbow: both arms get same target (bilateral bend)
+        elbow_target = self.default_elbow_pos + self.elbow_delta.unsqueeze(1)
+        self.robot.set_joint_position_target(elbow_target, joint_ids=self.elbow_joint_ids)
 
     def _update_metrics(self):
         pass
@@ -165,28 +161,25 @@ class UniformArmPoseCommand(CommandTerm):
 
 @configclass
 class UniformArmPoseCommandCfg(CommandTermCfg):
-    """Cfg for UniformArmPoseCommand (Phase 2)."""
+    """Cfg for UniformArmPoseCommand (Phase 3)."""
 
     class_type: type = UniformArmPoseCommand
 
     asset_name: str = MISSING
-    """Name of the articulation in the scene to command."""
-
     all_arm_joint_names: list[str] = MISSING
-    """All 14 arm joint names — for the observation vector."""
 
     pitch_amplitude: float = 0.0
     """Max delta from default shoulder_pitch (radians).
-    Phase 2 keeps this fixed at 1.5 across the curriculum."""
+    Phase 3 keeps this at Phase 2 max (1.5)."""
 
     roll_amplitude: float = 0.0
     """Max magnitude of mirrored shoulder_roll delta (radians).
-    Overridden by curriculum. Starts at 0, ramps up over Phase 2 levels."""
+    Phase 3 keeps this at Phase 2 max (1.0)."""
+
+    elbow_amplitude: float = 0.0
+    """Max delta from default elbow_pitch (radians).
+    Set by curriculum. Phase 3 levels: 0.0, 0.5, 1.0, 1.5."""
 
     apply_directly: bool = True
-    """If True (option ii), command writes joint targets to sim directly."""
-
-    # Not used since we resample at reset, parent class requires it
     resampling_time_range: tuple[float, float] = (1e9, 1e9)
-
     debug_vis: bool = False
