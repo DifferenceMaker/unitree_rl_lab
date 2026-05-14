@@ -286,12 +286,12 @@ class RewardsCfg:
     # DOUBLED from Phase 3 — stricter head stability (the camera)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
-        weight=-3.0,
+        weight=-6.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
     torso_ang_vel = RewTerm(
         func=mdp.body_ang_vel_l2,
-        weight=-1.5,
+        weight=-3.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
