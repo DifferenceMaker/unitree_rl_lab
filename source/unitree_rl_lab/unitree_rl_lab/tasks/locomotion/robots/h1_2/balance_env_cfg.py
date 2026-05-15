@@ -283,38 +283,46 @@ class RewardsCfg:
             body_names=["torso_link", ".*hip.*", ".*knee.*"])},
     )
 
-    # DOUBLED from Phase 3 — stricter head stability (the camera)
+    # Kept at Phase 3 value (doubling destabilized PPO)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
-        weight=-6.0,
-        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
-    )
-    torso_ang_vel = RewTerm(
-        func=mdp.body_ang_vel_l2,
         weight=-3.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
+
+    torso_ang_vel = RewTerm(
+        func=mdp.body_ang_vel_l2,
+        weight=-1.5,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
+
+    # NEW: positive bonus for camera stability — structural fix
+    torso_stability_bonus = RewTerm(
+        func=mdp.torso_stability_bonus,
+        weight=1.5,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
+            "std_lin": 0.15,
+            "std_ang": 0.30,
+        },
     )
 
 
 @configclass
 class TerminationsCfg:
-    """Phase 4 terminations. Changed from Phase 3:
-    - base_contact threshold: 50.0 -> 200.0
-      Reason: arm-to-torso self-contact during extreme commanded poses
-      was triggering termination at 50N. Real falls produce >>200N
-      forces on torso. 200N filters out static arm pressure while
-      still catching genuine falls.
+    """Phase 4 terminations (structural fix).
+
+    Changes from Phase 3:
+    - REMOVED base_contact termination.
+
+    base_contact at any threshold terminated 18-23% of episodes from
+    arm-to-torso self-contact, which the policy cannot avoid (arms are
+    externally commanded). Falls still caught via base_height
+    (pelvis < 0.5m).
     """
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_height = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.5})
-    base_contact = DoneTerm(
-        func=mdp.illegal_contact,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["torso_link"]),
-            "threshold": 200.0,
-        },
-    )
 
 
 @configclass
