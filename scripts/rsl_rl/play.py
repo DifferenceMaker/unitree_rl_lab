@@ -167,12 +167,56 @@ def main():
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
+    os.makedirs(export_model_dir, exist_ok=True)
     try:
         export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
         export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
     except (ValueError, AttributeError) as e:
-        print(f"[WARNING] Policy export skipped (rsl-rl 5.0+ exporter incompatibility): {e}")
+        print(f"[WARNING] isaaclab_rl exporter incompatible with rsl-rl 5.0+: {e}")
+        print(f"[INFO] Falling back to direct torch.onnx.export for actor MLP")
+        import torch
+        import torch.nn as nn
 
+        # Walk into the model to find the actor MLP
+        actor = policy_nn.actor if hasattr(policy_nn, 'actor') else policy_nn
+        obs_normalizer = getattr(actor, 'obs_normalizer', nn.Identity())
+        mlp = actor.mlp
+
+        # Wrapper for deterministic forward
+        class _ActorWrapper(nn.Module):
+            def __init__(self, normalizer, mlp):
+                super().__init__()
+                self.normalizer = normalizer
+                self.mlp = mlp
+            def forward(self, obs):
+                return self.mlp(self.normalizer(obs))
+
+        import copy
+        wrapper = _ActorWrapper(
+	    copy.deepcopy(obs_normalizer),
+	    copy.deepcopy(mlp),
+	).eval().cpu()
+
+        # Infer obs_dim from first Linear layer
+        first_linear = next(m for m in wrapper.mlp.modules() if isinstance(m, nn.Linear))
+        obs_dim = first_linear.in_features
+        dummy_obs = torch.zeros(1, obs_dim, dtype=torch.float32)
+
+        onnx_path = os.path.join(export_model_dir, "policy.onnx")
+        torch.onnx.export(
+            wrapper, dummy_obs, onnx_path,
+            export_params=True, opset_version=17, do_constant_folding=True,
+            input_names=["observation"], output_names=["action"],
+            dynamic_axes={"observation": {0: "batch"}, "action": {0: "batch"}},
+        )
+        print(f"[INFO] Exported policy.onnx to {onnx_path}")
+
+        # Also save as torch.jit
+        jit_path = os.path.join(export_model_dir, "policy.pt")
+        traced = torch.jit.trace(wrapper, dummy_obs)
+        traced.save(jit_path)
+        print(f"[INFO] Exported policy.pt (jit) to {jit_path}")
+    
     dt = env.unwrapped.step_dt
 
     # reset environment
