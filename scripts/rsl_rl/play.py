@@ -208,7 +208,6 @@ def main():
             wrapper, dummy_obs, onnx_path,
             export_params=True, opset_version=17, do_constant_folding=True,
             input_names=["obs"], output_names=["action"],
-            dynamic_axes={"obs": {0: "batch"}, "action": {0: "batch"}},
         )
         print(f"[INFO] Exported policy.onnx (input 'obs', shape [batch,{obs_dim}]) to {onnx_path}")
 
