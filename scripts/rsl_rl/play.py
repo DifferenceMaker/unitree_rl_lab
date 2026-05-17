@@ -173,50 +173,85 @@ def main():
         export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
     except (ValueError, AttributeError) as e:
         print(f"[WARNING] isaaclab_rl exporter incompatible with rsl-rl 5.0+: {e}")
-        print(f"[INFO] Falling back to direct torch.onnx.export for actor MLP")
+        print(f"[INFO] Falling back to multi-input torch.onnx.export matching deploy.yaml")
         import torch
         import torch.nn as nn
+        import copy
+        import yaml
 
         # Walk into the model to find the actor MLP
         actor = policy_nn.actor if hasattr(policy_nn, 'actor') else policy_nn
         obs_normalizer = getattr(actor, 'obs_normalizer', nn.Identity())
         mlp = actor.mlp
 
-        # Wrapper for deterministic forward
-        class _ActorWrapper(nn.Module):
-            def __init__(self, normalizer, mlp):
-                super().__init__()
-                self.normalizer = normalizer
-                self.mlp = mlp
-            def forward(self, obs):
-                return self.mlp(self.normalizer(obs))
-
-        import copy
-        wrapper = _ActorWrapper(
-	    copy.deepcopy(obs_normalizer),
-	    copy.deepcopy(mlp),
-	).eval().cpu()
-
-        # Infer obs_dim from first Linear layer
-        first_linear = next(m for m in wrapper.mlp.modules() if isinstance(m, nn.Linear))
-        obs_dim = first_linear.in_features
-        dummy_obs = torch.zeros(1, obs_dim, dtype=torch.float32)
-
-        onnx_path = os.path.join(export_model_dir, "policy.onnx")
-        torch.onnx.export(
-            wrapper, dummy_obs, onnx_path,
-            export_params=True, opset_version=17, do_constant_folding=True,
-            input_names=["observation"], output_names=["action"],
-            dynamic_axes={"observation": {0: "batch"}, "action": {0: "batch"}},
+        # Read deploy.yaml from milestone params/ dir to get obs term order + dims
+        deploy_yaml_path = os.path.join(
+            os.path.dirname(resume_path), "params", "deploy.yaml"
         )
-        print(f"[INFO] Exported policy.onnx to {onnx_path}")
+        with open(deploy_yaml_path, "r") as f:
+            deploy_cfg = yaml.safe_load(f)
+        obs_block = deploy_cfg["observations"]
+        # YAML dict preserves insertion order in PyYAML >= 5.1 + Python 3.7+
+        obs_terms = [(name, len(cfg["scale"])) for name, cfg in obs_block.items()]
+        obs_names = [n for n, _ in obs_terms]
+        obs_dims = [d for _, d in obs_terms]
+        total_dim = sum(obs_dims)
+        print(f"[INFO] deploy.yaml obs terms: {obs_terms}, total dim={total_dim}")
 
-        # Also save as torch.jit
-        jit_path = os.path.join(export_model_dir, "policy.pt")
-        traced = torch.jit.trace(wrapper, dummy_obs)
-        traced.save(jit_path)
-        print(f"[INFO] Exported policy.pt (jit) to {jit_path}")
-    
+        # Sanity check vs MLP input width
+        first_linear = next(m for m in mlp.modules() if isinstance(m, nn.Linear))
+        if first_linear.in_features != total_dim:
+            print(f"[ERROR] deploy.yaml total dim {total_dim} != MLP in_features "
+                  f"{first_linear.in_features}. ONNX would be wrong. Skipping export.")
+        else:
+            # Multi-input wrapper: takes one tensor per obs term, concats, runs MLP
+            class _MultiInputActor(nn.Module):
+                def __init__(self, normalizer, mlp, n_inputs):
+                    super().__init__()
+                    self.normalizer = normalizer
+                    self.mlp = mlp
+                    self.n_inputs = n_inputs
+                def forward(self, *obs_per_term):
+                    x = torch.cat(obs_per_term, dim=-1)
+                    return self.mlp(self.normalizer(x))
+
+            wrapper = _MultiInputActor(
+                copy.deepcopy(obs_normalizer),
+                copy.deepcopy(mlp),
+                len(obs_names),
+            ).eval().cpu()
+
+            # Dummy inputs — one per obs term, shape [1, dim_i]
+            dummy_inputs = tuple(
+                torch.zeros(1, d, dtype=torch.float32) for d in obs_dims
+            )
+
+            # Sanity forward
+            with torch.no_grad():
+                out = wrapper(*dummy_inputs)
+            print(f"[INFO] Sanity forward: inputs {[t.shape for t in dummy_inputs]} "
+                  f"-> output {out.shape}")
+
+            onnx_path = os.path.join(export_model_dir, "policy.onnx")
+            dynamic_axes = {n: {0: "batch"} for n in obs_names}
+            dynamic_axes["action"] = {0: "batch"}
+            torch.onnx.export(
+                wrapper,
+                dummy_inputs,
+                onnx_path,
+                export_params=True,
+                opset_version=17,
+                do_constant_folding=True,
+                input_names=obs_names,
+                output_names=["action"],
+                dynamic_axes=dynamic_axes,
+            )
+            print(f"[INFO] Exported policy.onnx with inputs {obs_names} -> {onnx_path}")
+
+            jit_path = os.path.join(export_model_dir, "policy.pt")
+            traced = torch.jit.trace(wrapper, dummy_inputs)
+            traced.save(jit_path)
+            print(f"[INFO] Exported policy.pt (jit) to {jit_path}")
     dt = env.unwrapped.step_dt
 
     # reset environment
