@@ -117,6 +117,51 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
+def _safe_resume(runner, resume_path):
+    """Load checkpoint with graceful handling of architecture changes.
+
+    Attempts the normal runner.load() first. If it fails due to optimizer
+    state shape mismatch (common when warmstarting after observation/action
+    space changes), falls back to loading only the model weights and
+    skipping optimizer state — fresh Adam will be re-initialized.
+
+    Returns None. Raises if model weights themselves can't be loaded.
+    """
+    import torch
+
+    try:
+        runner.load(resume_path)
+        return
+    except (RuntimeError, ValueError, KeyError) as e:
+        msg = str(e)
+        is_optimizer_issue = (
+            "optimizer" in msg.lower()
+            or "parameter group" in msg.lower()
+            or "doesn't match" in msg.lower()
+            or "KeyError" in str(type(e).__name__) and "optimizer" in msg
+        )
+        if not is_optimizer_issue:
+            raise
+        print(f"[WARN]: Full resume failed ({type(e).__name__}: {msg[:120]}).")
+        print(f"[WARN]: Falling back to weights-only load (optimizer will re-init).")
+
+    # Manual model-weights-only load
+    ckpt = torch.load(resume_path, map_location=runner.device, weights_only=False)
+    if "actor_state_dict" in ckpt:
+        runner.alg.actor.load_state_dict(ckpt["actor_state_dict"], strict=True)
+        print(f"[INFO]: Loaded actor weights.")
+    if "critic_state_dict" in ckpt:
+        runner.alg.critic.load_state_dict(ckpt["critic_state_dict"], strict=True)
+        print(f"[INFO]: Loaded critic weights.")
+    # If the model uses observation normalization, load that too
+    if "obs_norm_state_dict" in ckpt and hasattr(runner.alg, "obs_normalizer"):
+        runner.alg.obs_normalizer.load_state_dict(ckpt["obs_norm_state_dict"])
+        print(f"[INFO]: Loaded observation normalizer state.")
+    # Recover iteration count for proper checkpointing later
+    if "iter" in ckpt:
+        runner.current_learning_iteration = ckpt["iter"]
+        print(f"[INFO]: Resuming from iteration {ckpt['iter']}.")
+    print(f"[INFO]: Optimizer state SKIPPED (will re-initialize on first step).")
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
@@ -190,8 +235,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
-        runner.load(resume_path)
+        # load previously trained model with fallback for architecture changes
+        _safe_resume(runner, resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
