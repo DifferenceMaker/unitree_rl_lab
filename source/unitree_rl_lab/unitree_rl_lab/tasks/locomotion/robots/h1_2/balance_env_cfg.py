@@ -21,6 +21,21 @@ from unitree_rl_lab.assets.robots.unitree import UNITREE_H1_2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
 
 
+LEGS_TORSO_JOINT_REGEX = [
+    ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint",
+    "torso_joint",
+]
+ARM_JOINT_REGEX = [
+    ".*_shoulder_pitch.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*",
+    ".*_elbow.*", ".*_wrist.*",
+]
+
+# Body joints only — excludes Inspire FTP-12 hand finger joints.
+# Matches Unitree HG LowState_ protocol (27 body motors). Hand state
+# lives on separate HandState_ channel. See session 2026-05-18.
+BODY_JOINT_REGEX = LEGS_TORSO_JOINT_REGEX + ARM_JOINT_REGEX
+
+
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
     """Flat-ground scene for H1-2 pure-balance training."""
@@ -164,8 +179,17 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2, noise=Unoise(n_min=-0.2, n_max=0.2))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
+        joint_pos_rel = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX, preserve_order=True)},
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+        )
+        joint_vel_rel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            scale=0.05,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX, preserve_order=True)},
+            noise=Unoise(n_min=-1.5, n_max=1.5),
+        )
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -179,9 +203,20 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2)
         projected_gravity = ObsTerm(func=mdp.projected_gravity)
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel)
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05)
-        joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01)
+        joint_pos_rel = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX, preserve_order=True)},
+        )
+        joint_vel_rel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            scale=0.05,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX, preserve_order=True)},
+        )
+        joint_effort = ObsTerm(
+            func=mdp.joint_effort,
+            scale=0.01,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX, preserve_order=True)},
+        )
         last_action = ObsTerm(func=mdp.last_action)
 
     critic: CriticCfg = CriticCfg()
