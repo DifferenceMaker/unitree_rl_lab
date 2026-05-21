@@ -125,6 +125,24 @@ class EventCfg:
         params={"velocity_range": {"x": (-0.3, 0.3), "y": (-0.3, 0.3)}},
     )
 
+    sustained_push_apply = EventTerm(
+        func=mdp.apply_sustained_external_force,
+        mode="interval",
+        interval_range_s=(15.0, 25.0),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
+            "force_magnitude_range": (0.0, 0.0),    # overridden by curriculum
+            "duration_range_s": (0.0, 0.0),         # overridden by curriculum
+        },
+    )
+
+    sustained_push_clear = EventTerm(
+        func=mdp.clear_expired_sustained_pushes,
+        mode="interval",
+        interval_range_s=(0.02, 0.02),  # = policy step dt
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
+
 
 @configclass
 class CurriculumCfg:
@@ -141,6 +159,21 @@ class CurriculumCfg:
         },
     )
 
+    sustained_push = CurrTerm(
+        func=mdp.sustained_push_curriculum,
+        params={
+            "event_term_name": "sustained_push_apply",
+            "warmup_steps": 10000,
+            "hold_steps": 8000,
+            "levels": (
+                ((0.0, 0.0), (0.0, 0.0)),
+                ((5.0, 15.0), (1.0, 2.0)),
+                ((10.0, 25.0), (1.5, 3.0)),
+                ((15.0, 50.0), (2.0, 4.0)),
+            ),
+        },
+    )
+    
 
 @configclass
 class CommandsCfg:

@@ -247,3 +247,43 @@ def stance_bonus(
     deviation = current - default
     sq_dist = torch.sum(deviation * deviation, dim=-1)
     return torch.exp(-sq_dist / (std * std))
+
+def foot_stance_tracking(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg",
+    std: float = 0.08,
+    nominal_foot_pos_b: list[list[float]] = [[0.0, 0.10], [0.0, -0.10]],
+) -> "torch.Tensor":
+    """Positive bonus for keeping feet near nominal stance positions.
+
+    Returns exp(-||displacement||/std) per env, summed across feet.
+    At nominal stance bonus ≈ 1.0 × weight. At 8cm displacement drops
+    to 0.37; at 16cm to 0.14; at 30cm to 0.024. Creates "small steps
+    cheap, big steps expensive" gradient.
+
+    Args:
+        asset_cfg: must specify foot body_names, e.g.
+            SceneEntityCfg("robot", body_names=[".*ankle_roll.*"]).
+        std: stance tracking precision. 0.08 m default.
+        nominal_foot_pos_b: list of (x, y) per foot in body frame at
+            the default standing pose. Order MUST match asset_cfg.body_ids
+            order. Default values are H1-2 approximate, verify by
+            dumping `body_pos_w - root_pos_w` at env reset.
+
+    Use as positive bonus reward; suggested weight +1.0.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    nominal = torch.tensor(nominal_foot_pos_b, device=env.device, dtype=torch.float32)
+
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids, :3]
+    root_pos_w = asset.data.root_pos_w[:, :3].unsqueeze(1)
+    delta_w = foot_pos_w - root_pos_w
+
+    # Transform world delta to body frame (xy only)
+    foot_pos_b_xy = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 2, device=env.device)
+    for i in range(len(asset_cfg.body_ids)):
+        body_frame_3d = quat_apply_inverse(asset.data.root_quat_w, delta_w[:, i, :])
+        foot_pos_b_xy[:, i] = body_frame_3d[:, :2]
+
+    displacement = torch.norm(foot_pos_b_xy - nominal.unsqueeze(0), dim=-1)
+    return torch.exp(-displacement.sum(dim=-1) / std)

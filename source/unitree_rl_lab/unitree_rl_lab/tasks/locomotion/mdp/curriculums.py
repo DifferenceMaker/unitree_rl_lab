@@ -99,3 +99,42 @@ def push_velocity_curriculum(
  
     return torch.tensor(target_vel, device=env.device)
  
+def sustained_push_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    event_term_name: str = "sustained_push_apply",
+    warmup_steps: int = 10000,
+    hold_steps: int = 8000,
+    levels: tuple = (
+        ((0.0, 0.0), (0.0, 0.0)),
+        ((5.0, 15.0), (1.0, 2.0)),
+        ((10.0, 25.0), (1.5, 3.0)),
+        ((15.0, 50.0), (2.0, 4.0)),
+    ),
+) -> "torch.Tensor":
+    """Stepwise curriculum for sustained external force magnitude and duration.
+
+    Holds at levels[0] (no push) for `warmup_steps` to give the policy
+    time to adapt to other new rewards (foot_stance_tracking). Then
+    advances one level every `hold_steps`.
+
+    With num_steps_per_env=24:
+        - 10000 warmup steps ≈ 417 iters
+        - 8000 hold steps per level ≈ 333 iters
+        - 4 levels = ~1750 iters to reach max sustained push
+
+    Returns current max force magnitude (N) for logging.
+    """
+    step = env.common_step_counter
+    if step < warmup_steps:
+        force_range, duration_range = levels[0]
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(levels) - 1)
+        force_range, duration_range = levels[level_idx]
+
+    event_term = env.event_manager.get_term_cfg(event_term_name)
+    event_term.params["force_magnitude_range"] = force_range
+    event_term.params["duration_range_s"] = duration_range
+
+    return torch.tensor(force_range[1], device=env.device)
