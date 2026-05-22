@@ -38,7 +38,7 @@ BODY_JOINT_REGEX = LEGS_TORSO_JOINT_REGEX + ARM_JOINT_REGEX
 
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
-    """Flat-ground scene for H1-2 option (ii) Phase 4 training."""
+    """Flat-ground scene for H1-2 Phase 5 v2 training (wobble + push merge)."""
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -70,6 +70,15 @@ class RobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class EventCfg:
+    """Phase 5 v2 events: phase4's reset/material/mass events + impulse push
+    (now non-zero from iter 0, ramped via push_velocity curriculum) +
+    sustained external force events from p5_v1.
+
+    push_robot.velocity_range and sustained_push_apply.params are both
+    overridden each step by their respective curriculum terms — the initial
+    values here are just the starting points at step 0.
+    """
+
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
         mode="startup",
@@ -113,35 +122,90 @@ class EventCfg:
         },
     )
 
+    # Discrete impulse push — initial range is the curriculum's level 0 (0.30 m/s).
+    # push_velocity_curriculum overrides velocity_range each step.
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
         interval_range_s=(8.0, 12.0),
-        params={"velocity_range": {"x": (0.0, 0.0), "y": (0.0, 0.0)}},
+        params={"velocity_range": {"x": (-0.3, 0.3), "y": (-0.3, 0.3)}},
+    )
+
+    # Sustained external force on torso — magnitude and duration controlled
+    # by sustained_push_curriculum each step (zero during warmup).
+    sustained_push_apply = EventTerm(
+        func=mdp.apply_sustained_external_force,
+        mode="interval",
+        interval_range_s=(15.0, 25.0),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
+            "force_magnitude_range": (0.0, 0.0),    # overridden by curriculum
+            "duration_range_s": (0.0, 0.0),         # overridden by curriculum
+        },
+    )
+
+    # Companion to sustained_push_apply — clears expired forces each policy step.
+    sustained_push_clear = EventTerm(
+        func=mdp.clear_expired_sustained_pushes,
+        mode="interval",
+        interval_range_s=(0.02, 0.02),  # = policy step dt
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
 
 @configclass
 class CurriculumCfg:
-    """Phase 4 curriculum: held pose fixed at Phase 3 max, wobble ramps."""
+    """Phase 5 v2 curriculum: wobble pinned at max (warmstart from phase4_v5),
+    push_velocity ramped 0.30 → 2.0 m/s, sustained_push ramped 0N → 50N.
+
+    Wobble curriculum is kept structurally (so the env builds with
+    arm_pose_curriculum_phase4 still in the pipeline) but all amplitude
+    levels = 0.15 from iter 0 — the warmstart policy already survives this.
+    """
 
     arm_pose = CurrTerm(
         func=mdp.arm_pose_curriculum_phase4,
         params={
             "command_term_name": "arm_pose_command",
-            "warmup_steps": 6000,
-            "hold_steps": 24000,
-            "pitch_amplitude": 1.5,
-            "roll_amplitude": 1.0,
-            "elbow_amplitude": 1.5,
-            "wobble_amplitude_levels": (0.0, 0.05, 0.10, 0.15),
+            "warmup_steps": 0,                        # no warmup — start at max
+            "hold_steps": 24000,                       # unused (all levels equal)
+            "pitch_amplitude": 1.5,                    # held pose pitch (constant)
+            "roll_amplitude": 1.0,                     # held pose roll (constant)
+            "elbow_amplitude": 1.5,                    # held pose elbow (constant)
+            "wobble_amplitude_levels": (0.15, 0.15, 0.15, 0.15),
+        },
+    )
+
+    push_velocity = CurrTerm(
+        func=mdp.push_velocity_curriculum,
+        params={
+            "event_term_name": "push_robot",
+            "warmup_steps": 6000,        # ~250 iters
+            "hold_steps": 5000,           # ~208 iters per level
+            "levels": (0.30, 0.51, 0.72, 0.94, 1.15, 1.36, 1.57, 1.79, 2.00),
+        },
+    )
+
+    sustained_push = CurrTerm(
+        func=mdp.sustained_push_curriculum,
+        params={
+            "event_term_name": "sustained_push_apply",
+            "warmup_steps": 15000,        # ~625 iters — gives wobble+impulse policy
+                                          # time to stabilize before sustained pushes
+            "hold_steps": 8000,           # ~333 iters per level
+            "levels": (
+                ((0.0, 0.0), (0.0, 0.0)),
+                ((5.0, 15.0), (1.0, 2.0)),
+                ((10.0, 25.0), (1.5, 3.0)),
+                ((15.0, 50.0), (2.0, 4.0)),
+            ),
         },
     )
 
 
 @configclass
 class CommandsCfg:
-    """Standing velocity (zero) + bilateral held pose with wobble."""
+    """Standing velocity (zero) + held arm pose with wobble."""
 
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
@@ -161,10 +225,10 @@ class CommandsCfg:
     arm_pose_command = mdp.UniformArmPoseCommandCfg(
         asset_name="robot",
         all_arm_joint_names=ARM_JOINT_REGEX,
-        pitch_amplitude=1.5,                # set by curriculum
-        roll_amplitude=1.0,                 # set by curriculum
-        elbow_amplitude=1.5,                # set by curriculum
-        wobble_amplitude=0.0,               # set by curriculum
+        pitch_amplitude=1.5,                # set by curriculum (constant)
+        roll_amplitude=1.0,                 # set by curriculum (constant)
+        elbow_amplitude=1.5,                # set by curriculum (constant)
+        wobble_amplitude=0.0,               # set by curriculum (→ 0.15)
         wobble_frequency=2.0,               # 2 Hz
         apply_directly=True,
         debug_vis=False,
@@ -173,7 +237,8 @@ class CommandsCfg:
 
 @configclass
 class ActionsCfg:
-    """Policy commands ONLY legs+torso (13 joints)."""
+    """Policy commands ONLY legs+torso (13 joints). Arms driven externally
+    by arm_pose_command (Option II architecture)."""
 
     JointPositionAction = mdp.JointPositionActionCfg(
         asset_name="robot",
@@ -242,10 +307,12 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    """Phase 4 rewards. Changed from Phase 3:
-    - torso_lin_vel_xy: -3.0 -> -6.0 (2x stricter on head stability)
-    - torso_ang_vel: -1.5 -> -3.0 (2x stricter on head rotation)
-    - undesired_contacts already excludes shoulder/elbow (Phase 3 carryover)
+    """Phase 5 v2 rewards: phase4's reward set (kept verbatim) + p5_v1's
+    foot_stance_tracking. No reverts of phase4's deliberate exclusions:
+    - undesired_contacts stays scoped to torso/hip/knee only
+      (NO shoulder/elbow — arms are not policy-controlled, can't be blamed)
+    - base_contact termination stays REMOVED (was triggering 19% false
+      terminations from arm-to-torso self-contact in Phase 3)
     """
 
     track_lin_vel_xy = RewTerm(
@@ -298,9 +365,24 @@ class RewardsCfg:
         },
     )
 
+    # NEW (from p5_v1): exponential bonus for keeping feet near nominal stance.
+    # Creates "small steps cheap, big steps expensive" gradient via exp(-d/std).
+    foot_stance_tracking = RewTerm(
+        func=mdp.foot_stance_tracking,
+        weight=1.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+            "std": 0.08,
+            "nominal_foot_pos_b": [[0.0, 0.10], [0.0, -0.10]],
+        },
+    )
+
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
 
+    # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
+    # arm-to-torso self-contact during wobble would penalize policy for
+    # something it can't control.
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, weight=-1.0,
         params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg(
@@ -308,7 +390,7 @@ class RewardsCfg:
             body_names=["torso_link", ".*hip.*", ".*knee.*"])},
     )
 
-    # Kept at Phase 3 value (doubling destabilized PPO)
+    # Kept at Phase 3 value (doubling destabilized PPO — see 2026-05-14 log)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
         weight=-3.0,
@@ -321,7 +403,8 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
-    # NEW: positive bonus for camera stability — structural fix
+    # Positive bonus for camera stability — structural fix for the
+    # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
         weight=1.5,
@@ -335,15 +418,11 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
-    """Phase 4 terminations (structural fix).
+    """Phase 5 v2 terminations: phase4's set kept verbatim.
 
-    Changes from Phase 3:
-    - REMOVED base_contact termination.
-
-    base_contact at any threshold terminated 18-23% of episodes from
-    arm-to-torso self-contact, which the policy cannot avoid (arms are
-    externally commanded). Falls still caught via base_height
-    (pelvis < 0.5m).
+    Per 2026-05-14 lessons:
+    - base_contact was REMOVED. Threshold-raising attempts destabilized
+      PPO during warmstart. Falls still caught via base_height (pelvis < 0.5m).
     """
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
@@ -363,7 +442,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 60.0
+        self.episode_length_s = 60.0  # robot must stand indefinitely
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
@@ -373,11 +452,31 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class RobotPlayEnvCfg(RobotEnvCfg):
+    """Play-time env: forces max disturbances on all curricula so visual
+    evaluation matches the training distribution at max difficulty."""
+
     def __post_init__(self):
         super().__post_init__()
-        # Force max disturbance at play time
+        self.scene.num_envs = 32
+
+        # Force max wobble (already 0.15 in train, kept consistent)
         self.curriculum.arm_pose.params["wobble_amplitude_levels"] = (0.15, 0.15, 0.15, 0.15)
         self.commands.arm_pose_command.pitch_amplitude = 1.5
         self.commands.arm_pose_command.roll_amplitude = 1.0
         self.commands.arm_pose_command.elbow_amplitude = 1.5
         self.commands.arm_pose_command.wobble_amplitude = 0.15
+
+        # Force max impulse push velocity (skip ramp)
+        self.curriculum.push_velocity.params["warmup_steps"] = 0
+        self.curriculum.push_velocity.params["levels"] = (2.00,) * 9
+        self.events.push_robot.params["velocity_range"] = {
+            "x": (-2.0, 2.0), "y": (-2.0, 2.0),
+        }
+
+        # Force max sustained push (skip warmup, top level)
+        self.curriculum.sustained_push.params["warmup_steps"] = 0
+        self.curriculum.sustained_push.params["levels"] = (
+            ((15.0, 50.0), (2.0, 4.0)),
+        ) * 4
+        self.events.sustained_push_apply.params["force_magnitude_range"] = (15.0, 50.0)
+        self.events.sustained_push_apply.params["duration_range_s"] = (2.0, 4.0)
