@@ -91,3 +91,6 @@ wandb/
 .vscode/
 .idea/
 *.swp
+
+# Backups
+*.bak
