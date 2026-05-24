@@ -180,9 +180,13 @@ class CurriculumCfg:
         func=mdp.push_velocity_curriculum,
         params={
             "event_term_name": "push_robot",
-            "warmup_steps": 6000,        # ~250 iters
-            "hold_steps": 5000,           # ~208 iters per level
-            "levels": (0.30, 0.51, 0.72, 0.94, 1.15, 1.36, 1.57, 1.79, 2.00),
+            "warmup_steps": 2000,
+            "hold_steps": 12000,           # ~500 iters per level
+            "levels": (
+                0.30, 0.36, 0.43, 0.51,   # gentler initial steps (~20% jumps)
+                0.61, 0.73, 0.87, 1.04,
+                1.24, 1.48, 1.76, 2.00,
+            ),
         },
     )
 
@@ -190,17 +194,34 @@ class CurriculumCfg:
         func=mdp.sustained_push_curriculum,
         params={
             "event_term_name": "sustained_push_apply",
-            "warmup_steps": 15000,        # ~625 iters — gives wobble+impulse policy
-                                          # time to stabilize before sustained pushes
-            "hold_steps": 8000,           # ~333 iters per level
+            "warmup_steps": 3000,         # ~125 iter — re-establish before ramping
+            # Per-level dwell time. Doubles at the regime where v2c diverged
+            # (40N+) to give the critic more time to converge to the new
+            # return distribution. Total ramp ~3650 iters to reach 75N max.
+            "hold_steps_per_level": (
+                7200,    # warmup → 15N    (~300 iter, was 300)
+                7200,    # 15N → 20N        (~300 iter, was 300)
+                7200,    # 20N → 25N        (~300 iter, was 300)
+                9600,    # 25N → 32N        (~400 iter, +33%)
+                12000,   # 32N → 40N        (~500 iter, +67%)
+                14400,   # 40N → 50N        (~600 iter, +100%) ← divergence zone
+                16800,   # 50N → 60N        (~700 iter, +133%)
+                19200,   # 60N → 75N        (~800 iter, +167%) ← max regime
+            ),
             "levels": (
-                ((0.0, 0.0), (0.0, 0.0)),
-                ((5.0, 15.0), (1.0, 2.0)),
+                ((0.0,  0.0),  (0.0, 0.0)),   # warmup
+                ((5.0,  15.0), (1.0, 2.0)),
+                ((8.0,  20.0), (1.2, 2.5)),
                 ((10.0, 25.0), (1.5, 3.0)),
-                ((15.0, 50.0), (2.0, 4.0)),
+                ((12.0, 32.0), (1.7, 3.3)),
+                ((15.0, 40.0), (2.0, 3.5)),
+                ((18.0, 50.0), (2.0, 4.0)),
+                ((22.0, 60.0), (2.5, 4.0)),
+                ((28.0, 75.0), (3.0, 4.0)),
             ),
         },
     )
+
 
 
 @configclass
@@ -410,7 +431,7 @@ class RewardsCfg:
         weight=1.5,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "std_lin": 0.15,
+            "std_lin": 0.10,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
             "std_ang": 0.30,
         },
     )
@@ -446,7 +467,12 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+
+        # Bumped 2× for high-force regime (v2c divergence investigation).
+        # At 50N+ sustained on torso, the robot visits unusual configurations
+        # that may produce more contact pairs than default buffers handle.
+        self.sim.physx.gpu_max_rigid_patch_count = 20 * 2**15
+
         self.scene.contact_forces.update_period = self.sim.dt
 
 
