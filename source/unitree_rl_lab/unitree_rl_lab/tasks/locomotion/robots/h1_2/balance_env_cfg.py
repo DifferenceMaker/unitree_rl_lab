@@ -180,12 +180,10 @@ class CurriculumCfg:
         func=mdp.push_velocity_curriculum,
         params={
             "event_term_name": "push_robot",
-            "warmup_steps": 2000,
-            "hold_steps": 12000,           # ~500 iters per level
+            "warmup_steps": 3000,           # ~125 iter, brief settle from warmstart
+            "hold_steps": 3000,            # ~125 iter per level
             "levels": (
-                0.30, 0.36, 0.43, 0.51,   # gentler initial steps (~20% jumps)
-                0.61, 0.73, 0.87, 1.04,
-                1.24, 1.48, 1.76, 2.00,
+                0.75, 1.0, 1.25, 1.5,
             ),
         },
     )
@@ -194,34 +192,23 @@ class CurriculumCfg:
         func=mdp.sustained_push_curriculum,
         params={
             "event_term_name": "sustained_push_apply",
-            "warmup_steps": 3000,         # ~125 iter — re-establish before ramping
-            # Per-level dwell time. Doubles at the regime where v2c diverged
-            # (40N+) to give the critic more time to converge to the new
-            # return distribution. Total ramp ~3650 iters to reach 75N max.
+            "warmup_steps": 3000,
+            # 4 entries for 4 transitions between 5 levels (incl warmup level)
             "hold_steps_per_level": (
-                7200,    # warmup → 15N    (~300 iter, was 300)
-                7200,    # 15N → 20N        (~300 iter, was 300)
-                7200,    # 20N → 25N        (~300 iter, was 300)
-                9600,    # 25N → 32N        (~400 iter, +33%)
-                12000,   # 32N → 40N        (~500 iter, +67%)
-                14400,   # 40N → 50N        (~600 iter, +100%) ← divergence zone
-                16800,   # 50N → 60N        (~700 iter, +133%)
-                19200,   # 60N → 75N        (~800 iter, +167%) ← max regime
+                3000,    # warmup → 25N    (~125 iter)
+                4000,    # 25N → 40N        (~167 iter, +60% relative)
+                5000,    # 40N → 60N        (~208 iter, +50% relative)
+                6000,    # 60N → 75N        (~250 iter, +25% relative)
             ),
             "levels": (
                 ((0.0,  0.0),  (0.0, 0.0)),   # warmup
-                ((5.0,  15.0), (1.0, 2.0)),
-                ((8.0,  20.0), (1.2, 2.5)),
-                ((10.0, 25.0), (1.5, 3.0)),
-                ((12.0, 32.0), (1.7, 3.3)),
-                ((15.0, 40.0), (2.0, 3.5)),
-                ((18.0, 50.0), (2.0, 4.0)),
-                ((22.0, 60.0), (2.5, 4.0)),
-                ((28.0, 75.0), (3.0, 4.0)),
+                ((10.0, 25.0), (1.5, 3.0)),   # known territory (v2_4 absorbed)
+                ((15.0, 40.0), (2.0, 3.5)),   # known territory
+                ((22.0, 60.0), (2.5, 4.0)),   # divergence-zone in v2_4
+                ((28.0, 75.0), (3.0, 4.0)),   # max
             ),
         },
     )
-
 
 
 @configclass
