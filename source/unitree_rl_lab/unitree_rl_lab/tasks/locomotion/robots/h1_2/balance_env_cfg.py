@@ -84,8 +84,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.7, 1.0),
-            "dynamic_friction_range": (0.7, 1.0),
+            "static_friction_range": (0.7, 1.3),       # v3 DR: was (0.7, 1.0), now symmetric ±30% of nominal
+            "dynamic_friction_range": (0.7, 1.3),      # v3 DR: was (0.7, 1.0)
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
         },
@@ -96,7 +96,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "mass_distribution_params": (-1.0, 3.0),
+            "mass_distribution_params": (-3.0, 5.0),   # v3 DR: was (-1.0, 3.0), wider but keeps asymmetry
             "operation": "add",
         },
     )
