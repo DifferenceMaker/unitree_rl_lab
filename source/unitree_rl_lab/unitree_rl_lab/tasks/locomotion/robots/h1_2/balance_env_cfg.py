@@ -122,6 +122,19 @@ class EventCfg:
         },
     )
 
+    # Capture spawn root xy/yaw/foot pos for anti-drift rewards.
+    # Mode='reset' — runs after reset_base + reset_robot_joints. Stores into
+    # env.spawn_root_xy, env.spawn_yaw, env.spawn_foot_pos buffers.
+    # Used as REWARD signal only; not exposed to policy as observation
+    # (would be privileged info, real robot has no GPS).
+    capture_spawn_state = EventTerm(
+        func=mdp.capture_spawn_state,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+        },
+    )
+
     # Discrete impulse push — initial range is the curriculum's level 0 (0.30 m/s).
     # push_velocity_curriculum overrides velocity_range each step.
     push_robot = EventTerm(
@@ -420,6 +433,29 @@ class RewardsCfg:
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
             "std_lin": 0.10,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
             "std_ang": 0.30,
+        },
+    )
+
+    # ---- Block A: anti-drift rewards (v4) ----
+    # Penalize accumulated drift from spawn pose. Addresses sim2real
+    # circling failure where v3/push_v4 walked in slow circle on the
+    # real robot due to unmodeled yaw/position bias.
+
+    heading_l2_from_spawn = RewTerm(
+        func=mdp.heading_l2_from_spawn,
+        weight=-2.0,
+    )
+
+    base_pos_xy_l2_from_spawn = RewTerm(
+        func=mdp.base_pos_xy_l2_from_spawn,
+        weight=-1.0,
+    )
+
+    foot_displacement_l2_from_spawn = RewTerm(
+        func=mdp.foot_displacement_l2_from_spawn,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
         },
     )
 

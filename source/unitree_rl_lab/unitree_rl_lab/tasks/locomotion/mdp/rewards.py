@@ -443,3 +443,67 @@ def foot_stance_tracking(
 
     displacement = torch.norm(foot_pos_b_xy - nominal.unsqueeze(0), dim=-1)
     return torch.exp(-displacement.sum(dim=-1) / std)
+
+def heading_l2_from_spawn(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize squared deviation of current yaw from spawn yaw.
+
+    Wraps yaw delta to [-pi, pi] to handle the circular nature of yaw.
+    Returned per-env reward magnitude is in radians^2; with weight=-2.0, a
+    sustained 0.3 rad (~17°) yaw drift gives reward of -0.18 per step.
+    """
+    if not hasattr(env, "spawn_yaw"):
+        # Before first reset (shouldn't happen in normal flow)
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    quat = asset.data.root_quat_w
+    current_yaw = torch.atan2(
+        2.0 * (quat[:, 0] * quat[:, 3] + quat[:, 1] * quat[:, 2]),
+        1.0 - 2.0 * (quat[:, 2] ** 2 + quat[:, 3] ** 2),
+    )
+
+    # Wrap delta to [-pi, pi]
+    delta = current_yaw - env.spawn_yaw
+    delta = torch.atan2(torch.sin(delta), torch.cos(delta))
+
+    return delta ** 2
+
+
+def base_pos_xy_l2_from_spawn(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize squared L2 distance of base xy from spawn xy.
+
+    Magnitudes scale with displacement squared: 0.5m drift = 0.25 reward unit
+    (with weight=-1.0, penalty = -0.25 per step).
+    """
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    current_xy = asset.data.root_pos_w[:, :2]
+    delta = current_xy - env.spawn_root_xy
+    return torch.sum(delta ** 2, dim=-1)
+
+
+def foot_displacement_l2_from_spawn(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """Penalize squared L2 displacement of feet from spawn foot positions.
+
+    Sums over both feet and xy. A foot stepping 0.3m gives reward unit 0.09
+    (with weight=-0.5, penalty = -0.045 per step). Multiple steps compound.
+    """
+    if not hasattr(env, "spawn_foot_pos") or asset_cfg.body_ids is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    current_foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    delta = current_foot_pos - env.spawn_foot_pos
+    # Sum over feet and xy
+    return torch.sum(delta ** 2, dim=(-2, -1))

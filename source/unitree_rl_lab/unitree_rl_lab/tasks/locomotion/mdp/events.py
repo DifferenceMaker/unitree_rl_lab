@@ -123,3 +123,47 @@ def clear_expired_sustained_pushes(
         env_ids=expired_ids,
     )
     env._sustained_push_clear_time[expired_ids] = -1.0
+
+def capture_spawn_state(
+    env: "ManagerBasedRLEnv",
+    env_ids: "torch.Tensor",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+):
+    """Capture per-env spawn root state + foot positions after reset.
+
+    Stores three buffers on the env (lazy-initialized):
+      env.spawn_root_xy   : (num_envs, 2)    spawn root xy in world frame
+      env.spawn_yaw       : (num_envs,)      spawn yaw (z-axis rotation)
+      env.spawn_foot_pos  : (num_envs, 2, 2) spawn foot xy for [L, R] feet
+
+    Reward functions reference these buffers to penalize drift from spawn.
+    Spawn state is captured AFTER reset (mode='reset'), so it includes any
+    reset_base randomization (initial pose noise, etc.).
+
+    This is a privileged signal — used in REWARDS only, never as policy obs.
+    The real robot does not need to know its spawn position; the policy
+    learned via these rewards just produces actions that minimize drift.
+    """
+    asset = env.scene[asset_cfg.name]
+
+    # Lazy-init buffers attached to env
+    if not hasattr(env, "spawn_root_xy"):
+        env.spawn_root_xy = torch.zeros((env.num_envs, 2), device=env.device)
+        env.spawn_yaw = torch.zeros(env.num_envs, device=env.device)
+        env.spawn_foot_pos = torch.zeros((env.num_envs, 2, 2), device=env.device)
+
+    # Root xy in world frame
+    env.spawn_root_xy[env_ids] = asset.data.root_pos_w[env_ids, :2]
+
+    # Yaw from quaternion (wxyz convention in Isaac Lab)
+    quat = asset.data.root_quat_w[env_ids]
+    yaw = torch.atan2(
+        2.0 * (quat[:, 0] * quat[:, 3] + quat[:, 1] * quat[:, 2]),
+        1.0 - 2.0 * (quat[:, 2] ** 2 + quat[:, 3] ** 2),
+    )
+    env.spawn_yaw[env_ids] = yaw
+
+    # Foot xy — asset_cfg.body_ids resolved from regex at config time
+    if asset_cfg.body_ids is not None and len(asset_cfg.body_ids) == 2:
+        foot_pos = asset.data.body_pos_w[env_ids][:, asset_cfg.body_ids, :2]
+        env.spawn_foot_pos[env_ids] = foot_pos
