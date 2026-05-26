@@ -389,6 +389,15 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
+    # v4 Block D: penalize knee bend beyond nominal — encourages more
+    # extended legs, discourages crouching. Default knee bend is 0.36 rad
+    # (from UNITREE_H1_2_CFG.init_state.joint_pos). joint_deviation_l1
+    # penalizes |current - default|, so this pulls knees toward 0.36.
+    joint_deviation_knees = RewTerm(
+        func=mdp.joint_deviation_l1, weight=-0.3,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_knee_joint"])},
+    )
+
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
         weight=0.5,
@@ -413,7 +422,7 @@ class RewardsCfg:
         },
     )
 
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)  # v4: stronger anti-lean
     base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
 
     # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
