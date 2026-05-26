@@ -229,11 +229,11 @@ class CurriculumCfg:
                 6000,    # 60N → 75N        (~250 iter, +25% relative)
             ),
             "levels": (
-                ((0.0,  0.0),  (0.0, 0.0)),   # warmup
-                ((10.0, 25.0), (1.5, 3.0)),   # known territory (v2_4 absorbed)
-                ((15.0, 40.0), (2.0, 3.5)),   # known territory
-                ((22.0, 60.0), (2.5, 4.0)),   # divergence-zone in v2_4
-                ((28.0, 75.0), (3.0, 4.0)),   # max
+                ((0.0, 0.0),  (0.0, 0.0)),    # warmup: no push
+                ((0.0, 25.0), (1.5, 3.0)),    # v4: lower bound 0 for per-episode sampling
+                ((0.0, 40.0), (2.0, 3.5)),    # episodes get U[0, max]N, U[1.5, 3.0]s
+                ((0.0, 60.0), (2.5, 4.0)),    # some episodes get ~0N (stand still test)
+                ((0.0, 75.0), (3.0, 4.0)),    # some get full max
             ),
         },
     )
