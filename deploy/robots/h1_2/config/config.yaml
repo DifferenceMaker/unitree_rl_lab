@@ -4,9 +4,9 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Velocity:
-      id: 3
-      type: RLBase
+    # Velocity:
+    #   id: 3
+    #   type: RLBase
     BalancePush:
       id: 4
       type: RLBase
@@ -34,7 +34,7 @@ FSM:
   FixStand:
     transitions: 
       Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
+      # Velocity: RB + X.on_pressed
       BalancePush: RB + Y.on_pressed
 #      BalanceArms: RB + A.on_pressed
     kp: [
@@ -61,15 +61,15 @@ FSM:
         0.35, -0.25, -0.1, 0.65, 0, 0, 0,
       ]
     ]
-  Velocity:
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/rsl_rl/unitree_h1_2_velocity
+  # Velocity:
+  #   transitions:
+  #     Passive: LT + B.on_pressed
+  #   policy_dir: ../../../logs/rsl_rl/unitree_h1_2_velocity
 
   BalancePush:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/h1_2_balance_push_v4
+    policy_dir: ../../../logs/milestones/phase5_v3
 
 #  BalanceArms:
 #    transitions:

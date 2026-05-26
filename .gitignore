@@ -94,3 +94,7 @@ wandb/
 
 # Backups
 *.bak
+
+# Backup files from edit-with-fallback workflow
+*.bak
+*.bak-*

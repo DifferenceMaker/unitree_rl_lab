@@ -4,6 +4,7 @@
 #pragma once
 
 #include "isaaclab/envs/manager_based_rl_env.h"
+#include "ArmPosePublisher.h"
 
 namespace isaaclab
 {
@@ -136,5 +137,13 @@ REGISTER_OBSERVATION(gait_phase)
     return obs;
 }
 
+REGISTER_OBSERVATION(arm_pose_command)
+{
+    // 14-dim arm pose command obs (matches Python UniformArmPoseCommand.command).
+    // Returns default_arm_pos + held_delta. Wobble is NOT in obs by design:
+    // policy reacts to wobble via base_ang_vel/projected_gravity, not predicts it.
+    return h1_2::ArmPosePublisher::instance().compute_obs_command();
 }
 }
+}
+
