@@ -101,6 +101,21 @@ class EventCfg:
         },
     )
 
+    # v4 Block B: motor strength DR. Per-episode random scaling of kp/kd
+    # closes the sim2real gap for PD controller differences and reduces
+    # sim2sim gap (PhysX vs MuJoCo actuator dynamics).
+    randomize_motor_strength = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (0.85, 1.15),   # ±15% kp scale
+            "damping_distribution_params": (0.9, 1.1),       # ±10% kd scale
+            "operation": "scale",
+            "distribution": "uniform",
+        },
+    )
+
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
