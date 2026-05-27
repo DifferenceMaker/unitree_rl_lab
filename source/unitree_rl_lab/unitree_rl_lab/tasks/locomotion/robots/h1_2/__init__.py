@@ -18,7 +18,7 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotEnvCfgV5A",
         "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotPlayEnvCfgV5A",
-        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:BasePPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:V5PPORunnerCfg",
     },
 )
 
@@ -29,7 +29,7 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotEnvCfgV5B",
         "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotPlayEnvCfgV5B",
-        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:BasePPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:V5PPORunnerCfg",
     },
 )
 
@@ -40,6 +40,6 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotEnvCfgV5C",
         "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_v5:RobotPlayEnvCfgV5C",
-        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:BasePPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:V5PPORunnerCfg",
     },
 )
