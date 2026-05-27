@@ -57,11 +57,42 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     // Arms driven externally by ArmPosePublisher. Initialize to Training mode
     // (matches training distribution: held pose ±1.5/±1.0/±1.5, wobble 0.15).
     h1_2::ArmPosePublisher::instance().set_mode(h1_2::ArmPosePublisher::Mode::Training);
+    // // One-shot debug: print arm motor kp/kd values
+    // std::cout << "[BalancePush KP/KD] arm motor settings:" << std::endl;
+    // for (size_t i = 0; i < 14; i++) {
+    //     int motor_idx = ARM_SDK_MOTOR_IDS[i];
+    //     std::cout << "  motor " << motor_idx
+    //             << " kp=" << lowcmd->msg_.motor_cmd()[motor_idx].kp()
+    //             << " kd=" << lowcmd->msg_.motor_cmd()[motor_idx].kd()
+    //             << std::endl;
+    // }
 }
 
 void State_RLBase::run()
 {
     auto action = env->action_manager->processed_actions();
+
+    // One-shot KP/KD diagnostic on first run() call (after FixStand transition).
+    static bool kp_diag_printed = false;
+    if (!kp_diag_printed) {
+        kp_diag_printed = true;
+        std::cout << "[BalancePush KP/KD on entry] arm motor settings:" << std::endl;
+        for (size_t i = 0; i < 14; i++) {
+            int motor_idx = ARM_SDK_MOTOR_IDS[i];
+            std::cout << "  motor " << motor_idx
+                      << " kp=" << lowcmd->msg_.motor_cmd()[motor_idx].kp()
+                      << " kd=" << lowcmd->msg_.motor_cmd()[motor_idx].kd()
+                      << std::endl;
+        }
+        // Also dump leg+torso for comparison
+        std::cout << "[BalancePush KP/KD on entry] leg+torso motor settings:" << std::endl;
+        for (int motor_idx = 0; motor_idx < 13; motor_idx++) {
+            std::cout << "  motor " << motor_idx
+                      << " kp=" << lowcmd->msg_.motor_cmd()[motor_idx].kp()
+                      << " kd=" << lowcmd->msg_.motor_cmd()[motor_idx].kd()
+                      << std::endl;
+        }
+    }
 
     // DEBUG: log action + obs values once per second
     static int log_counter = 0;

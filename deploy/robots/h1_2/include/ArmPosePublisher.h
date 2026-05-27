@@ -88,11 +88,11 @@ private:
     static constexpr ModeParams MODE_PARAMS[4] = {
         /* Idle         */ {0.0f, 0.0f, 0.0f, 0.00f},
         /* Mild         */ {0.5f, 0.3f, 0.5f, 0.05f},
-        /* Training     */ {1.5f, 1.0f, 1.5f, 0.15f},
+        /* Training     */ {1.5f, 1.0f, 1.5f, 0.75f},
         /* Manipulation */ {0.0f, 0.0f, 0.0f, 0.00f},  // TODO: scripted trajectory
     };
 
-    static constexpr float WOBBLE_FREQ_HZ = 2.0f;
+    static constexpr float WOBBLE_FREQ_HZ = 0.5f;
 
     // Joint index helpers for the 14-dim layout above
     static constexpr size_t IDX_L_SHOULDER_PITCH = 0;
