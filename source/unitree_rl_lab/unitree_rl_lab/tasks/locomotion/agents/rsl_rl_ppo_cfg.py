@@ -34,3 +34,19 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class V5PPORunnerCfg(BasePPORunnerCfg):
+    """Override for V5A/B/C variants to share experiment_name with base task.
+    
+    Without this override, the V5A/B/C tasks default to experiment_name=""
+    which auto-derives from task ID, creating separate log dirs
+    (unitree_h1_2_balance_v5a/b/c). But train.sh's warmstart copies the
+    milestone to the BASE experiment dir (unitree_h1_2_balance/), so the V5
+    tasks can't find the warmstart checkpoint and fail at load time.
+    
+    Setting experiment_name explicitly here makes all three V5 variants
+    share the base task's log dir, so warmstart works.
+    """
+    experiment_name = "unitree_h1_2_balance"
