@@ -507,3 +507,82 @@ def foot_displacement_l2_from_spawn(
     delta = current_foot_pos - env.spawn_foot_pos
     # Sum over feet and xy
     return torch.sum(delta ** 2, dim=(-2, -1))
+
+def heading_stable_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Positive exponential reward for heading near spawn heading.
+    
+    Companion to heading_l2_from_spawn penalty. Reward shape:
+        exp(-|yaw_drift|² / std²)
+    
+    With std=0.1: 0.1 rad (~6°) drift gives ~0.37 reward; 0.3 rad → ~0.011.
+    """
+    if not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    quat = asset.data.root_quat_w
+    current_yaw = torch.atan2(
+        2.0 * (quat[:, 0] * quat[:, 3] + quat[:, 1] * quat[:, 2]),
+        1.0 - 2.0 * (quat[:, 2] ** 2 + quat[:, 3] ** 2),
+    )
+    delta = current_yaw - env.spawn_yaw
+    delta = torch.atan2(torch.sin(delta), torch.cos(delta))
+    return torch.exp(-(delta ** 2) / (std ** 2))
+
+
+def centered_pose_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Positive exponential reward for base xy near spawn xy.
+    
+    Companion to base_pos_xy_l2_from_spawn penalty. With std=0.15:
+    0.15m drift → ~0.37 reward; 0.5m drift → ~0.0001.
+    """
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    current_xy = asset.data.root_pos_w[:, :2]
+    delta_sq = torch.sum((current_xy - env.spawn_root_xy) ** 2, dim=-1)
+    return torch.exp(-delta_sq / (std ** 2))
+
+
+def foot_planted_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """Positive exponential reward for feet near spawn positions.
+    
+    Companion (or replacement) for foot_displacement_l2_from_spawn. With std=0.05:
+    tight tolerance — 5cm displacement → ~0.37 reward; 10cm → ~0.018.
+    """
+    if not hasattr(env, "spawn_foot_pos") or asset_cfg.body_ids is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    current_foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    delta_sq = torch.sum((current_foot_pos - env.spawn_foot_pos) ** 2, dim=(-2, -1))
+    return torch.exp(-delta_sq / (std ** 2))
+
+
+def upright_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Positive exponential reward for torso staying vertical.
+    
+    Companion to flat_orientation_l2 penalty. Measures projected gravity in
+    base frame — when robot is upright, projected_gravity_b is [0, 0, -1] so
+    xy magnitude is ~0. With std=0.05: ~3° tilt → ~0.37 reward.
+    """
+    asset = env.scene[asset_cfg.name]
+    proj_gravity_xy_sq = torch.sum(asset.data.projected_gravity_b[:, :2] ** 2, dim=-1)
+    return torch.exp(-proj_gravity_xy_sq / (std ** 2))
