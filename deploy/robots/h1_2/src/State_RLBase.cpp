@@ -56,11 +56,35 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     // Phase 5 v3 is Option II: 13-action policy controlling only legs+torso.
     // Arms driven externally by ArmPosePublisher. Initialize to Training mode
     // (matches training distribution: held pose ±1.5/±1.0/±1.5, wobble 0.15).
-    h1_2::ArmPosePublisher::instance().set_mode(h1_2::ArmPosePublisher::Mode::Training);
+    h1_2::ArmPosePublisher::instance().set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+
+    std::cout << "[FSM] State_RLBase " << state_string << " constructed." << std::endl;
+    std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
+    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training" << std::endl;
 }
 
 void State_RLBase::run()
 {
+    // ===== Arm mode switching via DPad (rising-edge triggered) =====
+    // Up=Idle, Right=Mild, Down=Training, Left=reserved
+    // Operates independent of FSM state — works in any BalancePush variant.
+    using ArmMode = h1_2::ArmPosePublisher::Mode;
+    auto& arm_pub = h1_2::ArmPosePublisher::instance();
+
+    if (lowstate->joystick.up.on_pressed) {
+        arm_pub.set_mode(ArmMode::Idle);
+        std::cout << "[ARM_MODE] -> IDLE (no motion)" << std::endl;
+    }
+    if (lowstate->joystick.right.on_pressed) {
+        arm_pub.set_mode(ArmMode::Mild);
+        std::cout << "[ARM_MODE] -> MILD (gentle disturbance)" << std::endl;
+    }
+    if (lowstate->joystick.down.on_pressed) {
+        arm_pub.set_mode(ArmMode::Training);
+        std::cout << "[ARM_MODE] -> TRAINING (full disturbance)" << std::endl;
+    }
+
+
     auto action = env->action_manager->processed_actions();
 
     // DEBUG: log action + obs values once per second
