@@ -353,21 +353,21 @@ class RewardsCfg:
 
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
-        weight=1.0,
+        weight=1.5,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp,
-        weight=0.5,
+        weight=0.75,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
-    alive = RewTerm(func=mdp.is_alive, weight=20.0)
+    alive = RewTerm(func=mdp.is_alive, weight=30.0)
 
-    base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
-    base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.5)
+    base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.0375)
 
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.5)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.375)
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1e-6,
@@ -375,17 +375,17 @@ class RewardsCfg:
     )
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
-        weight=-5.0,
+        weight=-3.75,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEGS_TORSO_JOINT_REGEX)},
     )
 
     joint_deviation_torso = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-1.0,
+        func=mdp.joint_deviation_l1, weight=-0.75,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["torso_joint"])},
     )
 
     joint_deviation_hips = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-0.3,
+        func=mdp.joint_deviation_l1, weight=-0.225,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
@@ -394,13 +394,13 @@ class RewardsCfg:
     # (from UNITREE_H1_2_CFG.init_state.joint_pos). joint_deviation_l1
     # penalizes |current - default|, so this pulls knees toward 0.36.
     joint_deviation_knees = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-0.3,
+        func=mdp.joint_deviation_l1, weight=-0.225,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_knee_joint"])},
     )
 
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
-        weight=0.5,
+        weight=0.75,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[
                 ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint",
@@ -414,7 +414,7 @@ class RewardsCfg:
     # Creates "small steps cheap, big steps expensive" gradient via exp(-d/std).
     foot_stance_tracking = RewTerm(
         func=mdp.foot_stance_tracking,
-        weight=1.0,
+        weight=1.5,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
             "std": 0.08,
@@ -422,14 +422,14 @@ class RewardsCfg:
         },
     )
 
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)  # v4: stronger anti-lean
-    base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 1.0})
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.875)  # v4: stronger anti-lean
+    base_height = RewTerm(func=mdp.base_height_l2, weight=-7.5, params={"target_height": 1.0})
 
     # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
     # arm-to-torso self-contact during wobble would penalize policy for
     # something it can't control.
     undesired_contacts = RewTerm(
-        func=mdp.undesired_contacts, weight=-1.0,
+        func=mdp.undesired_contacts, weight=-0.75,
         params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg(
             "contact_forces",
             body_names=["torso_link", ".*hip.*", ".*knee.*"])},
@@ -438,13 +438,13 @@ class RewardsCfg:
     # Kept at Phase 3 value (doubling destabilized PPO — see 2026-05-14 log)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
-        weight=-3.0,
+        weight=-2.25,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
     torso_ang_vel = RewTerm(
         func=mdp.body_ang_vel_l2,
-        weight=-1.5,
+        weight=-1.125,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
@@ -452,7 +452,7 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        weight=1.5,
+        weight=2.25,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
             "std_lin": 0.10,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
@@ -467,17 +467,17 @@ class RewardsCfg:
 
     heading_l2_from_spawn = RewTerm(
         func=mdp.heading_l2_from_spawn,
-        weight=-2.0,
+        weight=-1.5,
     )
 
     base_pos_xy_l2_from_spawn = RewTerm(
         func=mdp.base_pos_xy_l2_from_spawn,
-        weight=-1.0,
+        weight=-0.75,
     )
 
     foot_displacement_l2_from_spawn = RewTerm(
         func=mdp.foot_displacement_l2_from_spawn,
-        weight=-0.5,
+        weight=-0.375,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
         },
