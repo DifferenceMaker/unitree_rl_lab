@@ -47,11 +47,24 @@ ELBOW_PITCH_JOINT_REGEX = [".*_elbow_pitch_joint"]
 class UniformArmPoseCommand(CommandTerm):
     """Episode-stable held pose + sinusoidal wobble per joint.
 
-    Phase 4 specifics:
-    - 3 sampled held values per episode (pitch, roll, elbow) — same as Phase 3
-    - 4 wobble phase offsets per episode (one per joint channel)
-    - Each step adds wobble_amplitude * sin(2*pi * freq * t + phase) on top
-    - Time t is tracked per env, reset on episode reset
+    v4.1: per-episode per-env amplitude sampling.
+    
+    Each episode reset:
+      - pitch_amp_episode  ~ U(0, pitch_amplitude_max)
+      - roll_amp_episode   ~ U(0, roll_amplitude_max)
+      - elbow_amp_episode  ~ U(0, elbow_amplitude_max)
+      - wobble_amp_episode ~ U(0, wobble_amplitude_max)
+      - 4 wobble phase offsets uniform in [0, 2pi]
+      - Held deltas sampled within that episode's amplitudes
+    
+    This ensures coverage of:
+      - "stand still, no arms" (amplitudes near 0)
+      - "held pose, no wobble" (held amps > 0, wobble amp near 0)
+      - "wobble only" (held amps near 0, wobble amp > 0)
+      - "max disturbance" (all amps near max)
+    
+    The policy must learn ALL of these simultaneously, preparing it for the
+    full sim2real distribution (Idle/Mild/Training modes on the C++ side).
     """
 
     cfg: "UniformArmPoseCommandCfg"
@@ -97,6 +110,12 @@ class UniformArmPoseCommand(CommandTerm):
         self.default_right_roll_pos = self.robot.data.default_joint_pos[:, self.right_roll_joint_ids].clone()
         self.default_elbow_pos = self.robot.data.default_joint_pos[:, self.elbow_joint_ids].clone()
 
+        # Per-env per-episode amplitude samples (NEW for v4.1)
+        self.pitch_amp_episode = torch.zeros(env.num_envs, device=env.device)
+        self.roll_amp_episode = torch.zeros(env.num_envs, device=env.device)
+        self.elbow_amp_episode = torch.zeros(env.num_envs, device=env.device)
+        self.wobble_amp_episode = torch.zeros(env.num_envs, device=env.device)
+
         # Step dt for time integration
         self.dt = env.step_dt
 
@@ -120,15 +139,23 @@ class UniformArmPoseCommand(CommandTerm):
         return self.default_arm_pos + self.command_b
 
     def _resample_command(self, env_ids):
-        """Resample held deltas and wobble phase offsets at episode reset."""
+        """Resample episode amplitudes, held deltas, and wobble phase at episode reset."""
         n = len(env_ids)
         if n == 0:
             return
 
-        # Sample held deltas
-        new_pitch = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.pitch_amplitude
-        new_roll = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.roll_amplitude
-        new_elbow = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.cfg.elbow_amplitude
+        # v4.1: per-episode per-env amplitude sampling — uniformly from [0, max].
+        # This means each episode can be anywhere from "no arm motion" to "max disturbance",
+        # including mixed configs like "held offset but no wobble" or "wobble but no offset".
+        self.pitch_amp_episode[env_ids] = torch.rand(n, device=self.device) * self.cfg.pitch_amplitude
+        self.roll_amp_episode[env_ids] = torch.rand(n, device=self.device) * self.cfg.roll_amplitude
+        self.elbow_amp_episode[env_ids] = torch.rand(n, device=self.device) * self.cfg.elbow_amplitude
+        self.wobble_amp_episode[env_ids] = torch.rand(n, device=self.device) * self.cfg.wobble_amplitude
+
+        # Sample held deltas within this episode's amplitudes
+        new_pitch = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.pitch_amp_episode[env_ids]
+        new_roll = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.roll_amp_episode[env_ids]
+        new_elbow = (torch.rand(n, device=self.device) * 2.0 - 1.0) * self.elbow_amp_episode[env_ids]
 
         self.pitch_delta[env_ids] = new_pitch
         self.roll_delta[env_ids] = new_roll
@@ -160,10 +187,9 @@ class UniformArmPoseCommand(CommandTerm):
         self.t += self.dt
         omega_t = 2.0 * math.pi * self.cfg.wobble_frequency * self.t
 
-        # Per-channel wobble values (one per env per channel)
-        # wobble_phase shape: (num_envs, 4)
-        # omega_t shape: (num_envs,) — broadcast to (num_envs, 1)
-        wobble = self.cfg.wobble_amplitude * torch.sin(
+        # v4.1: per-env wobble amplitude (was scalar self.cfg.wobble_amplitude)
+        # wobble_amp_episode shape: (num_envs,) — broadcast to (num_envs, 1) below
+        wobble = self.wobble_amp_episode.unsqueeze(1) * torch.sin(
             omega_t.unsqueeze(1) + self.wobble_phase
         )
         # wobble shape: (num_envs, 4) — channels: pitch, left_roll, right_roll, elbow
@@ -177,7 +203,6 @@ class UniformArmPoseCommand(CommandTerm):
         self.robot.set_joint_position_target(left_roll_target, joint_ids=self.left_roll_joint_ids)
 
         # Right roll: mirrored held + wobble[:, 2]
-        # Note: right roll has independent phase but same magnitude wobble
         right_roll_target = self.default_right_roll_pos + (-self.roll_delta + wobble[:, 2]).unsqueeze(1)
         self.robot.set_joint_position_target(right_roll_target, joint_ids=self.right_roll_joint_ids)
 
