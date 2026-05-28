@@ -10,16 +10,20 @@ FSM:
     BalancePush:
       id: 4
       type: RLBase
+    BalancePushV4:                      # NEW
+      id: 5                             # NEW
+      type: RLBase                      # NEW
 #    BalanceArms:
-#      id: 5
+#      id: 6
 #      type: RLBase
+  
   Passive:
     transitions:
       FixStand: LT + up.on_pressed
-    mode: [ # motor mode
-      10,10,10,10,1,1,
-      10,10,10,10,1,1,
-      10,
+    mode: [
+      1,1,1,1,1,1,
+      1,1,1,1,1,1,
+      1,
       1,1,1,1,1,1,1,
       1,1,1,1,1,1,1
     ]
@@ -29,14 +33,14 @@ FSM:
       5,
       2,2,
       2,2,2,2,
-      2,2,2,2, 
+      2,2,2,2,
     ]
+  
   FixStand:
     transitions: 
       Passive: LT + B.on_pressed
-      # Velocity: RB + X.on_pressed
-      BalancePush: RB + Y.on_pressed
-#      BalanceArms: RB + A.on_pressed
+      BalancePush: RB + Y.on_pressed     # v3 entry (unchanged)
+      BalancePushV4: RB + A.on_pressed   # NEW: v4 iter 62400 entry
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -61,17 +65,20 @@ FSM:
         0.35, -0.25, -0.1, 0.65, 0, 0, 0,
       ]
     ]
+  
   # Velocity:
   #   transitions:
   #     Passive: LT + B.on_pressed
   #   policy_dir: ../../../logs/rsl_rl/unitree_h1_2_velocity
-
+  
   BalancePush:
     transitions:
       Passive: LT + B.on_pressed
+      BalancePushV4: RB + up.on_pressed   # NEW: switch v3 -> v4 mid-run
     policy_dir: ../../../logs/milestones/phase5_v3
-
-#  BalanceArms:
-#    transitions:
-#      Passive: LT + B.on_pressed
-#    policy_dir: ../../../logs/milestones/h1_2_arm_phaseA_optII_phase4_final
+  
+  BalancePushV4:                                       # NEW BLOCK
+    transitions:
+      Passive: LT + B.on_pressed
+      BalancePush: RB + down.on_pressed   # switch v4 -> v3 mid-run
+    policy_dir: ../../../logs/milestones/p5v4

@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <chrono>
+#include <ctime>
+#include <iostream>
 #include "FSMState.h"
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "isaaclab/envs/mdp/terminations.h"
@@ -14,6 +17,15 @@ public:
     
     void enter()
     {
+         // Log state entry — fires on every transition INTO this state
+        auto now = std::chrono::system_clock::now();
+        auto now_t = std::chrono::system_clock::to_time_t(now);
+        std::cout << "============================================================" << std::endl;
+        std::cout << "[FSM] ENTER " << getStateString() << " — policy:" << std::endl;
+        std::cout << "[FSM]   " << param::config["FSM"][getStateString()]["policy_dir"].as<std::string>() << std::endl;
+        std::cout << "[FSM] State ID: " << getState() << "  Entered at: " << std::ctime(&now_t);
+        std::cout << "============================================================" << std::endl;
+
         // set gain
         for (int i = 0; i < env->robot->data.joint_stiffness.size(); ++i)
         {
@@ -34,7 +46,7 @@ public:
             // Initialize timing
             auto sleepTill = clock::now() + dt;
             env->reset();
-
+ 
             while (policy_thread_running)
             {
                 env->step();
@@ -50,6 +62,10 @@ public:
     
     void exit()
     {
+        std::cout << "============================================================" << std::endl;
+        std::cout << "[FSM] EXIT " << getStateString() << std::endl;
+        std::cout << "============================================================" << std::endl;
+        
         policy_thread_running = false;
         if (policy_thread.joinable()) {
             policy_thread.join();
