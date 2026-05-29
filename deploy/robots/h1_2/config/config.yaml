@@ -81,4 +81,4 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
       BalancePush: RB + down.on_pressed   # switch v4 -> v3 mid-run
-    policy_dir: ../../../logs/milestones/p5v4
+    policy_dir: ../../../logs/milestones/p5v4.2_iter62800
