@@ -84,8 +84,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.7, 1.3),       # v3 DR: was (0.7, 1.0), now symmetric ±30% of nominal
-            "dynamic_friction_range": (0.7, 1.3),      # v3 DR: was (0.7, 1.0)
+            "static_friction_range": (1.0, 1.0),       # p6: DR off, nominal
+            "dynamic_friction_range": (1.0, 1.0),      # p6: DR off, nominal
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
         },
@@ -96,7 +96,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "mass_distribution_params": (-3.0, 5.0),   # v3 DR: was (-1.0, 3.0), wider but keeps asymmetry
+            "mass_distribution_params": (0.0, 0.0),    # p6: DR off
             "operation": "add",
         },
     )
@@ -109,8 +109,8 @@ class EventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "stiffness_distribution_params": (0.85, 1.15),   # ±15% kp scale
-            "damping_distribution_params": (0.9, 1.1),       # ±10% kd scale
+            "stiffness_distribution_params": (1.0, 1.0),     # p6: DR off
+            "damping_distribution_params": (1.0, 1.0),       # p6: DR off
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -211,7 +211,7 @@ class CurriculumCfg:
             "warmup_steps": 3000,           # ~125 iter, brief settle from warmstart
             "hold_steps": 3000,            # ~125 iter per level
             "levels": (
-                0.75, 1.0, 1.25, 1.5,
+                0.25, 0.5,    # p6: ceiling 0.5 m/s (was 1.5)
             ),
         },
     )
@@ -221,19 +221,15 @@ class CurriculumCfg:
         params={
             "event_term_name": "sustained_push_apply",
             "warmup_steps": 3000,
-            # 4 entries for 4 transitions between 5 levels (incl warmup level)
+            # 2 entries for 2 transitions between 3 levels (incl warmup)
             "hold_steps_per_level": (
                 3000,    # warmup → 25N    (~125 iter)
                 4000,    # 25N → 40N        (~167 iter, +60% relative)
-                5000,    # 40N → 60N        (~208 iter, +50% relative)
-                6000,    # 60N → 75N        (~250 iter, +25% relative)
             ),
             "levels": (
                 ((0.0, 0.0),  (0.0, 0.0)),    # warmup: no push
-                ((0.0, 25.0), (1.5, 3.0)),    # v4: lower bound 0 for per-episode sampling
-                ((0.0, 40.0), (2.0, 3.5)),    # episodes get U[0, max]N, U[1.5, 3.0]s
-                ((0.0, 60.0), (2.5, 4.0)),    # some episodes get ~0N (stand still test)
-                ((0.0, 75.0), (3.0, 4.0)),    # some get full max
+                ((0.0, 15.0), (1.5, 3.0)),    # p6: lower bound 0 kept
+                ((0.0, 30.0), (2.0, 3.5)),    # p6: ceiling 30N (was 75N)
             ),
         },
     )
@@ -389,14 +385,8 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
-    # v4 Block D: penalize knee bend beyond nominal — encourages more
-    # extended legs, discourages crouching. Default knee bend is 0.36 rad
-    # (from UNITREE_H1_2_CFG.init_state.joint_pos). joint_deviation_l1
-    # penalizes |current - default|, so this pulls knees toward 0.36.
-    joint_deviation_knees = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-0.225,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_knee_joint"])},
-    )
+    # p6: joint_deviation_knees DELETED — bent-knee stance allowed.
+    # Lower CoM for stability; policy chooses knee angle freely.
 
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
@@ -422,7 +412,7 @@ class RewardsCfg:
         },
     )
 
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.875)  # v4: stronger anti-lean
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)  # p6: tight anti-lean
     base_height = RewTerm(func=mdp.base_height_l2, weight=-7.5, params={"target_height": 1.0})
 
     # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
@@ -438,13 +428,13 @@ class RewardsCfg:
     # Kept at Phase 3 value (doubling destabilized PPO — see 2026-05-14 log)
     torso_lin_vel_xy = RewTerm(
         func=mdp.body_lin_vel_xy_l2,
-        weight=-2.25,
+        weight=-3.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
     torso_ang_vel = RewTerm(
         func=mdp.body_ang_vel_l2,
-        weight=-1.125,
+        weight=-2.0,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
     )
 
@@ -452,11 +442,11 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        weight=2.25,
+        weight=4.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "std_lin": 0.10,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
-            "std_ang": 0.30,
+            "std_lin": 0.07,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
+            "std_ang": 0.20,    # p6: tighter angular for camera
         },
     )
 
@@ -541,15 +531,15 @@ class RobotPlayEnvCfg(RobotEnvCfg):
 
         # Force max impulse push velocity (skip ramp)
         self.curriculum.push_velocity.params["warmup_steps"] = 0
-        self.curriculum.push_velocity.params["levels"] = (2.00,) * 9
+        self.curriculum.push_velocity.params["levels"] = (0.5,) * 2    # p6: match train ceiling
         self.events.push_robot.params["velocity_range"] = {
-            "x": (-2.0, 2.0), "y": (-2.0, 2.0),
+            "x": (-0.5, 0.5), "y": (-0.5, 0.5),    # p6: match train ceiling
         }
 
         # Force max sustained push (skip warmup, top level)
         self.curriculum.sustained_push.params["warmup_steps"] = 0
         self.curriculum.sustained_push.params["levels"] = (
-            ((15.0, 50.0), (2.0, 4.0)),
+            ((0.0, 30.0), (2.0, 3.5)),    # p6: match train ceiling 30N
         ) * 4
-        self.events.sustained_push_apply.params["force_magnitude_range"] = (15.0, 50.0)
+        self.events.sustained_push_apply.params["force_magnitude_range"] = (0.0, 30.0)    # p6
         self.events.sustained_push_apply.params["duration_range_s"] = (2.0, 4.0)
