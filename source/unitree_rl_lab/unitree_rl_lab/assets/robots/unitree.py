@@ -724,11 +724,11 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
         asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2.urdf"),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 1.05),
+        pos=(0.0, 0.0, 0.98),                  # p7 crouch: lower pelvis for bent legs
         joint_pos={
-            ".*_hip_pitch_joint": -0.16,
-            ".*_knee_joint": 0.36,
-            ".*_ankle_pitch_joint": -0.2,
+            ".*_hip_pitch_joint": -0.30,       # p7 crouch (was -0.16): thigh fwd
+            ".*_knee_joint": 0.60,             # p7 crouch (was 0.36): more bend
+            ".*_ankle_pitch_joint": -0.30,     # p7 crouch (was -0.2): foot flat
             ".*_ankle_roll_joint": 0.0,
             ".*_shoulder_pitch_joint": 0.4,
             ".*_elbow_pitch_joint": 0.3,

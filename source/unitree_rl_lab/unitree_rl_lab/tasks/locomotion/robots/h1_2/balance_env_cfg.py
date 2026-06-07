@@ -363,7 +363,7 @@ class RewardsCfg:
     base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.5)
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.0375)
 
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.375)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.6)  # p7: bumped (was -0.375) anti-jitter
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1e-6,
@@ -413,7 +413,7 @@ class RewardsCfg:
     )
 
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)  # p6: tight anti-lean
-    base_height = RewTerm(func=mdp.base_height_l2, weight=-7.5, params={"target_height": 1.0})
+    base_height = RewTerm(func=mdp.base_height_l2, weight=-7.5, params={"target_height": 0.93})  # p7 crouch: lowered from 1.0
 
     # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
     # arm-to-torso self-contact during wobble would penalize policy for
