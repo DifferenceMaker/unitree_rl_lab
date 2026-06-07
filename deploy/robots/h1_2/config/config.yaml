@@ -4,16 +4,7 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    # Velocity:
-    #   id: 3
-    #   type: RLBase
-    BalancePush:
-      id: 4
-      type: RLBase
-    BalancePushV4:                      # NEW
-      id: 5                             # NEW
-      type: RLBase                      # NEW
-    BalanceP6_mass:
+    BalanceD:
       id: 6
       type: RLBase
   
@@ -39,9 +30,7 @@ FSM:
   FixStand:
     transitions: 
       Passive: LT + B.on_pressed
-      BalancePush: RB + Y.on_pressed     # v3 entry (unchanged)
-      BalancePushV4: RB + A.on_pressed   # NEW: v4 iter 62400 entry
-      BalanceP6_mass: RB + B.on_pressed
+      BalanceD: RB + B.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -67,24 +56,7 @@ FSM:
       ]
     ]
   
-  # Velocity:
-  #   transitions:
-  #     Passive: LT + B.on_pressed
-  #   policy_dir: ../../../logs/rsl_rl/unitree_h1_2_velocity
-  
-  BalancePush:
+  BalanceD:
     transitions:
       Passive: LT + B.on_pressed
-      BalancePushV4: RB + up.on_pressed   # NEW: switch v3 -> v4 mid-run
-    policy_dir: ../../../logs/milestones/phase5_v3
-  
-  BalancePushV4:                                       # NEW BLOCK
-    transitions:
-      Passive: LT + B.on_pressed
-      BalancePush: RB + down.on_pressed   # switch v4 -> v3 mid-run
-    policy_dir: ../../../logs/milestones/p5v4.2_iter62800
-  
-  BalanceP6_mass:
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p6mass
+    policy_dir: ../../../logs/milestones/p6mass_D
