@@ -4,7 +4,7 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    BalanceD:
+    Balance:
       id: 6
       type: RLBase
   
@@ -30,7 +30,7 @@ FSM:
   FixStand:
     transitions: 
       Passive: LT + B.on_pressed
-      BalanceD: RB + B.on_pressed
+      Balance: RB + B.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -56,7 +56,7 @@ FSM:
       ]
     ]
   
-  BalanceD:
+  Balance:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p6mass_D
+    policy_dir: ../../../logs/milestones/p7_1a
