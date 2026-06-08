@@ -198,12 +198,14 @@ class UniformArmPoseCommand(CommandTerm):
         pitch_target = self.default_pitch_pos + (self.pitch_delta + wobble[:, 0]).unsqueeze(1)
         self.robot.set_joint_position_target(pitch_target, joint_ids=self.pitch_joint_ids)
 
-        # Left roll: held + wobble[:, 1]
-        left_roll_target = self.default_left_roll_pos + (self.roll_delta + wobble[:, 1]).unsqueeze(1)
+        # Left roll: held + wobble[:, 1], CLAMPED to +/-0.8 (p7_1b self-collision guard)
+        left_roll_offset = torch.clamp(self.roll_delta + wobble[:, 1], -0.8, 0.8)
+        left_roll_target = self.default_left_roll_pos + left_roll_offset.unsqueeze(1)
         self.robot.set_joint_position_target(left_roll_target, joint_ids=self.left_roll_joint_ids)
 
         # Right roll: mirrored held + wobble[:, 2]
-        right_roll_target = self.default_right_roll_pos + (-self.roll_delta + wobble[:, 2]).unsqueeze(1)
+        right_roll_offset = torch.clamp(-self.roll_delta + wobble[:, 2], -0.8, 0.8)  # p7_1b clamp
+        right_roll_target = self.default_right_roll_pos + right_roll_offset.unsqueeze(1)
         self.robot.set_joint_position_target(right_roll_target, joint_ids=self.right_roll_joint_ids)
 
         # Elbow: held + wobble[:, 3]

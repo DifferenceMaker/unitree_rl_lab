@@ -200,7 +200,7 @@ class CurriculumCfg:
             "pitch_amplitude": 1.5,                    # held pose pitch (constant)
             "roll_amplitude": 1.0,                     # held pose roll (constant)
             "elbow_amplitude": 1.5,                    # held pose elbow (constant)
-            "wobble_amplitude_levels": (0.15, 0.15, 0.15, 0.15),
+            "wobble_amplitude_levels": (0.25, 0.25, 0.25, 0.25),  # p7_1b: 0.15->0.25 (roll clamped in sampler)
         },
     )
 
@@ -277,6 +277,10 @@ class ActionsCfg:
         joint_names=LEGS_TORSO_JOINT_REGEX,
         scale=0.25,
         use_default_offset=True,
+        # p7_1b: hard clip on knee TARGET angle. Floor 0.45 = policy cannot
+        # straighten knees past 0.45, forces crouch. MUST also be in deploy.yaml
+        # + applied by C++ controller or sim2real diverges.
+        clip={".*_knee_joint": (0.45, 2.5)},
     )
 
 
@@ -531,11 +535,11 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.num_envs = 32
 
         # Force max wobble (already 0.15 in train, kept consistent)
-        self.curriculum.arm_pose.params["wobble_amplitude_levels"] = (0.15, 0.15, 0.15, 0.15)
+        self.curriculum.arm_pose.params["wobble_amplitude_levels"] = (0.25, 0.25, 0.25, 0.25)  # p7_1b
         self.commands.arm_pose_command.pitch_amplitude = 1.5
         self.commands.arm_pose_command.roll_amplitude = 1.0
         self.commands.arm_pose_command.elbow_amplitude = 1.5
-        self.commands.arm_pose_command.wobble_amplitude = 0.15
+        self.commands.arm_pose_command.wobble_amplitude = 0.25  # p7_1b
 
         # Force max impulse push velocity (skip ramp)
         self.curriculum.push_velocity.params["warmup_steps"] = 0
