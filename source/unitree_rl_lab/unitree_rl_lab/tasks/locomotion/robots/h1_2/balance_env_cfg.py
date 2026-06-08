@@ -388,6 +388,14 @@ class RewardsCfg:
     # p6: joint_deviation_knees DELETED — bent-knee stance allowed.
     # Lower CoM for stability; policy chooses knee angle freely.
 
+    # p7_1b: RE-ADDED to FORCE the commanded crouch. joint_deviation_l1 pulls
+    # knees toward default_joint_pos (now 0.6). Without this the policy reverts
+    # to near-upright. Moderate weight: holds crouch but knees free to flex.
+    joint_deviation_knees = RewTerm(
+        func=mdp.joint_deviation_l1, weight=-0.4,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_knee_joint"])},
+    )
+
     stance_bonus_legs_torso = RewTerm(
         func=mdp.stance_bonus,
         weight=0.75,
@@ -413,7 +421,7 @@ class RewardsCfg:
     )
 
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)  # p6: tight anti-lean
-    base_height = RewTerm(func=mdp.base_height_l2, weight=-7.5, params={"target_height": 0.93})  # p7 crouch: lowered from 1.0
+    base_height = RewTerm(func=mdp.base_height_l2, weight=-15.0, params={"target_height": 0.87})  # p7_1b: forced crouch
 
     # NOTE: undesired_contacts kept to phase4 scope. NO shoulder/elbow:
     # arm-to-torso self-contact during wobble would penalize policy for
