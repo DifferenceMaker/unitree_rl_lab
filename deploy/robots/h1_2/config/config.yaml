@@ -59,4 +59,10 @@ FSM:
   Balance:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p7_1a
+    policy_dir: ../../../logs/milestones/p6mass_D   # was p7_1a; teleop bridge needs a 13-action arms-external policy
+    # Arm source for the 13-action balance policy:
+    #   teleop -> live arm pose from xr_teleoperate (rt/arm_sdk)
+    #   (omit) -> Idle default; DPad switches Up=Idle Right=Mild Down=Training Left=Teleop
+    arm_mode: teleop
+    arm_max_speed: 6.0   # rad/s, steady-state slew cap on the streamed arm command
+    arm_ramp_s: 2.0      # s, ease the slew cap 0 -> max on (re)engagement (no jump-in)

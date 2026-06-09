@@ -7,13 +7,9 @@
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "ArmPosePublisher.h"
 
-// Arm SDK motor indices in URDF arm joint order (14 entries).
-// Derived from joint_ids_map[articulation_idx] for each arm joint.
-// Matches standard Unitree HG protocol H1-2 motor numbering:
-//   13=L_SHOULDER_PITCH, 20=R_SHOULDER_PITCH, 14=L_SHOULDER_ROLL, etc.
-static constexpr int ARM_SDK_MOTOR_IDS[14] = {
-    13, 20, 14, 21, 15, 22, 16, 23, 17, 24, 18, 25, 19, 26
-};
+// Arm SDK motor indices (URDF arm-joint order, 14 entries) are owned by
+// ArmPosePublisher::ARM_SDK_MOTOR_IDS — the single source of truth shared between
+// the arm-pose stream/obs and the motor write below.
 
 // URDF (= articulation) indices of the 13 leg+torso joints, in policy action order.
 // Matches actions.JointPositionAction.joint_ids in deploy.yaml.
@@ -53,20 +49,35 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
         )
     );
 
-    // Phase 5 v3 is Option II: 13-action policy controlling only legs+torso.
-    // Arms driven externally by ArmPosePublisher. Initialize to Training mode
-    // (matches training distribution: held pose ±1.5/±1.0/±1.5, wobble 0.15).
-    h1_2::ArmPosePublisher::instance().set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+    // Option II 13-action policy: controls only legs+torso; the 14 arm joints are
+    // driven externally by ArmPosePublisher. The initial arm source is chosen via
+    // the `arm_mode` config key and can be changed at runtime with the DPad
+    // (Up=Idle | Right=Mild | Down=Training | Left=Teleop):
+    //   arm_mode: teleop  -> live 14-dim arm pose from xr_teleoperate over rt/arm_sdk
+    //   (anything else)   -> Idle default (built-in wobble self-test via DPad)
+    // Optional teleop tuning keys: arm_max_speed (rad/s), arm_ramp_s (seconds).
+    auto& arm_pub = h1_2::ArmPosePublisher::instance();
+    const float arm_max_speed = cfg["arm_max_speed"] ? cfg["arm_max_speed"].as<float>() : 6.0f;
+    const float arm_ramp_s    = cfg["arm_ramp_s"]    ? cfg["arm_ramp_s"].as<float>()    : 2.0f;
+    arm_pub.set_teleop_params(arm_max_speed, arm_ramp_s);
+
+    const std::string arm_mode = cfg["arm_mode"] ? cfg["arm_mode"].as<std::string>() : "idle";
+    if (arm_mode == "teleop") {
+        arm_pub.set_mode(h1_2::ArmPosePublisher::Mode::Teleop);
+    } else {
+        arm_pub.set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+    }
 
     std::cout << "[FSM] State_RLBase " << state_string << " constructed." << std::endl;
-    std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
-    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training" << std::endl;
+    std::cout << "[FSM]   Arm mode: " << (arm_mode == "teleop" ? "TELEOP (rt/arm_sdk)" : "IDLE")
+              << ". DPad to change:" << std::endl;
+    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training | Left=Teleop" << std::endl;
 }
 
 void State_RLBase::run()
 {
     // ===== Arm mode switching via DPad (rising-edge triggered) =====
-    // Up=Idle, Right=Mild, Down=Training, Left=reserved
+    // Up=Idle, Right=Mild, Down=Training, Left=Teleop
     // Operates independent of FSM state — works in any BalancePush variant.
     using ArmMode = h1_2::ArmPosePublisher::Mode;
     auto& arm_pub = h1_2::ArmPosePublisher::instance();
@@ -82,6 +93,10 @@ void State_RLBase::run()
     if (lowstate->joystick.down.on_pressed) {
         arm_pub.set_mode(ArmMode::Training);
         std::cout << "[ARM_MODE] -> TRAINING (full disturbance)" << std::endl;
+    }
+    if (lowstate->joystick.left.on_pressed) {
+        arm_pub.set_mode(ArmMode::Teleop);
+        std::cout << "[ARM_MODE] -> TELEOP (xr_teleoperate via rt/arm_sdk)" << std::endl;
     }
 
 
@@ -122,7 +137,7 @@ void State_RLBase::run()
         auto arm_now = h1_2::ArmPosePublisher::instance().compute_obs_command();
         for (size_t i = 0; i < 14; i++) {
             std::cout << "  arm[" << i << "]=" << arm_now[i]
-                    << " → motor " << ARM_SDK_MOTOR_IDS[i] << std::endl;
+                    << " → motor " << h1_2::ArmPosePublisher::ARM_SDK_MOTOR_IDS[i] << std::endl;
         }
     }
 
@@ -150,7 +165,7 @@ void State_RLBase::run()
     if (action.size() < 27) {
         auto arm_targets = h1_2::ArmPosePublisher::instance().compute_arm_targets(env->step_dt);
         for (size_t i = 0; i < 14; i++) {
-            lowcmd->msg_.motor_cmd()[ARM_SDK_MOTOR_IDS[i]].q() = arm_targets[i];
+            lowcmd->msg_.motor_cmd()[h1_2::ArmPosePublisher::ARM_SDK_MOTOR_IDS[i]].q() = arm_targets[i];
         }
     }
 }
