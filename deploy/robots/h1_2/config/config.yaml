@@ -59,7 +59,7 @@ FSM:
   Balance:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p6mass_D   # was p7_1a; teleop bridge needs a 13-action arms-external policy
+    policy_dir: ../../../logs/milestones/p7_1b   # was p7_1a; teleop bridge needs a 13-action arms-external policy
     # Arm source for the 13-action balance policy:
     #   teleop -> live arm pose from xr_teleoperate (rt/arm_sdk)
     #   (omit) -> Idle default; DPad switches Up=Idle Right=Mild Down=Training Left=Teleop
