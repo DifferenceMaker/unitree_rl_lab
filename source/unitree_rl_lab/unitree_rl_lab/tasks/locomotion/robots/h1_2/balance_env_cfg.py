@@ -454,11 +454,11 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        weight=4.0,
+        weight=12.0,    # p7_1c: 4->12 (3x) so torso stillness competes with alive=30
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "std_lin": 0.07,	# 0.15 -> 0.10 for v2_3. Tighter sway tolerance.
-            "std_ang": 0.20,    # p6: tighter angular for camera
+            "std_lin": 0.07,	# kept — loosening risks unreachable under 0.25 wobble
+            "std_ang": 0.15,    # p7_1c: 0.20->0.15 tighter angular (camera tilt matters most)
         },
     )
 
