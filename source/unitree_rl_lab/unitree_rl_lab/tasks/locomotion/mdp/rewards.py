@@ -152,6 +152,31 @@ def feet_contact_without_cmd(
     return reward * (command_norm < 0.1)
 
 
+def feet_air_time_step_penalty(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    touchdown_penalty: float = 0.4,
+) -> torch.Tensor:
+    """Digit-style stepping regularizer (Oregon State, arXiv 2404.19173).
+
+    Standing perfectly still => feet never lift => no touchdown => returns 0
+    (stillness is free). Each foot touchdown costs `touchdown_penalty`,
+    regardless of stride length. Standing still costs 0; any step costs a fixed
+    amount. Use with a NEGATIVE weight. alive reward dominates a needed step.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    if contact_sensor.cfg.track_air_time is False:
+        raise RuntimeError("Activate ContactSensor's track_air_time!")
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    current_contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    just_landed = (current_contact_time > 0.0) & (current_contact_time <= env.step_dt + 1e-6)
+    # Count touchdowns; standing still => no touchdown => 0. NEGATIVE weight =>
+    # each step costs a fixed amount regardless of stride length (want NO
+    # stepping, not long strides). alive=30 dominates a needed recovery step.
+    touchdowns = just_landed.float() * touchdown_penalty
+    return torch.sum(touchdowns, dim=1)
+
+
 def air_time_variance_penalty(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize variance in the amount of time each foot spends in the air/on the ground relative to each other"""
     # extract the used quantities (to enable type-hinting)

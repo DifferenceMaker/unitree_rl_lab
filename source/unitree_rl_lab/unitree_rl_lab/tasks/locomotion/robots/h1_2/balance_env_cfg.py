@@ -454,7 +454,7 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        weight=12.0,    # p7_1c: 4->12 (3x) so torso stillness competes with alive=30
+        weight=5.0,     # p7_1d: 12->5 — back off loud stillness term (Digit philosophy); 12 caused inward foot drift
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
             "std_lin": 0.07,	# kept — loosening risks unreachable under 0.25 wobble
@@ -481,6 +481,29 @@ class RewardsCfg:
         func=mdp.foot_displacement_l2_from_spawn,
         weight=-0.375,
         params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+        },
+    )
+
+    # p7_1d: Digit-style stepping regularizer (arXiv 2404.19173). Standing still
+    # = no touchdown = 0 cost. Each needless step's touchdown costs ~0.4; alive=30
+    # dominates when a step is truly needed. Targets the continuous-stepping problem.
+    feet_air_time_step = RewTerm(
+        func=mdp.feet_air_time_step_penalty,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
+            "touchdown_penalty": 0.4,
+        },
+    )
+
+    # p7_1d: stance-width anchor — penalize feet drawing too close (the inward-drift
+    # failure from p7_1c). LOOSE: only bites below ~0.16 m (nominal ~0.20 m apart).
+    feet_too_near = RewTerm(
+        func=mdp.feet_too_near,
+        weight=-2.0,
+        params={
+            "threshold": 0.16,
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
         },
     )
