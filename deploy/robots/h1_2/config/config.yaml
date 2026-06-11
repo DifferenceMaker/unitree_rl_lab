@@ -59,4 +59,4 @@ FSM:
   Balance:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p7_1a
+    policy_dir: ../../../logs/milestones/p7_1c
