@@ -51,6 +51,7 @@ public:
     {
         global_phase = 0;
         episode_length = 0;
+        _ema_prev.clear();
         robot->update();
         action_manager->reset();
         observation_manager->reset();
@@ -62,8 +63,31 @@ public:
         robot->update();
         auto obs = observation_manager->compute();
         auto action = alg->act(obs);
-        action_manager->process_action(action);
+
+        // Optional EMA action filter (sim2sim filter tuning ONLY — keep
+        // action_ema_alpha at 0.0 for any training-comparison run, since a
+        // filtered action path is not what the policy was trained against):
+        //   a_smooth = alpha * a_prev + (1 - alpha) * a_new
+        // Applied to raw policy outputs BEFORE scale/offset/clip. The
+        // last_action observation keeps the UNfiltered action (raw/executed
+        // split in ActionManager) so the obs contract matches training.
+        if (action_ema_alpha > 0.0f) {
+            if (_ema_prev.size() != action.size()) _ema_prev = action;
+            std::vector<float> smoothed(action.size());
+            for (size_t i = 0; i < action.size(); ++i) {
+                smoothed[i] = action_ema_alpha * _ema_prev[i]
+                            + (1.0f - action_ema_alpha) * action[i];
+            }
+            _ema_prev = smoothed;
+            action_manager->process_action(action, smoothed);
+        } else {
+            action_manager->process_action(action);
+        }
     }
+
+    // 0.0 = filter off (default). Set from the robot controller's config.yaml
+    // (NOT from deploy.yaml — per-milestone params stay untouched).
+    float action_ema_alpha = 0.0f;
 
     float step_dt;
     
@@ -75,6 +99,10 @@ public:
     std::unique_ptr<Algorithms> alg;
     long episode_length = 0;
     float global_phase = 0.0f;
+
+private:
+    // EMA filter state (previous smoothed action); cleared on reset
+    std::vector<float> _ema_prev;
 };
 
 };

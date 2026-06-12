@@ -46,6 +46,18 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     );
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
 
+    // Optional EMA action filter — sim2sim filter tuning ONLY. Configured in
+    // the controller's config.yaml (Balance block), never deploy.yaml. MUST
+    // stay 0.0 / absent for training-comparison runs.
+    if (cfg["action_ema_alpha"]) {
+        env->action_ema_alpha = cfg["action_ema_alpha"].as<float>();
+        if (env->action_ema_alpha > 0.0f) {
+            std::cout << "[FSM]   *** EMA ACTION FILTER ON (alpha="
+                      << env->action_ema_alpha
+                      << ") — NOT comparable to training/Isaac eval ***" << std::endl;
+        }
+    }
+
     this->registered_checks.emplace_back(
         std::make_pair(
             [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
@@ -60,13 +72,14 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
 
     std::cout << "[FSM] State_RLBase " << state_string << " constructed." << std::endl;
     std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
-    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training" << std::endl;
+    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training | Left=TrainingDist (sampled)" << std::endl;
+    std::cout << "[FSM]   stdin: `arm <14 vals>` sets a manual held pose (slew-limited)" << std::endl;
 }
 
 void State_RLBase::run()
 {
     // ===== Arm mode switching via DPad (rising-edge triggered) =====
-    // Up=Idle, Right=Mild, Down=Training, Left=reserved
+    // Up=Idle, Right=Mild, Down=Training, Left=TrainingDist (sampled)
     // Operates independent of FSM state — works in any BalancePush variant.
     using ArmMode = h1_2::ArmPosePublisher::Mode;
     auto& arm_pub = h1_2::ArmPosePublisher::instance();
@@ -82,6 +95,12 @@ void State_RLBase::run()
     if (lowstate->joystick.down.on_pressed) {
         arm_pub.set_mode(ArmMode::Training);
         std::cout << "[ARM_MODE] -> TRAINING (full disturbance)" << std::endl;
+    }
+    if (lowstate->joystick.left.on_pressed) {
+        arm_pub.set_mode(ArmMode::TrainingDist);
+        std::cout << "[ARM_MODE] -> TRAINING-DIST (sampled from training distribution:"
+                  << " pitch±1.5 roll±1.0 elbow±1.5, wobble 0.25@2Hz,"
+                  << " roll clamp ±0.8, resample 10-15s)" << std::endl;
     }
 
 

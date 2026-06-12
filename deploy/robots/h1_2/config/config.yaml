@@ -60,3 +60,7 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p7_1d
+    # EMA action filter on policy outputs (a_smooth = a*prev + (1-a)*new),
+    # applied before scale/offset; last_action obs stays raw. For sim2sim
+    # filter tuning ONLY — absent/0.0 (off) for any training-comparison run.
+    # action_ema_alpha: 0.8

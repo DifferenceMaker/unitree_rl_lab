@@ -77,11 +77,21 @@ public:
 
     void process_action(std::vector<float> action)
     {
-        _action = action;
+        process_action(action, action);
+    }
+
+    // Raw/executed split, used by the optional deploy-side EMA action filter:
+    // `raw` is stored as _action (what the last_action observation returns —
+    // the obs contract requires the policy to see its own unfiltered output,
+    // as in training), while `executed` is what the action terms process into
+    // joint targets. With the filter off both vectors are identical.
+    void process_action(std::vector<float> raw, std::vector<float> executed)
+    {
+        _action = raw;
         int idx = 0;
         for(auto & term : _terms)
         {
-            auto term_action = std::vector<float>(action.begin() + idx, action.begin() + idx + term->action_dim());
+            auto term_action = std::vector<float>(executed.begin() + idx, executed.begin() + idx + term->action_dim());
             term->process_actions(term_action);
             idx += term->action_dim();
         }

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <mutex>
 #include <random>
 #include <vector>
 
@@ -37,6 +38,9 @@ public:
         Mild = 1,
         Training = 2,
         Manipulation = 3,
+        // Sim2sim harness modes (aspired/deploy_mujoco_harness):
+        TrainingDist = 4,  // sampled from the training distribution (p7_1b+ sampler)
+        Manual = 5,        // held pose set via stdin `arm <14 vals>` (slew-limited)
     };
 
     static ArmPosePublisher& instance();
@@ -46,6 +50,8 @@ public:
 
     // Returns 14-dim obs vector: default_arm_pos + held_delta (no wobble).
     // Matches Python UniformArmPoseCommand.command property.
+    // (TrainingDist: held roll is UNCLAMPED here, exactly like training — the
+    //  ±0.8 self-collision clamp applies only to the executed targets.)
     std::vector<float> compute_obs_command() const;
 
     // Returns 14-dim arm joint targets: default + held_delta + wobble.
@@ -55,7 +61,13 @@ public:
     // Force-reset held pose (e.g. on FSM state entry).
     void resample_held_pose();
 
+    // Manual mode: set an absolute 14-dim held arm pose (radians, order above).
+    // Switches mode to Manual; the executed targets slew-limit toward it.
+    void set_manual_pose(const std::array<float, 14>& pose);
+
     Mode mode() const { return mode_; }
+
+    static constexpr std::array<float, 14> default_arm_pos() { return DEFAULT_ARM_POS; }
 
 private:
     ArmPosePublisher();
@@ -79,20 +91,42 @@ private:
 
     // Per-mode amplitudes
     struct ModeParams {
-        float pitch_amp;   // shoulder_pitch hold delta
-        float roll_amp;    // shoulder_roll hold delta (mirrored L vs R)
-        float elbow_amp;   // elbow_pitch hold delta
-        float wobble_amp;  // sinusoidal wobble on top
+        float pitch_amp;    // shoulder_pitch hold delta
+        float roll_amp;     // shoulder_roll hold delta (mirrored L vs R)
+        float elbow_amp;    // elbow_pitch hold delta
+        float wobble_amp;   // sinusoidal wobble on top
+        float wobble_freq;  // Hz
     };
 
-    static constexpr ModeParams MODE_PARAMS[4] = {
-        /* Idle         */ {0.0f, 0.0f, 0.0f, 0.00f},
-        /* Mild         */ {0.5f, 0.3f, 0.5f, 0.05f},
-        /* Training     */ {2.5f, 2.0f, 2.5f, 0.50f},
-        /* Manipulation */ {0.0f, 0.0f, 0.0f, 0.00f},  // TODO: scripted trajectory
+    // Legacy modes keep their original 0.05 Hz wobble (eyeball-friendly slow
+    // sweep). TrainingDist matches the p7_1b+ training sampler exactly:
+    // pitch ±1.5, roll ±1.0 (mirrored), elbow ±1.5, wobble 0.25 @ 2 Hz
+    // (balance_env_cfg.py arm_pose curriculum + arm_pose_command.py).
+    static constexpr ModeParams MODE_PARAMS[6] = {
+        /* Idle         */ {0.0f, 0.0f, 0.0f, 0.00f, 0.05f},
+        /* Mild         */ {0.5f, 0.3f, 0.5f, 0.05f, 0.05f},
+        /* Training     */ {2.5f, 2.0f, 2.5f, 0.50f, 0.05f},
+        /* Manipulation */ {0.0f, 0.0f, 0.0f, 0.00f, 0.05f},  // TODO: scripted trajectory
+        /* TrainingDist */ {1.5f, 1.0f, 1.5f, 0.25f, 2.00f},
+        /* Manual       */ {0.0f, 0.0f, 0.0f, 0.00f, 0.00f},
     };
 
-    static constexpr float WOBBLE_FREQ_HZ = 0.05f;
+    // p7_1b+ self-collision guard: executed (held+wobble) shoulder-roll OFFSET
+    // from default is clamped to ±0.8 rad. Training applies this at target
+    // application time only (arm_pose_command.py _update_command), never in
+    // the obs — TrainingDist replicates that exactly.
+    static constexpr float ROLL_OFFSET_CLAMP = 0.8f;
+
+    // TrainingDist emulates Isaac episode resets by resampling the held pose
+    // every U(RESAMPLE_MIN, RESAMPLE_MAX) seconds.
+    static constexpr float RESAMPLE_MIN_S = 10.0f;
+    static constexpr float RESAMPLE_MAX_S = 15.0f;
+
+    // Held-pose transitions in TrainingDist/Manual are slew-limited so a
+    // resample / stdin command can't step the arm targets discontinuously
+    // (training only changes the held pose at episode reset, where the robot
+    // resets with it; mid-run we must ease). Legacy modes are untouched.
+    static constexpr float SLEW_RAD_S = 3.0f;
 
     // Joint index helpers for the 14-dim layout above
     static constexpr size_t IDX_L_SHOULDER_PITCH = 0;
@@ -115,6 +149,17 @@ private:
 
     // Time accumulator (reset on mode change)
     float t_ = 0.0f;
+
+    // TrainingDist resample schedule
+    float next_resample_t_ = 0.0f;
+
+    // Manual mode held pose (absolute), guarded for the stdin thread
+    std::array<float, 14> manual_pose_ = DEFAULT_ARM_POS;
+    mutable std::mutex manual_mtx_;
+
+    // Last targets actually emitted (slew state; seeded lazily)
+    std::array<float, 14> last_targets_ = DEFAULT_ARM_POS;
+    bool last_targets_valid_ = false;
 
     // RNG
     std::mt19937 rng_;
