@@ -490,7 +490,7 @@ class RewardsCfg:
     # dominates when a step is truly needed. Targets the continuous-stepping problem.
     feet_air_time_step = RewTerm(
         func=mdp.feet_air_time_step_penalty,
-        weight=-1.0,
+        weight=-4.0,    # p7_1e: -1->-4 diagnostic crank (expert): verify mechanism bites; titrate down later
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
             "touchdown_penalty": 0.4,
@@ -501,9 +501,9 @@ class RewardsCfg:
     # failure from p7_1c). LOOSE: only bites below ~0.16 m (nominal ~0.20 m apart).
     feet_too_near = RewTerm(
         func=mdp.feet_too_near,
-        weight=-2.0,
+        weight=-8.0,    # p7_1e: -2->-8 (MuJoCo shows faster inward drift than Isaac eval suggested)
         params={
-            "threshold": 0.16,
+            "threshold": 0.18,  # p7_1e: 0.16->0.18 — start resisting earlier
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
         },
     )
