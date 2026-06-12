@@ -68,7 +68,23 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     // Phase 5 v3 is Option II: 13-action policy controlling only legs+torso.
     // Arms driven externally by ArmPosePublisher. Initialize to Training mode
     // (matches training distribution: held pose ±1.5/±1.0/±1.5, wobble 0.15).
-    h1_2::ArmPosePublisher::instance().set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+    auto& arm_pub = h1_2::ArmPosePublisher::instance();
+    arm_pub.set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+
+    // Arm pose-change transition time (every mode switch / resample / stdin
+    // `arm` command eases over this long instead of jumping).
+    if (cfg["arm_transition_s"]) {
+        arm_pub.set_transition_s(cfg["arm_transition_s"].as<float>());
+    }
+    // Arm kp/kd override — match the team's real-robot BridgeModule gains
+    // (config.py H1_2_KP=50, H1_2_KD=1). Overrides deploy.yaml for the 14 arm
+    // motors only; legs+torso keep the policy-trained gains. Absent = no
+    // override (deploy.yaml arm gains apply).
+    if (cfg["arm_kp"] && cfg["arm_kd"]) {
+        arm_pub.set_arm_gains(cfg["arm_kp"].as<float>(), cfg["arm_kd"].as<float>());
+        std::cout << "[FSM]   Arm gains override: kp=" << arm_pub.arm_kp()
+                  << " kd=" << arm_pub.arm_kd() << " (team BridgeModule values)" << std::endl;
+    }
 
     std::cout << "[FSM] State_RLBase " << state_string << " constructed." << std::endl;
     std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
@@ -82,7 +98,7 @@ void State_RLBase::run()
     // Up=Idle, Right=Mild, Down=Training, Left=TrainingDist (sampled)
     // Operates independent of FSM state — works in any BalancePush variant.
     using ArmMode = h1_2::ArmPosePublisher::Mode;
-    auto& arm_pub = h1_2::ArmPosePublisher::instance();
+    auto& arm_pub = h1_2::ArmPosePublisher::instance();  // mode switches blend over arm_transition_s
 
     if (lowstate->joystick.up.on_pressed) {
         arm_pub.set_mode(ArmMode::Idle);
@@ -167,9 +183,18 @@ void State_RLBase::run()
     // publisher. This overrides whatever the action loop wrote to arm motors
     // (which would be garbage / out-of-range for 13-action policies anyway).
     if (action.size() < 27) {
-        auto arm_targets = h1_2::ArmPosePublisher::instance().compute_arm_targets(env->step_dt);
+        auto& pub = h1_2::ArmPosePublisher::instance();
+        auto arm_targets = pub.compute_arm_targets(env->step_dt);
+        const bool gain_override = pub.arm_kp() >= 0.0f;
         for (size_t i = 0; i < 14; i++) {
-            lowcmd->msg_.motor_cmd()[ARM_SDK_MOTOR_IDS[i]].q() = arm_targets[i];
+            auto& cmd = lowcmd->msg_.motor_cmd()[ARM_SDK_MOTOR_IDS[i]];
+            cmd.q() = arm_targets[i];
+            if (gain_override) {
+                // Re-asserted every step: State_RLBase::enter() writes the
+                // deploy.yaml gains on every entry into this state.
+                cmd.kp() = pub.arm_kp();
+                cmd.kd() = pub.arm_kd();
+            }
         }
     }
 }

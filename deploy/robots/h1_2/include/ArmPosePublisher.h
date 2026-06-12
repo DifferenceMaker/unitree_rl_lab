@@ -62,12 +62,22 @@ public:
     void resample_held_pose();
 
     // Manual mode: set an absolute 14-dim held arm pose (radians, order above).
-    // Switches mode to Manual; the executed targets slew-limit toward it.
+    // Switches mode to Manual; the executed targets blend toward it.
     void set_manual_pose(const std::array<float, 14>& pose);
 
     Mode mode() const { return mode_; }
 
     static constexpr std::array<float, 14> default_arm_pos() { return DEFAULT_ARM_POS; }
+
+    // Pose-change transition time (config.yaml `arm_transition_s`, default 1.5 s).
+    void set_transition_s(float s) { transition_s_ = std::max(0.0f, s); }
+
+    // Optional arm kp/kd override (config.yaml `arm_kp`/`arm_kd`; matches the
+    // team's real-robot BridgeModule gains, kp=50 kd=1). Negative = no
+    // override, deploy.yaml gains stay. Applied by State_RLBase::run().
+    void set_arm_gains(float kp, float kd) { arm_kp_ = kp; arm_kd_ = kd; }
+    float arm_kp() const { return arm_kp_; }
+    float arm_kd() const { return arm_kd_; }
 
 private:
     ArmPosePublisher();
@@ -122,11 +132,12 @@ private:
     static constexpr float RESAMPLE_MIN_S = 10.0f;
     static constexpr float RESAMPLE_MAX_S = 15.0f;
 
-    // Held-pose transitions in TrainingDist/Manual are slew-limited so a
-    // resample / stdin command can't step the arm targets discontinuously
-    // (training only changes the held pose at episode reset, where the robot
-    // resets with it; mid-run we must ease). Legacy modes are untouched.
-    static constexpr float SLEW_RAD_S = 3.0f;
+    // Every discrete held-pose change (DPad mode switch, TrainingDist
+    // resample, stdin `arm` command) eases over transition_s_ seconds with a
+    // cosine blend from the last emitted targets to the new pose, so the arm
+    // command never jumps. (Training only changes the held pose at episode
+    // reset, where the robot resets with it; mid-run we must ease.)
+    static constexpr float DEFAULT_TRANSITION_S = 1.5f;
 
     // Joint index helpers for the 14-dim layout above
     static constexpr size_t IDX_L_SHOULDER_PITCH = 0;
@@ -157,9 +168,20 @@ private:
     std::array<float, 14> manual_pose_ = DEFAULT_ARM_POS;
     mutable std::mutex manual_mtx_;
 
-    // Last targets actually emitted (slew state; seeded lazily)
+    // Last targets actually emitted (blend start snapshot; seeded lazily)
     std::array<float, 14> last_targets_ = DEFAULT_ARM_POS;
     bool last_targets_valid_ = false;
+
+    // Pose-change blend state
+    void trigger_blend();
+    float transition_s_ = DEFAULT_TRANSITION_S;
+    std::array<float, 14> blend_start_ = DEFAULT_ARM_POS;
+    float blend_t_ = 0.0f;
+    bool blend_active_ = false;
+
+    // Arm gain override (negative = use deploy.yaml gains)
+    float arm_kp_ = -1.0f;
+    float arm_kd_ = -1.0f;
 
     // RNG
     std::mt19937 rng_;

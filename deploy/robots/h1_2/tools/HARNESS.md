@@ -46,9 +46,20 @@ Replicates the p7_1b+ training sampler exactly (`arm_pose_command.py` +
 `balance_env_cfg.py` arm_pose curriculum): held pose pitch ±1.5 / roll ±1.0
 mirrored / elbow ±1.5, wobble 0.25 @ 2 Hz with per-channel phases, executed
 shoulder-roll offset clamped to ±0.8 (obs unclamped, like training). The held
-pose resamples every U(10,15) s to emulate episode resets; transitions are
-slew-limited (3 rad/s) so the resample can't step the targets. Legacy modes
-(Up/Right/Down) are byte-for-byte unchanged.
+pose resamples every U(10,15) s to emulate episode resets.
+
+## Arm pose transitions + gains (config.yaml Balance block)
+
+- `arm_transition_s` (default 1.5): EVERY discrete arm pose change — DPad mode
+  switch, TrainingDist resample, stdin `arm` command — cosine-blends from the
+  last emitted targets to the new pose over this long. No jumps, zero-velocity
+  start/end; wobble fades in with the blend. The obs (`arm_pose_command`)
+  switches to the new held pose immediately, like an Isaac episode reset.
+- `arm_kp` / `arm_kd` (set to 50 / 1.0): the team's real-robot gains
+  (Aspired_Robot_Project `BridgeModule/main/config.py` H1_2_KP/H1_2_KD),
+  applied to the 14 arm motors only; legs+torso keep the deploy.yaml
+  policy-trained gains. Remove both keys to fall back to deploy.yaml arm gains
+  (kp 100/50, kd 2.0). FixStand arm gains in config.yaml are untouched.
 
 ## p7_1c vs p7_1d comparison runbook (training-dist mode)
 

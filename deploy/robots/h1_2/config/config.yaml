@@ -60,6 +60,15 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p7_1d
+    # Arm motor gains — match the team's real-robot stack
+    # (Aspired_Robot_Project/BridgeModule/main/config.py: H1_2_KP=50, H1_2_KD=1).
+    # Overrides deploy.yaml for the 14 arm motors only; legs+torso keep the
+    # policy-trained gains. Remove both keys to fall back to deploy.yaml.
+    arm_kp: 50.0
+    arm_kd: 1.0
+    # Every arm pose change (DPad mode switch, TrainingDist resample, stdin
+    # `arm` command) eases over this many seconds instead of jumping.
+    arm_transition_s: 1.5
     # EMA action filter on policy outputs (a_smooth = a*prev + (1-a)*new),
     # applied before scale/offset; last_action obs stays raw. For sim2sim
     # filter tuning ONLY — absent/0.0 (off) for any training-comparison run.

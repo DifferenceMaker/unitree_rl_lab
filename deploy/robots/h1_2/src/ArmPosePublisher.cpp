@@ -24,6 +24,7 @@ void ArmPosePublisher::set_mode(Mode m) {
     mode_ = m;
     t_ = 0.0f;
     resample_held_pose();
+    trigger_blend();
 }
 
 void ArmPosePublisher::set_manual_pose(const std::array<float, 14>& pose) {
@@ -32,6 +33,15 @@ void ArmPosePublisher::set_manual_pose(const std::array<float, 14>& pose) {
         manual_pose_ = pose;
     }
     mode_ = Mode::Manual;
+    trigger_blend();
+}
+
+void ArmPosePublisher::trigger_blend() {
+    // Ease from the last emitted targets to the new pose over transition_s_.
+    // Seeded from defaults if nothing was emitted yet.
+    blend_start_ = last_targets_;
+    blend_t_ = 0.0f;
+    blend_active_ = transition_s_ > 0.0f;
 }
 
 void ArmPosePublisher::resample_held_pose() {
@@ -81,10 +91,11 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float dt) {
     t_ += dt;
 
     // TrainingDist: emulate Isaac episode resets — resample the held pose
-    // (and wobble phases) every U(10, 15) s. The slew limiter below turns the
-    // resulting step change into a bounded-rate transition.
+    // (and wobble phases) every U(10, 15) s. The pose-change blend below
+    // turns the resulting step change into a smooth transition.
     if (mode_ == Mode::TrainingDist && t_ >= next_resample_t_) {
         resample_held_pose();
+        trigger_blend();
         std::cout << "[ARM_DIST] resample: pitch=" << pitch_delta_
                   << " roll=" << roll_delta_ << " elbow=" << elbow_delta_
                   << " (next in " << (next_resample_t_ - t_) << "s)" << std::endl;
@@ -127,22 +138,19 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float dt) {
         }
     }
 
-    // Slew limiter for the harness modes: a TrainingDist resample or a stdin
-    // `arm ...` command is a step change in the held pose; rate-limit the
-    // executed targets (SLEW_RAD_S) so the arms ease over instead of jumping.
-    // Legacy modes (Idle/Mild/Training/Manipulation) bypass this entirely —
-    // their behavior is unchanged.
-    if (mode_ == Mode::TrainingDist || mode_ == Mode::Manual) {
-        if (!last_targets_valid_) {
-            // Seed from defaults on first use (robot enters Balance near default pose)
-            last_targets_ = DEFAULT_ARM_POS;
-            last_targets_valid_ = true;
-        }
-        const float max_step = SLEW_RAD_S * dt;
+    // Pose-change blend: after any discrete held-pose change (mode switch,
+    // TrainingDist resample, stdin `arm` command) the emitted targets ease
+    // from the snapshot taken at the change to the new pose over
+    // transition_s_ seconds (cosine smoothstep — zero-velocity start/end),
+    // so the arm command never jumps. Wobble fades in with the blend.
+    if (blend_active_) {
+        blend_t_ += dt;
+        const float u = std::min(blend_t_ / transition_s_, 1.0f);
+        const float s = 0.5f - 0.5f * std::cos(static_cast<float>(M_PI) * u);
         for (size_t i = 0; i < 14; ++i) {
-            const float delta = std::clamp(targets[i] - last_targets_[i], -max_step, max_step);
-            targets[i] = last_targets_[i] + delta;
+            targets[i] = blend_start_[i] + s * (targets[i] - blend_start_[i]);
         }
+        if (u >= 1.0f) blend_active_ = false;
     }
 
     std::copy(targets.begin(), targets.end(), last_targets_.begin());
