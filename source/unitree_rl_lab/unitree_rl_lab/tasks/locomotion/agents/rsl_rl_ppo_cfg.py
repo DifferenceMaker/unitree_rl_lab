@@ -50,3 +50,9 @@ class V5PPORunnerCfg(BasePPORunnerCfg):
     share the base task's log dir, so warmstart works.
     """
     experiment_name = "unitree_h1_2_balance"
+
+@configclass
+class QueuePPORunnerCfg(BasePPORunnerCfg):
+    """Queue tasks share the base experiment_name so warmstart from
+    milestones/<slug> resolves under logs/rsl_rl/unitree_h1_2_balance/."""
+    experiment_name = "unitree_h1_2_balance"
