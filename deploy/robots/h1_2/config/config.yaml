@@ -59,7 +59,7 @@ FSM:
   Balance:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p7_1d
+    policy_dir: ../../../logs/milestones/p7_1e
     # Arm motor gains — match the team's real-robot stack
     # (Aspired_Robot_Project/BridgeModule/main/config.py: H1_2_KP=50, H1_2_KD=1).
     # Overrides deploy.yaml for the 14 arm motors only; legs+torso keep the
