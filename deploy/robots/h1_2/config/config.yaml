@@ -4,8 +4,17 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance:
+    BalanceExp1:
+      id: 4
+      type: RLBase
+    BalanceExp2:
+      id: 5
+      type: RLBase
+    BalanceStd010:
       id: 6
+      type: RLBase
+    BalanceStd025:
+      id: 7
       type: RLBase
   
   Passive:
@@ -28,9 +37,12 @@ FSM:
     ]
   
   FixStand:
-    transitions: 
+    transitions:
       Passive: LT + B.on_pressed
-      Balance: RB + B.on_pressed
+      BalanceExp1:   RB + Y.on_pressed
+      BalanceExp2:   RB + A.on_pressed
+      BalanceStd010: RB + X.on_pressed
+      BalanceStd025: RB + right.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -56,20 +68,34 @@ FSM:
       ]
     ]
   
-  Balance:
+  BalanceExp1:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p7_1e
-    # Arm motor gains — match the team's real-robot stack
-    # (Aspired_Robot_Project/BridgeModule/main/config.py: H1_2_KP=50, H1_2_KD=1).
-    # Overrides deploy.yaml for the 14 arm motors only; legs+torso keep the
-    # policy-trained gains. Remove both keys to fall back to deploy.yaml.
+    policy_dir: ../../../logs/milestones/exp1_torso12_airtime_2026-06-15
     arm_kp: 50.0
     arm_kd: 1.0
-    # Every arm pose change (DPad mode switch, TrainingDist resample, stdin
-    # `arm` command) eases over this many seconds instead of jumping.
     arm_transition_s: 1.5
-    # EMA action filter on policy outputs (a_smooth = a*prev + (1-a)*new),
-    # applied before scale/offset; last_action obs stays raw. For sim2sim
-    # filter tuning ONLY — absent/0.0 (off) for any training-comparison run.
-    # action_ema_alpha: 0.8
+
+  BalanceExp2:
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/exp2_loadbearing_2026-06-14
+    arm_kp: 50.0
+    arm_kd: 1.0
+    arm_transition_s: 1.5
+
+  BalanceStd010:
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/exp3_upright_std010_2026-06-14
+    arm_kp: 50.0
+    arm_kd: 1.0
+    arm_transition_s: 1.5
+
+  BalanceStd025:
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/exp3_upright_std025_2026-06-14
+    arm_kp: 50.0
+    arm_kd: 1.0
+    arm_transition_s: 1.5
