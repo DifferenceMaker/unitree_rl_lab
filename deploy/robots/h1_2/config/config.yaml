@@ -4,19 +4,25 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    BalanceExp1:
+    BalanceP8_gold:
       id: 4
       type: RLBase
-    BalanceExp2:
+    Balance_airtime4:
       id: 5
       type: RLBase
-    BalanceStd010:
+    Balance_payload10:
       id: 6
       type: RLBase
-    BalanceStd025:
+    Balance_torso20_airtime4:
       id: 7
       type: RLBase
-  
+    Balance_upright_nostep:
+      id: 8
+      type: RLBase
+    Balance_torso20:
+      id: 9
+      type: RLBase
+
   Passive:
     transitions:
       FixStand: LT + up.on_pressed
@@ -35,14 +41,16 @@ FSM:
       2,2,2,2,
       2,2,2,2,
     ]
-  
+
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      BalanceExp1:   RB + Y.on_pressed
-      BalanceExp2:   RB + A.on_pressed
-      BalanceStd010: RB + X.on_pressed
-      BalanceStd025: RB + right.on_pressed
+      BalanceP8_gold:           RB + Y.on_pressed
+      Balance_airtime4:         RB + A.on_pressed
+      Balance_payload10:        RB + X.on_pressed
+      Balance_torso20_airtime4: RB + right.on_pressed
+      Balance_upright_nostep:   RB + down.on_pressed
+      Balance_torso20:          RB + left.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -67,35 +75,51 @@ FSM:
         0.35, -0.25, -0.1, 0.65, 0, 0, 0,
       ]
     ]
-  
-  BalanceExp1:
+
+  BalanceP8_gold:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/exp1_torso12_airtime_2026-06-15
+    policy_dir: ../../../logs/milestones/p8_gold_2026-06-15
     arm_kp: 50.0
     arm_kd: 1.0
     arm_transition_s: 1.5
 
-  BalanceExp2:
+  Balance_airtime4:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/exp2_loadbearing_2026-06-14
+    policy_dir: ../../../logs/milestones/p8_gold_airtime4_2026-06-15
     arm_kp: 50.0
     arm_kd: 1.0
     arm_transition_s: 1.5
 
-  BalanceStd010:
+  Balance_payload10:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/exp3_upright_std010_2026-06-14
+    policy_dir: ../../../logs/milestones/p8_gold_payload10_2026-06-15
     arm_kp: 50.0
     arm_kd: 1.0
     arm_transition_s: 1.5
 
-  BalanceStd025:
+  Balance_torso20_airtime4:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/exp3_upright_std025_2026-06-14
+    policy_dir: ../../../logs/milestones/p8_gold_torso20_airtime4_2026-06-16
+    arm_kp: 50.0
+    arm_kd: 1.0
+    arm_transition_s: 1.5
+
+  Balance_upright_nostep:
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p8_upright_nostep_2026-06-15
+    arm_kp: 50.0
+    arm_kd: 1.0
+    arm_transition_s: 1.5
+
+  Balance_torso20:
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p8_gold_torso20_2026-06-15
     arm_kp: 50.0
     arm_kd: 1.0
     arm_transition_s: 1.5
