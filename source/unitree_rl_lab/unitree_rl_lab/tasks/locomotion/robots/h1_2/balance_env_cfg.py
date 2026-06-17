@@ -101,6 +101,19 @@ class EventCfg:
         },
     )
 
+    # p8_gold: promoted from queue override (overrides.json edit_raw). Per-reset
+    # random payload [0, 3] kg added to each wrist — trains the policy to handle
+    # held-object mass at the hands (manipulation payloads).
+    add_hand_payload = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_wrist_yaw_link"),
+            "mass_distribution_params": (0.0, 3.0),
+            "operation": "add",
+        },
+    )
+
     # v4 Block B: motor strength DR. Per-episode random scaling of kp/kd
     # closes the sim2real gap for PD controller differences and reduces
     # sim2sim gap (PhysX vs MuJoCo actuator dynamics).
@@ -454,7 +467,11 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        weight=5.0,     # p7_1d: 12->5 — back off loud stillness term (Digit philosophy); 12 caused inward foot drift
+        # p8_gold: promoted from queue override (overrides.json set_weight). Was p7_1d 5.0.
+        # SIGN NOTE: torso_stability_bonus returns exp(...) in (0,1], HIGH when torso is still.
+        # A NEGATIVE weight therefore penalizes stillness / rewards torso motion — surprising for
+        # a "bonus". This is faithful to gold's env.yaml (weight -12.0); see ARM_EXPANSION_RECON.md.
+        weight=-12.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
             "std_lin": 0.07,	# kept — loosening risks unreachable under 0.25 wobble
@@ -490,7 +507,7 @@ class RewardsCfg:
     # dominates when a step is truly needed. Targets the continuous-stepping problem.
     feet_air_time_step = RewTerm(
         func=mdp.feet_air_time_step_penalty,
-        weight=-4.0,    # p7_1e: -1->-4 diagnostic crank (expert): verify mechanism bites; titrate down later
+        weight=-2.0,    # p8_gold: promoted from queue override (overrides.json set_weight). Was p7_1e -4.0.
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
             "touchdown_penalty": 0.4,
@@ -506,6 +523,15 @@ class RewardsCfg:
             "threshold": 0.18,  # p7_1e: 0.16->0.18 — start resisting earlier
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
         },
+    )
+
+    # p8_gold: promoted from queue override (overrides.json add_reward). Positive
+    # exp(-proj_gravity_xy^2 / std^2) bonus for keeping torso vertical — companion
+    # to flat_orientation_l2. std=0.01 is tight (~0.6 deg tilt -> ~0.37 reward).
+    upright_bonus = RewTerm(
+        func=mdp.upright_bonus,
+        weight=1.0,
+        params={"std": 0.01},
     )
 
 
