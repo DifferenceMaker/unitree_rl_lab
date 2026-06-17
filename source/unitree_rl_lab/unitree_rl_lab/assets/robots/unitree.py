@@ -719,6 +719,19 @@ for a in UNITREE_G1_29DOF_MIMIC_CFG.actuators.values():
 
 
 
+# ─── ARM DEPLOY GAINS ─── must match deploy config.yaml arm_kp / arm_kd ───
+# The policy learns to anticipate the arm's CoM disturbance, which depends on the
+# arm PD gains, so the sim arm actuators are pinned to the DEPLOY values for
+# sim2real fidelity. p8_gold trained at kp 100 (shoulder) / 50 (yaw,elbow,wrist),
+# kd 2.0; deploy now uses kp 40 / kd 3.0 (team BridgeModule, 2026-06). These are
+# the SINGLE place to change when the deploy gains are finalized.
+#   WARMSTART NOTE: warmstarting gold (trained at 100/50, kd 2.0) into these softer
+#   gains is an instantaneous arm-dynamics shift at iter 0 — see ARM_EXPANSION_RECON.md §7.
+#   OVERHEAD NOTE: at kp 40 a shoulder fighting gravity overhead may sag below the
+#   commanded angle (obs vs true-pos divergence). May need per-joint higher shoulder kp.
+ARM_DEPLOY_KP = 40.0
+ARM_DEPLOY_KD = 3.0
+
 UNITREE_H1_2_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
         asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2.urdf"),
@@ -759,17 +772,17 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
         "shoulder_strong": IdealPDActuatorCfg(
             joint_names_expr=[".*_shoulder_pitch_joint", ".*_shoulder_roll_joint"],
             effort_limit=40.0, velocity_limit=9.0,
-            stiffness=100.0, damping=2.0, armature=0.01,
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 100.0 / 2.0 @ p8_gold)
         ),
         "shoulder_yaw_elbow": IdealPDActuatorCfg(
             joint_names_expr=[".*_shoulder_yaw_joint", ".*_elbow_pitch_joint"],
             effort_limit=18.0, velocity_limit=20.0,
-            stiffness=50.0, damping=2.0, armature=0.01,
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
         "wrist": IdealPDActuatorCfg(
             joint_names_expr=[".*_elbow_roll_joint", ".*_wrist_.*"],
             effort_limit=19.0, velocity_limit=20.0,
-            stiffness=50.0, damping=2.0, armature=0.01,
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
         "hands": IdealPDActuatorCfg(
             joint_names_expr=["[LR]_.*"],
