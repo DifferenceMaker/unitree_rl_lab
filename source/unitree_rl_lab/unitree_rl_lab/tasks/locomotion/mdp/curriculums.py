@@ -323,18 +323,25 @@ def arm_pose_curriculum_phase4(
     roll_amplitude: float = 1.0,
     elbow_amplitude: float = 1.5,
     wobble_amplitude_levels: tuple = (0.0, 0.05, 0.10, 0.15),
+    # p9 expansion ramps — level-indexed like wobble. None => gold-off (held at 0),
+    # so the base task stays identical to p8_gold; a p9 job passes ramping tuples.
+    yaw_amplitude_levels: "tuple | None" = None,
+    decouple_lr_levels: "tuple | None" = None,
+    pitch_overhead_amplitude_levels: "tuple | None" = None,
 ) -> "torch.Tensor":
-    """Phase 4: held pose fixed, wobble amplitude ramps stepwise.
+    """Phase 4 + p9: wobble ramps stepwise; optionally ramp the p9 expansion DOF.
 
-    Levels (Phase 4):
+    Wobble levels (Phase 4):
         0 (warmup): wobble=0.00  — Phase 3 baseline (no wobble)
         1: wobble=0.05 rad  — small wobble (~3 deg amplitude)
         2: wobble=0.10 rad  — moderate wobble (~6 deg)
         3: wobble=0.15 rad  — significant wobble (~9 deg)
 
-    Mimics manipulation micro-motions: gripper finger movement,
-    hand articulation during grasping, small mass shifts during
-    object manipulation.
+    p9 expansion: yaw_amplitude_levels / decouple_lr_levels /
+    pitch_overhead_amplitude_levels are per-level tuples (level-indexed exactly
+    like wobble). When None they stay at 0 -> the held envelope is identical to
+    p8_gold. To grow the envelope for a gold warmstart WITHOUT an iter-0 shock,
+    set level 0 of each to 0.0 (= gold) and ramp UP over later levels.
 
     Default hold_steps=24000 (~1000 iters per level).
 
@@ -350,11 +357,22 @@ def arm_pose_curriculum_phase4(
 
     target_wobble = float(wobble_amplitude_levels[level_idx])
 
+    def _pick(levels, default):
+        # Index a per-level ramp tuple, clamped to its own length; None => default.
+        if levels is None:
+            return default
+        return float(levels[min(level_idx, len(levels) - 1)])
+
     command_term = env.command_manager.get_term(command_term_name)
     command_term.cfg.pitch_amplitude = pitch_amplitude   # constant
     command_term.cfg.roll_amplitude = roll_amplitude     # constant
     command_term.cfg.elbow_amplitude = elbow_amplitude   # constant
     command_term.cfg.wobble_amplitude = target_wobble
+    # p9 expansion: ramp yaw / decouple / overhead-pitch up the levels.
+    # Defaults (None) keep these at 0 => identical to p8_gold.
+    command_term.cfg.yaw_amplitude = _pick(yaw_amplitude_levels, 0.0)
+    command_term.cfg.decouple_lr = _pick(decouple_lr_levels, 0.0)
+    command_term.cfg.pitch_overhead_amplitude = _pick(pitch_overhead_amplitude_levels, 0.0)
 
     return torch.tensor(target_wobble, device=env.device)
 

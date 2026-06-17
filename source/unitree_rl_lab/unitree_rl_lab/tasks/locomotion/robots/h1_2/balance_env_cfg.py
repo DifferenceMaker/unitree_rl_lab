@@ -214,6 +214,17 @@ class CurriculumCfg:
             "roll_amplitude": 1.0,                     # held pose roll (constant)
             "elbow_amplitude": 1.5,                    # held pose elbow (constant)
             "wobble_amplitude_levels": (0.25, 0.25, 0.25, 0.25),  # p7_1b: 0.15->0.25 (roll clamped in sampler)
+            # ---- p9 envelope expansion (INACTIVE here so base == p8_gold) ----
+            # The sampler + curriculum support ramping yaw / L-R decoupling /
+            # overhead pitch. Left at gold (None => held at 0) so the base task
+            # reproduces gold. To activate for a p9 warmstart run, set these via
+            # the queue job (or uncomment). Level 0 MUST be 0.0 (= gold) so the
+            # warmstart sees no iter-0 envelope shock; ramp UP over later levels.
+            # NOTE: also bump hold_steps (e.g. 6000) and add levels so the ramp
+            # actually advances — see ARM_EXPANSION_RECON.md §6. Proposed start:
+            #   "yaw_amplitude_levels":             (0.0, 0.3, 0.6, 0.9),
+            #   "decouple_lr_levels":               (0.0, 0.33, 0.66, 1.0),
+            #   "pitch_overhead_amplitude_levels":  (0.0, 0.5, 1.0, 1.5),
         },
     )
 
