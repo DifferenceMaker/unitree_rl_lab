@@ -80,9 +80,19 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p8_gold_2026-06-15
-    arm_kp: 50.0
-    arm_kd: 1.0
-    arm_transition_s: 1.5
+    # Arm path tuning (applies to the 14 arm motors only; legs+torso keep the
+    # policy-trained deploy.yaml gains). See deploy/robots/h1_2/tools/HARNESS.md.
+    #   arm_kp / arm_kd: scalar (all arm joints) OR a 14-element list for
+    #     per-joint gains, in 14-dim URDF arm order:
+    #       [L/R shoulder_pitch, L/R shoulder_roll, L/R shoulder_yaw,
+    #        L/R elbow_pitch, L/R elbow_roll, L/R wrist_pitch, L/R wrist_yaw]
+    #     e.g. per-joint: arm_kp: [40,40, 40,40, 30,30, 40,40, 20,20, 20,20, 20,20]
+    arm_kp: 30.0
+    arm_kd: 3.0
+    # Seconds for a commanded arm pose change to slew in (obs + motor both ramp).
+    arm_transition_s: 4.0
+    # TrainingDist (DPad Left) resample dwell; omit/<=0 => random 10-15s.
+    # arm_pose_dwell_s: 8.0
 
   Balance_airtime4:
     transitions:

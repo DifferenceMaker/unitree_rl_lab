@@ -50,16 +50,41 @@ pose resamples every U(10,15) s to emulate episode resets.
 
 ## Arm pose transitions + gains (config.yaml Balance block)
 
-- `arm_transition_s` (default 1.5): EVERY discrete arm pose change — DPad mode
-  switch, TrainingDist resample, stdin `arm` command — cosine-blends from the
-  last emitted targets to the new pose over this long. No jumps, zero-velocity
-  start/end; wobble fades in with the blend. The obs (`arm_pose_command`)
-  switches to the new held pose immediately, like an Isaac episode reset.
-- `arm_kp` / `arm_kd` (set to 50 / 1.0): the team's real-robot gains
-  (Aspired_Robot_Project `BridgeModule/main/config.py` H1_2_KP/H1_2_KD),
-  applied to the 14 arm motors only; legs+torso keep the deploy.yaml
-  policy-trained gains. Remove both keys to fall back to deploy.yaml arm gains
-  (kp 100/50, kd 2.0). FixStand arm gains in config.yaml are untouched.
+There is ONE commanded held pose. On any discrete change (DPad mode switch,
+TrainingDist resample, stdin `arm` command) it cosine-eases (zero-velocity
+endpoints) from its current value to the new target over `arm_transition_s`.
+Both the policy obs (`arm_pose_command`) AND the arm motor target read this
+single slewed pose, so the policy sees the gradual trajectory it must
+compensate for, not a step. Wobble (disturbance modes) rides on top of the
+slewed pose for the motor target only; the obs stays wobble-free, like training.
+
+- `arm_transition_s` (default 2.0): pose-change slew time, in REAL seconds.
+  Timing is measured from the wall clock inside `compute_arm_targets`, so it is
+  independent of the loop rate. (Before: the blend was fed `step_dt=0.02` at the
+  1 kHz FSM rate, advancing 20× too fast — a "1.5 s" transition completed in
+  ~75 ms, i.e. the snap. Fixed.)
+- `arm_pose_dwell_s` (optional): TrainingDist resample period. Omit or set ≤0
+  for the training-faithful random U(10,15) s; set a value for a fixed dwell so
+  each pose fully settles (use longer dwell + slew together).
+- `arm_kp` / `arm_kd`: scalar (all 14 arm joints) OR a 14-element list
+  (per-joint, 14-dim URDF arm order). Applied to the 14 arm motors only;
+  legs+torso keep the deploy.yaml policy-trained gains. Default in config is
+  50 / 1.0 (the team's real-robot `BridgeModule/main/config.py` H1_2_KP/H1_2_KD).
+  Remove both keys to fall back to deploy.yaml arm gains (kp 100/50, kd 2.0).
+  FixStand arm gains in config.yaml are untouched. Per-joint lets you soften
+  e.g. only the shoulders (the heaviest CoM lever) while keeping wrists firm.
+
+On startup each RLBase state logs `[FSM] Resolved arm config: arm_transition_s=…
+arm_pose_dwell_s=… gain_override=…` plus the resolved kp/kd, so you can confirm
+the config took effect (not silently defaulted).
+
+### Tuning for torso stillness (the harness loop)
+
+Hold p8_gold loaded, watch the sidecar `torso_ang_vel RMS` during an arm sweep:
+- `arm_kp ∈ {30,50,80}`, `arm_kd ∈ {1.0,1.5,2.0}` (or per-joint — soften
+  shoulders first), `arm_transition_s ∈ {1.5,2.5,4.0}`.
+- Lowest torso RMS during arm motion while the arm still reaches its pose
+  (too-low kp = sag/lag) wins. Config-only — no rebuild between sweep points.
 
 ## p7_1c vs p7_1d comparison runbook (training-dist mode)
 

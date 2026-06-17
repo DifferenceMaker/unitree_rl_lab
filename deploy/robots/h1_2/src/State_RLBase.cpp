@@ -69,27 +69,65 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     // Arms driven externally by ArmPosePublisher. Initialize to Training mode
     // (matches training distribution: held pose ±1.5/±1.0/±1.5, wobble 0.15).
     auto& arm_pub = h1_2::ArmPosePublisher::instance();
-    arm_pub.set_mode(h1_2::ArmPosePublisher::Mode::Idle);
 
-    // Arm pose-change transition time (every mode switch / resample / stdin
-    // `arm` command eases over this long instead of jumping).
+    // --- Per-state arm config (config.yaml; applied to the arm path only) ---
+    // Set transition/dwell BEFORE set_mode so the first blend + resample
+    // schedule pick them up.
     if (cfg["arm_transition_s"]) {
         arm_pub.set_transition_s(cfg["arm_transition_s"].as<float>());
     }
-    // Arm kp/kd override — match the team's real-robot BridgeModule gains
-    // (config.py H1_2_KP=50, H1_2_KD=1). Overrides deploy.yaml for the 14 arm
-    // motors only; legs+torso keep the policy-trained gains. Absent = no
-    // override (deploy.yaml arm gains apply).
-    if (cfg["arm_kp"] && cfg["arm_kd"]) {
-        arm_pub.set_arm_gains(cfg["arm_kp"].as<float>(), cfg["arm_kd"].as<float>());
-        std::cout << "[FSM]   Arm gains override: kp=" << arm_pub.arm_kp()
-                  << " kd=" << arm_pub.arm_kd() << " (team BridgeModule values)" << std::endl;
+    if (cfg["arm_pose_dwell_s"]) {
+        arm_pub.set_dwell_s(cfg["arm_pose_dwell_s"].as<float>());
     }
 
+    // Arm kp/kd override for the 14 arm motors only (legs+torso keep the
+    // policy-trained deploy.yaml gains). Each key may be a scalar (all arm
+    // joints) OR a 14-element list (per-joint, 14-dim URDF arm order — see
+    // ArmPosePublisher.h). Absent => deploy.yaml arm gains apply.
+    if (cfg["arm_kp"] && cfg["arm_kd"]) {
+        auto parse_gain = [](const YAML::Node& n, std::array<float, 14>& out) -> int {
+            if (n.IsSequence()) {
+                if (n.size() != 14) return -1;       // bad length
+                for (size_t i = 0; i < 14; ++i) out[i] = n[i].as<float>();
+                return 14;                            // per-joint
+            }
+            out.fill(n.as<float>());
+            return 0;                                 // scalar
+        };
+        std::array<float, 14> kp{}, kd{};
+        int rp = parse_gain(cfg["arm_kp"], kp);
+        int rd = parse_gain(cfg["arm_kd"], kd);
+        if (rp < 0 || rd < 0) {
+            std::cout << "[FSM]   WARNING: arm_kp/arm_kd must be a scalar or a 14-element "
+                         "list — ignoring, deploy.yaml arm gains kept." << std::endl;
+        } else {
+            arm_pub.set_arm_gains(kp, kd);
+            std::cout << "[FSM]   Arm gain override (14 arm motors only):" << std::endl;
+            if (rp == 0 && rd == 0) {
+                std::cout << "[FSM]     kp=" << kp[0] << " kd=" << kd[0] << " (scalar)" << std::endl;
+            } else {
+                std::cout << "[FSM]     kp=[";
+                for (size_t i = 0; i < 14; ++i) std::cout << kp[i] << (i < 13 ? "," : "");
+                std::cout << "]" << std::endl << "[FSM]     kd=[";
+                for (size_t i = 0; i < 14; ++i) std::cout << kd[i] << (i < 13 ? "," : "");
+                std::cout << "]" << std::endl;
+            }
+        }
+    }
+
+    // Default arm source: IDLE (held at default pose, no motion).
+    arm_pub.set_mode(h1_2::ArmPosePublisher::Mode::Idle);
+
     std::cout << "[FSM] State_RLBase " << state_string << " constructed." << std::endl;
+    std::cout << "[FSM]   Resolved arm config: arm_transition_s=" << arm_pub.transition_s()
+              << "  arm_pose_dwell_s=" << arm_pub.dwell_s()
+              << " (<=0 => random 10-15s)"
+              << "  gain_override=" << (arm_pub.arm_gain_override() ? "yes" : "no (deploy.yaml)")
+              << std::endl;
     std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
     std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training | Left=TrainingDist (sampled)" << std::endl;
-    std::cout << "[FSM]   stdin: `arm <14 vals>` sets a manual held pose (slew-limited)" << std::endl;
+    std::cout << "[FSM]   Every pose change slews over arm_transition_s. "
+                 "stdin: `arm <14 vals>` sets a manual held pose." << std::endl;
 }
 
 void State_RLBase::run()
@@ -184,16 +222,18 @@ void State_RLBase::run()
     // (which would be garbage / out-of-range for 13-action policies anyway).
     if (action.size() < 27) {
         auto& pub = h1_2::ArmPosePublisher::instance();
+        // dt is measured from the wall clock inside compute_arm_targets (the
+        // arg is ignored), so the slew/wobble are correct at this 1 kHz loop.
         auto arm_targets = pub.compute_arm_targets(env->step_dt);
-        const bool gain_override = pub.arm_kp() >= 0.0f;
+        const bool gain_override = pub.arm_gain_override();
         for (size_t i = 0; i < 14; i++) {
             auto& cmd = lowcmd->msg_.motor_cmd()[ARM_SDK_MOTOR_IDS[i]];
             cmd.q() = arm_targets[i];
             if (gain_override) {
-                // Re-asserted every step: State_RLBase::enter() writes the
-                // deploy.yaml gains on every entry into this state.
-                cmd.kp() = pub.arm_kp();
-                cmd.kd() = pub.arm_kd();
+                // Per-joint arm gains, re-asserted every step (enter() writes
+                // the deploy.yaml gains on every entry into this state).
+                cmd.kp() = pub.arm_kp(i);
+                cmd.kd() = pub.arm_kd(i);
             }
         }
     }
