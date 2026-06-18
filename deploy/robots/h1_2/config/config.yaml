@@ -87,7 +87,7 @@ FSM:
     #       [L/R shoulder_pitch, L/R shoulder_roll, L/R shoulder_yaw,
     #        L/R elbow_pitch, L/R elbow_roll, L/R wrist_pitch, L/R wrist_yaw]
     #     e.g. per-joint: arm_kp: [40,40, 40,40, 30,30, 40,40, 20,20, 20,20, 20,20]
-    arm_kp: 30.0
+    arm_kp: 40.0
     arm_kd: 3.0
     # Seconds for a commanded arm pose change to slew in (obs + motor both ramp).
     arm_transition_s: 4.0
