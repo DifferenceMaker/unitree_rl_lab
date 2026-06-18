@@ -163,9 +163,13 @@ void State_RLBase::run()
     // publisher. This overrides whatever the action loop wrote to arm motors
     // (which would be garbage / out-of-range for 13-action policies anyway).
     if (action.size() < 27) {
-        auto arm_targets = h1_2::ArmPosePublisher::instance().compute_arm_targets(env->step_dt);
+        auto& arm_pub = h1_2::ArmPosePublisher::instance();
+        auto arm_targets = arm_pub.compute_arm_targets(env->step_dt);
+        const auto& arm_tau = arm_pub.arm_tau_ff();  // gravity-comp feedforward (matches arm_targets)
         for (size_t i = 0; i < 14; i++) {
-            lowcmd->msg_.motor_cmd()[h1_2::ArmPosePublisher::ARM_SDK_MOTOR_IDS[i]].q() = arm_targets[i];
+            const int m = h1_2::ArmPosePublisher::ARM_SDK_MOTOR_IDS[i];
+            lowcmd->msg_.motor_cmd()[m].q()   = arm_targets[i];
+            lowcmd->msg_.motor_cmd()[m].tau() = arm_tau[i];
         }
     }
 }

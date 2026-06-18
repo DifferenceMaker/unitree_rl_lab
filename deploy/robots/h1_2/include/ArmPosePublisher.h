@@ -87,6 +87,11 @@ public:
     //   teleop:     slew/ramp-limited stream from rt/arm_sdk (held on timeout).
     std::vector<float> compute_arm_targets(float dt);
 
+    // Torque feedforward (gravity comp) for the 14 arm joints, valid right after the
+    // most recent compute_arm_targets() call. Write it to motor_cmd[...].tau() each
+    // step. 0 in non-teleop modes / on stale stream.
+    const std::array<float, 14>& arm_tau_ff() const { return teleop_tau_; }
+
     // Force-reset held pose (e.g. on FSM state entry).
     void resample_held_pose();
 
@@ -163,6 +168,9 @@ private:
     std::unique_ptr<unitree::robot::g1::subscription::ArmSdk> armsdk_sub_;
     // Current (slew/ramp-limited) output; also the obs value. Seeded to default.
     std::array<float, 14> teleop_output_ = DEFAULT_ARM_POS;
+    // Gravity-comp torque feedforward read from rt/arm_sdk .tau() (ramp-scaled).
+    // 0 when the stream is stale or in non-teleop modes. Written to motor_cmd[].tau().
+    std::array<float, 14> teleop_tau_ = {};
     bool  teleop_was_stale_ = true;     // true until a fresh command is acquired
     bool  teleop_warned_stale_ = false; // one-shot "waiting for teleop" log
     float teleop_engage_t_ = 0.0f;      // time since last (re)acquisition, for the ramp

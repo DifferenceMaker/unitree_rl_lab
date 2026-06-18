@@ -98,12 +98,14 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float dt) {
     if (mode_ == Mode::Teleop) {
         // ---- Read the latest streamed command (or detect a stale/absent stream) ----
         std::array<float, 14> live;
+        std::array<float, 14> live_tau;
         bool have = false;
         if (armsdk_sub_ && !armsdk_sub_->isTimeout()) {
             std::lock_guard<std::mutex> lk(armsdk_sub_->mutex_);
             const auto& mc = armsdk_sub_->msg_.motor_cmd();
             for (size_t i = 0; i < 14; i++) {
-                live[i] = static_cast<float>(mc[ARM_SDK_MOTOR_IDS[i]].q());
+                live[i]     = static_cast<float>(mc[ARM_SDK_MOTOR_IDS[i]].q());
+                live_tau[i] = static_cast<float>(mc[ARM_SDK_MOTOR_IDS[i]].tau());  // gravity-comp feedforward
             }
             have = true;
         }
@@ -117,6 +119,7 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float dt) {
                 teleop_warned_stale_ = true;
             }
             teleop_was_stale_ = true;
+            teleop_tau_.fill(0.0f);  // no torque feedforward while the stream is stale
             return std::vector<float>(teleop_output_.begin(), teleop_output_.end());
         }
 
@@ -140,10 +143,18 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float dt) {
             float d = live[i] - teleop_output_[i];
             d = std::clamp(d, -max_step, max_step);
             teleop_output_[i] += d;
+            // Gravity-comp torque feedforward, eased in over the same engagement ramp
+            // so it does not jolt on (re)acquisition. This is the tau xr_teleoperate
+            // publishes (IK inverse-dynamics); without it the gravity-loaded joints
+            // (shoulder_pitch, elbow) cannot hold position under PD control alone.
+            teleop_tau_[i] = ramp * live_tau[i];
             // (Optional OOD safety clamp toward the training range would go here.)
         }
         return std::vector<float>(teleop_output_.begin(), teleop_output_.end());
     }
+
+    // Non-teleop modes are position-only (wobble self-test): no torque feedforward.
+    teleop_tau_.fill(0.0f);
 
     // ---- Non-teleop modes: default + held + wobble (unchanged) ----
     // Advance time
