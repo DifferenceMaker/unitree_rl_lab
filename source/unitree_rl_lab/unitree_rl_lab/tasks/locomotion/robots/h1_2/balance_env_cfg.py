@@ -500,6 +500,20 @@ class RewardsCfg:
         weight=-1.5,
     )
 
+    # p9: heading-keeping BONUS — companion to heading_l2_from_spawn (the L2 penalty
+    # above; left intact). Positive exp(-yaw_err^2 / std^2), yaw_err = current yaw -
+    # spawn yaw (mdp.heading_stable_bonus; the upright_bonus pattern applied to yaw).
+    # A narrow std gives a sharp gradient near zero so the policy actively re-rotates
+    # to spawn heading (the L2 penalty only weakly resists drift). Default weight 0.0
+    # => base behavior UNCHANGED; p9 jobs enable it. CAUTION: a narrow-std heading
+    # bonus fights the push-recovery curriculum (some yaw compliance under a shove is
+    # expected) — gating it to non-push phases is an OPEN QUESTION, not gated here.
+    heading_stable_bonus = RewTerm(
+        func=mdp.heading_stable_bonus,
+        weight=0.0,
+        params={"std": 0.1},
+    )
+
     base_pos_xy_l2_from_spawn = RewTerm(
         func=mdp.base_pos_xy_l2_from_spawn,
         weight=-0.75,
