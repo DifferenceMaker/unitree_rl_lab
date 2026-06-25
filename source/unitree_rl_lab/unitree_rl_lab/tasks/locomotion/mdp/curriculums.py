@@ -98,7 +98,38 @@ def push_velocity_curriculum(
     }
  
     return torch.tensor(target_vel, device=env.device)
- 
+
+
+def add_hand_payload_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    event_term_name: str = "add_hand_payload",
+    warmup_steps: int = 6000,
+    hold_steps: int = 5000,
+    levels: tuple = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0),
+) -> "torch.Tensor":
+    """Stepwise ramp of the hand-payload UPPER mass bound (kg), mirroring
+    push_velocity_curriculum. The add_hand_payload event samples mass ~
+    U(0, current_max) each reset; this ramps current_max from levels[0] up one
+    level every hold_steps after warmup. Lets a warmstart ease into heavy payloads
+    instead of seeing the full [0, max] from iter 0 (the p8 flat-[0,5] run diverged).
+
+    Default-inert: NOT wired into the base CurriculumCfg; a job attaches it via
+    edit_raw (adds add_hand_payload first, then this CurrTerm). Returns the current
+    upper-bound mass (kg) for logging.
+    """
+    step = env.common_step_counter
+    if step < warmup_steps:
+        target = float(levels[0])
+    else:
+        level_idx = min(int((step - warmup_steps) // hold_steps), len(levels) - 1)
+        target = float(levels[level_idx])
+
+    event_term = env.event_manager.get_term_cfg(event_term_name)
+    event_term.params["mass_distribution_params"] = (0.0, target)
+
+    return torch.tensor(target, device=env.device)
+
 # ============================================================
 # ADDITIONS to curriculums.py for arm curriculum (option I).
 # Append these to the existing curriculums.py — do NOT replace the file.
