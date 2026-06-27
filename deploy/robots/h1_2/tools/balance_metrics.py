@@ -147,18 +147,26 @@ class Metrics:
         self.run_dist_n = 0
         self.run_gyro_sq_sum = 0.0
         self.run_gyro_n = 0
+        # projected_gravity (lean): gx=fwd/back, gy=lateral L/R, gz≈-1 upright
+        self.win_pg = []
+        self.run_pg_sum = np.zeros(3)
+        self.run_pg_n = 0
 
-    def step(self, dist, rel_h_l, rel_h_r, gyro, tilt):
+    def step(self, dist, rel_h_l, rel_h_r, gyro, tilt, proj_grav):
         for key, rel_h in (("L", rel_h_l), ("R", rel_h_r)):
             self.feet[key].update(rel_h)
 
         gyro_sq = float(np.dot(gyro, gyro))
+        pg = np.asarray(proj_grav, dtype=float)
         self.win_dist.append(dist)
         self.win_gyro_sq.append(gyro_sq)
+        self.win_pg.append(pg)
         self.run_dist_sum += dist
         self.run_dist_n += 1
         self.run_gyro_sq_sum += gyro_sq
         self.run_gyro_n += 1
+        self.run_pg_sum += pg
+        self.run_pg_n += 1
         self.win_samples += 1
 
         if tilt > FALL_TILT_RAD and not self._fallen:
@@ -175,6 +183,7 @@ class Metrics:
             self.win_t0 = time.monotonic()
             self.win_dist = []
             self.win_gyro_sq = []
+            self.win_pg = []
 
     def _print_window(self):
         now = time.monotonic()
@@ -187,10 +196,19 @@ class Metrics:
         mean_d = float(np.mean(self.win_dist)) if self.win_dist else float("nan")
         min_d = float(np.min(self.win_dist)) if self.win_dist else float("nan")
         rms = math.sqrt(float(np.mean(self.win_gyro_sq))) if self.win_gyro_sq else float("nan")
+        if self.win_pg:
+            pg = np.stack(self.win_pg); pgm = pg.mean(0); pgs = pg.std(0)
+            lean_fwd = math.degrees(math.atan2(pgm[0], -pgm[2]))
+            lean_lat = math.degrees(math.atan2(pgm[1], -pgm[2]))
+        else:
+            pgm = np.full(3, float("nan")); pgs = pgm; lean_fwd = lean_lat = float("nan")
         print(f"[METRICS] window={self.window} steps ({win_s:.1f}s) / "
               f"touchdowns L={td_l} R={td_r} total={total} = {rate:.2f}/s / "
               f"feet_dist mean {mean_d:.3f} min {min_d:.3f} / "
-              f"torso_ang_vel RMS {rms:.3f}", flush=True)
+              f"torso_ang_vel RMS {rms:.3f} / "
+              f"proj_grav [{pgm[0]:+.3f},{pgm[1]:+.3f},{pgm[2]:+.3f}] "
+              f"lean fwd={lean_fwd:+.1f} lat={lean_lat:+.1f}deg "
+              f"(wander gx={pgs[0]:.3f} gy={pgs[1]:.3f})", flush=True)
 
     def summary(self):
         elapsed = time.monotonic() - self.t0
@@ -200,6 +218,9 @@ class Metrics:
         rate = total / elapsed if elapsed > 0 else 0.0
         mean_d = self.run_dist_sum / self.run_dist_n if self.run_dist_n else float("nan")
         rms = math.sqrt(self.run_gyro_sq_sum / self.run_gyro_n) if self.run_gyro_n else float("nan")
+        pgm = (self.run_pg_sum / self.run_pg_n) if self.run_pg_n else np.full(3, float("nan"))
+        lean_fwd = math.degrees(math.atan2(pgm[0], -pgm[2])) if self.run_pg_n else float("nan")
+        lean_lat = math.degrees(math.atan2(pgm[1], -pgm[2])) if self.run_pg_n else float("nan")
         print("\n================ RUN SUMMARY ================", flush=True)
         print(f"  duration        : {elapsed:.1f} s "
               f"({self.run_dist_n} samples @ {1.0 / self.dt:.0f} Hz nominal)")
@@ -208,6 +229,8 @@ class Metrics:
         print(f"  falls           : {self.falls}")
         print(f"  feet_dist mean  : {mean_d:.3f} m")
         print(f"  torso_ang_vel   : RMS {rms:.3f} rad/s")
+        print(f"  proj_grav (mean): [{pgm[0]:+.3f}, {pgm[1]:+.3f}, {pgm[2]:+.3f}]")
+        print(f"  lean (mean)     : fwd {lean_fwd:+.1f}deg  lateral {lean_lat:+.1f}deg")
         print("=============================================", flush=True)
 
 
@@ -350,7 +373,7 @@ def main():
         g_b = R.T @ np.array([0.0, 0.0, -1.0])
         tilt = math.acos(max(-1.0, min(1.0, -g_b[2])))
 
-        metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt)
+        metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt, g_b)
 
     metrics.summary()
 
