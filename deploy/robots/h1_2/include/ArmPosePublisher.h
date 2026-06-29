@@ -48,6 +48,9 @@ public:
         // Sim2sim harness modes:
         TrainingDist = 4,  // sampled from the training distribution (p7_1b+ sampler)
         Manual = 5,        // held pose set via stdin `arm <14 vals>`
+        SafeDist = 6,      // gentle, real-robot-safe sampled dist (Down-DPad): small
+                           // amplitude + slow wobble + long dwell + the pitch raise,
+                           // so the arms stay forward and never go alongside the torso.
     };
 
     static ArmPosePublisher& instance();
@@ -123,21 +126,34 @@ private:
     // Legacy modes keep their slow 0.05 Hz wobble. TrainingDist matches the
     // p7_1b+ training sampler (pitch ±1.5, roll ±1.0 mirrored, elbow ±1.5,
     // wobble 0.25 @ 2 Hz).
-    static constexpr ModeParams MODE_PARAMS[6] = {
+    static constexpr ModeParams MODE_PARAMS[7] = {
         /* Idle         */ {0.0f, 0.0f, 0.0f, 0.00f, 0.05f},
         /* Mild         */ {0.5f, 0.3f, 0.5f, 0.05f, 0.05f},
         /* Training     */ {2.5f, 2.0f, 2.5f, 0.50f, 0.05f},
         /* Manipulation */ {0.0f, 0.0f, 0.0f, 0.00f, 0.05f},
         /* TrainingDist */ {1.5f, 1.0f, 1.5f, 0.25f, 2.00f},
         /* Manual       */ {0.0f, 0.0f, 0.0f, 0.00f, 0.00f},
+        /* SafeDist     */ {0.3f, 0.2f, 0.5f, 0.20f, 0.40f},  // mostly-lateral (roll-abducted), gentle VISIBLE wobble
     };
 
     // p7_1b+ self-collision guard: executed shoulder-roll OFFSET clamped to
     // ±0.8 (motor target only; obs is unclamped, like training).
     static constexpr float ROLL_OFFSET_CLAMP = 0.8f;
 
+    // Anti-self-collision: ABDUCT the shoulders (raise the arms OUT laterally) so
+    // the sampled poses clear the legs/torso. shoulder_roll axis (MJCF): left range
+    // [-0.38, 3.4], right [-3.4, 0.38] => abduction = +left / -right (same mirroring
+    // as roll_delta). Applied to held_target so obs + motor stay consistent.
+    // (Tried shoulder-PITCH first, but +pitch swings the arms BACKWARD on this robot;
+    //  the arms need to go out to the SIDES, hence roll abduction.)
+    static constexpr float TRAININGDIST_ROLL_ABDUCT = 0.45f;  // Left (full, sim2sim)
+    static constexpr float SAFEDIST_ROLL_ABDUCT     = 0.7f;   // Down (safe): ~40 deg out
+
     static constexpr float RESAMPLE_MIN_S = 10.0f;
     static constexpr float RESAMPLE_MAX_S = 15.0f;
+    // SafeDist resamples less often (gentler / less frequent changes) than TrainingDist.
+    static constexpr float SAFEDIST_RESAMPLE_MIN_S = 20.0f;
+    static constexpr float SAFEDIST_RESAMPLE_MAX_S = 30.0f;
     static constexpr float DEFAULT_TRANSITION_S = 2.0f;
     static constexpr float MAX_DT_S = 0.05f;  // clamp wall-clock dt against stalls
 

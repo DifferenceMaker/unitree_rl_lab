@@ -125,7 +125,7 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
               << "  gain_override=" << (arm_pub.arm_gain_override() ? "yes" : "no (deploy.yaml)")
               << std::endl;
     std::cout << "[FSM]   Arm mode default: IDLE (no motion). DPad to change:" << std::endl;
-    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=Training | Left=TrainingDist (sampled)" << std::endl;
+    std::cout << "[FSM]   Up=Idle | Right=Mild | Down=SafeDist (gentle, real-robot-safe) | Left=TrainingDist (full, sim2sim)" << std::endl;
     std::cout << "[FSM]   Every pose change slews over arm_transition_s. "
                  "stdin: `arm <14 vals>` sets a manual held pose." << std::endl;
 }
@@ -133,7 +133,7 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
 void State_RLBase::run()
 {
     // ===== Arm mode switching via DPad (rising-edge triggered) =====
-    // Up=Idle, Right=Mild, Down=Training, Left=TrainingDist (sampled)
+    // Up=Idle, Right=Mild, Down=SafeDist (gentle, real-robot-safe), Left=TrainingDist (full, sim2sim).
     // Operates independent of FSM state — works in any BalancePush variant.
     using ArmMode = h1_2::ArmPosePublisher::Mode;
     auto& arm_pub = h1_2::ArmPosePublisher::instance();  // mode switches blend over arm_transition_s
@@ -147,14 +147,18 @@ void State_RLBase::run()
         std::cout << "[ARM_MODE] -> MILD (gentle disturbance)" << std::endl;
     }
     if (lowstate->joystick.down.on_pressed) {
-        arm_pub.set_mode(ArmMode::Training);
-        std::cout << "[ARM_MODE] -> TRAINING (full disturbance)" << std::endl;
+        arm_pub.set_mode(ArmMode::SafeDist);
+        std::cout << "[ARM_MODE] -> SAFE-DIST (gentle sampled, real-robot-safe:"
+                  << " pitch±0.6 roll±0.3 elbow±0.6, +0.45rad raise (arms stay forward),"
+                  << " wobble 0.05@0.05Hz, resample 20-30s)" << std::endl;
     }
+    // (Down was full Training ±2.5 OOD — now SafeDist above. Full TrainingDist stays
+    //  on Left for sim2sim stress; Mode::Training remains in the enum, dpad-unreachable.)
     if (lowstate->joystick.left.on_pressed) {
         arm_pub.set_mode(ArmMode::TrainingDist);
-        std::cout << "[ARM_MODE] -> TRAINING-DIST (sampled from training distribution:"
-                  << " pitch±1.5 roll±1.0 elbow±1.5, wobble 0.25@2Hz,"
-                  << " roll clamp ±0.8, resample 10-15s)" << std::endl;
+        std::cout << "[ARM_MODE] -> TRAINING-DIST (sampled: pitch±1.5 roll±1.0 elbow±1.5,"
+                  << " +0.45rad shoulder-pitch raise (anti-self-collision),"
+                  << " wobble 0.25@2Hz, roll clamp ±0.8, resample 10-15s)" << std::endl;
     }
 
 

@@ -6,7 +6,7 @@
 namespace h1_2 {
 
 constexpr std::array<float, 14> ArmPosePublisher::DEFAULT_ARM_POS;
-constexpr ArmPosePublisher::ModeParams ArmPosePublisher::MODE_PARAMS[6];
+constexpr ArmPosePublisher::ModeParams ArmPosePublisher::MODE_PARAMS[7];
 
 ArmPosePublisher& ArmPosePublisher::instance() {
     static ArmPosePublisher inst;
@@ -39,7 +39,9 @@ void ArmPosePublisher::resample_deltas_locked() {
     // Schedule the next TrainingDist resample.
     float dwell = dwell_s_;
     if (dwell <= 0.0f) {
-        std::uniform_real_distribution<float> period_u(RESAMPLE_MIN_S, RESAMPLE_MAX_S);
+        const float lo = (mode_ == Mode::SafeDist) ? SAFEDIST_RESAMPLE_MIN_S : RESAMPLE_MIN_S;
+        const float hi = (mode_ == Mode::SafeDist) ? SAFEDIST_RESAMPLE_MAX_S : RESAMPLE_MAX_S;
+        std::uniform_real_distribution<float> period_u(lo, hi);
         dwell = period_u(rng_);
     }
     next_resample_t_ = t_ + dwell;
@@ -59,6 +61,17 @@ void ArmPosePublisher::recompute_held_target_locked() {
     held_target_[IDX_R_SHOULDER_ROLL]  -= roll_delta_;  // mirrored
     held_target_[IDX_L_ELBOW_PITCH]    += elbow_delta_;
     held_target_[IDX_R_ELBOW_PITCH]    += elbow_delta_;
+
+    // TrainingDist/SafeDist (Left/Down DPad) self-collision fix: ABDUCT the
+    // shoulders — raise the arms OUT laterally so they clear the legs/torso.
+    // Abduction = +left_roll / -right_roll (MJCF: L range +3.4, R range -3.4),
+    // same mirroring as roll_delta. On held_target => obs + motor stay consistent.
+    if (mode_ == Mode::TrainingDist || mode_ == Mode::SafeDist) {
+        const float abduct = (mode_ == Mode::SafeDist) ? SAFEDIST_ROLL_ABDUCT
+                                                       : TRAININGDIST_ROLL_ABDUCT;
+        held_target_[IDX_L_SHOULDER_ROLL] += abduct;
+        held_target_[IDX_R_SHOULDER_ROLL] -= abduct;
+    }
 }
 
 void ArmPosePublisher::begin_blend_locked() {
@@ -138,7 +151,7 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float /*dt_hint_ignored
 
     // TrainingDist: emulate Isaac episode resets — resample the held pose and
     // slew to it on the dwell schedule.
-    if (mode_ == Mode::TrainingDist && t_ >= next_resample_t_) {
+    if ((mode_ == Mode::TrainingDist || mode_ == Mode::SafeDist) && t_ >= next_resample_t_) {
         resample_deltas_locked();
         recompute_held_target_locked();
         begin_blend_locked();
@@ -178,7 +191,7 @@ std::vector<float> ArmPosePublisher::compute_arm_targets(float /*dt_hint_ignored
     // wobble) to ±0.8 — held roll alone can reach ±1.0, so this applies whether
     // or not wobble is active. Motor target only; obs/slewed_held_ stays
     // unclamped, exactly like the training sampler.
-    if (mode_ == Mode::TrainingDist) {
+    if (mode_ == Mode::TrainingDist || mode_ == Mode::SafeDist) {
         for (size_t idx : {IDX_L_SHOULDER_ROLL, IDX_R_SHOULDER_ROLL}) {
             const float offset = targets[idx] - DEFAULT_ARM_POS[idx];
             targets[idx] = DEFAULT_ARM_POS[idx]
