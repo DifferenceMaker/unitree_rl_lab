@@ -94,6 +94,17 @@ from datetime import datetime
 
 from rsl_rl.runners import OnPolicyRunner  # TODO: Consider printing the experiment name in the terminal.
 
+# --- Disable rsl_rl's checkpoint upload to wandb cloud ---------------------
+# rsl_rl/utils/wandb_utils.py::WandbSummaryWriter.save_model() calls wandb.save()
+# on every model_*.pt, which blows the wandb storage quota. We use wandb only for
+# metric charts (wandb.log — a separate path, left intact); checkpoints are kept
+# locally + committed to aspired-isaac-lab. No-op wandb.save() here at module import
+# (BEFORE the runner / WandbSummaryWriter is created at OnPolicyRunner(...) /
+# runner.learn()), patching the shared wandb module rsl_rl imports. Lives in-repo
+# (reinstall-proof) instead of editing site-packages.
+import wandb
+wandb.save = lambda *a, **k: None  # disable checkpoint upload; metric logging (wandb.log) untouched
+
 import isaaclab_tasks  # noqa: F401
 from isaaclab.envs import (
     DirectMARLEnv,
