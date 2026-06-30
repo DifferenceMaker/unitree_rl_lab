@@ -58,8 +58,9 @@ try:
 except ImportError:
     sys.exit("mujoco python package required (pip install mujoco)")
 
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber, ChannelPublisher
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 
 NUM_JOINTS = 27  # H1-2 handless: 12 legs + torso + 14 arms (SDK order)
 
@@ -130,6 +131,7 @@ class Metrics:
         self.window = window
         self.dt = dt
         self.mode_label = mode_label
+        self.publisher = None  # optional DDS publisher (rt/balance_metrics) for the sim HUD
         self.zero()
 
     def zero(self):
@@ -226,6 +228,18 @@ class Metrics:
               f"(wander gx={pgs[0]:.3f} gy={pgs[1]:.3f}) "
               f"imu_rpy roll={imu_roll:+.1f} pitch={imu_pitch:+.1f}deg", flush=True)
 
+        # Publish to the MuJoCo sim HUD (rt/balance_metrics). Best-effort; the sim
+        # subscribes and overlays this. No effect on logging if no subscriber.
+        if self.publisher is not None:
+            payload = (
+                '{"lean_fwd":%.1f,"lean_lat":%.1f,"steps_l":%d,"steps_r":%d,'
+                '"touchdown_rate":%.2f,"torso_ang_vel_rms":%.3f}'
+            ) % (lean_fwd, lean_lat, td_l, td_r, rate, rms)
+            try:
+                self.publisher.Write(String_(data=payload))
+            except Exception:
+                pass
+
     def summary(self):
         elapsed = time.monotonic() - self.t0
         td_l = self.feet["L"].touchdowns
@@ -310,9 +324,28 @@ def main():
     metrics = Metrics(args.window, 1.0 / args.hz, args.mode)
     stop = threading.Event()
 
+    # Publish metrics to the MuJoCo sim HUD, and let the sim zero us via DDS.
+    try:
+        metrics_pub = ChannelPublisher("rt/balance_metrics", String_)
+        metrics_pub.Init()
+        metrics.publisher = metrics_pub
+        print("[SIDECAR] publishing metrics on rt/balance_metrics (sim HUD)", flush=True)
+    except Exception as e:
+        print(f"[SIDECAR] metrics publish disabled ({e})", flush=True)
+
     def request_zero(*_):
         metrics.zero()
         print("[SIDECAR] counters zeroed", flush=True)
+
+    def _metrics_cmd(msg):
+        if getattr(msg, "data", "").strip().lower() == "zero":
+            request_zero()
+
+    try:
+        cmd_sub = ChannelSubscriber("rt/metrics_cmd", String_)
+        cmd_sub.Init(_metrics_cmd, 1)
+    except Exception as e:
+        print(f"[SIDECAR] metrics_cmd subscribe disabled ({e})", flush=True)
 
     signal.signal(signal.SIGUSR1, request_zero)
     signal.signal(signal.SIGINT, lambda *_: stop.set())

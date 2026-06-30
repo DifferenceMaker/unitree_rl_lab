@@ -6,7 +6,7 @@
 namespace h1_2 {
 
 constexpr std::array<float, 14> ArmPosePublisher::DEFAULT_ARM_POS;
-constexpr ArmPosePublisher::ModeParams ArmPosePublisher::MODE_PARAMS[7];
+constexpr ArmPosePublisher::ModeParams ArmPosePublisher::MODE_PARAMS[8];
 
 ArmPosePublisher& ArmPosePublisher::instance() {
     static ArmPosePublisher inst;
@@ -48,8 +48,8 @@ void ArmPosePublisher::resample_deltas_locked() {
 }
 
 void ArmPosePublisher::recompute_held_target_locked() {
-    if (mode_ == Mode::Manual) {
-        held_target_ = manual_pose_;
+    if (mode_ == Mode::Manual || mode_ == Mode::External) {
+        held_target_ = manual_pose_;  // absolute pose (reused storage for both)
         return;
     }
     held_target_ = DEFAULT_ARM_POS;
@@ -119,6 +119,14 @@ void ArmPosePublisher::set_manual_pose(const std::array<float, 14>& pose) {
     std::lock_guard<std::mutex> lk(mtx_);
     manual_pose_ = pose;
     mode_ = Mode::Manual;
+    recompute_held_target_locked();
+    begin_blend_locked();
+}
+
+void ArmPosePublisher::set_external_pose(const std::array<float, 14>& pose) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    manual_pose_ = pose;        // reuse the absolute-pose slot
+    mode_ = Mode::External;     // stays External; no internal sampling/wobble/resample
     recompute_held_target_locked();
     begin_blend_locked();
 }

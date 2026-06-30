@@ -6,6 +6,7 @@
 #include "isaaclab/envs/mdp/observations/observations.h"
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "ArmPosePublisher.h"
+#include "PolicyStatusPublisher.h"
 
 // Arm SDK motor indices in URDF arm joint order (14 entries).
 // Derived from joint_ids_map[articulation_idx] for each arm joint.
@@ -137,6 +138,9 @@ void State_RLBase::run()
     // Operates independent of FSM state — works in any BalancePush variant.
     using ArmMode = h1_2::ArmPosePublisher::Mode;
     auto& arm_pub = h1_2::ArmPosePublisher::instance();  // mode switches blend over arm_transition_s
+
+    // Sim2sim HUD: report the active policy + arm gains on rt/policy_status (throttled).
+    h1_2::PolicyStatusPublisher::instance().publish(getStateString());
 
     if (lowstate->joystick.up.on_pressed) {
         arm_pub.set_mode(ArmMode::Idle);

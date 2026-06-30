@@ -7,6 +7,7 @@
 #include "FSM/State_FixStand.h"
 #include "FSM/State_RLBase.h"
 #include "ArmPosePublisher.h"
+#include "ArmCmdSubscriber.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -51,6 +52,10 @@ int main(int argc, char** argv)
     // Initialize FSM
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
+
+    // Decoupled arm-command interface: listen on rt/arm_pose_cmd and drive the
+    // ArmPosePublisher into External mode (MuJoCo GUI / script / teleop sends poses).
+    auto arm_cmd_sub = std::make_unique<h1_2::ArmCmdSubscriber>();
 
     std::cout << "Press [L2 + Up] to enter FixStand mode.\n";
     std::cout << "And then press [R1 + X] to start controlling the robot.\n";

@@ -51,6 +51,11 @@ public:
         SafeDist = 6,      // gentle, real-robot-safe sampled dist (Down-DPad): small
                            // amplitude + slow wobble + long dwell + the pitch raise,
                            // so the arms stay forward and never go alongside the torso.
+        External = 7,      // held pose commanded over DDS (rt/arm_pose_cmd) by an
+                           // external source (MuJoCo GUI / script / teleop) — mirrors
+                           // the real architecture. No internal sampling/wobble; the
+                           // controller just slews to each received pose. Auto-entered
+                           // on the first external command; any DPad press leaves it.
     };
 
     static ArmPosePublisher& instance();
@@ -73,6 +78,11 @@ public:
     // Manual mode: set an absolute 14-dim held arm pose (radians, order above).
     // Switches to Manual; the commanded pose slews there over arm_transition_s.
     void set_manual_pose(const std::array<float, 14>& pose);
+
+    // External mode: set an absolute 14-dim held arm pose from a DDS command
+    // (rt/arm_pose_cmd). Like set_manual_pose but switches to Mode::External and
+    // stays there for subsequent commands — the decoupled arm-command interface.
+    void set_external_pose(const std::array<float, 14>& pose);
 
     Mode mode() const { return mode_; }
 
@@ -126,7 +136,7 @@ private:
     // Legacy modes keep their slow 0.05 Hz wobble. TrainingDist matches the
     // p7_1b+ training sampler (pitch ±1.5, roll ±1.0 mirrored, elbow ±1.5,
     // wobble 0.25 @ 2 Hz).
-    static constexpr ModeParams MODE_PARAMS[7] = {
+    static constexpr ModeParams MODE_PARAMS[8] = {
         /* Idle         */ {0.0f, 0.0f, 0.0f, 0.00f, 0.05f},
         /* Mild         */ {0.5f, 0.3f, 0.5f, 0.05f, 0.05f},
         /* Training     */ {2.5f, 2.0f, 2.5f, 0.50f, 0.05f},
@@ -134,6 +144,7 @@ private:
         /* TrainingDist */ {1.5f, 1.0f, 1.5f, 0.25f, 2.00f},
         /* Manual       */ {0.0f, 0.0f, 0.0f, 0.00f, 0.00f},
         /* SafeDist     */ {0.3f, 0.2f, 0.5f, 0.20f, 0.40f},  // mostly-lateral (roll-abducted), gentle VISIBLE wobble
+        /* External     */ {0.0f, 0.0f, 0.0f, 0.00f, 0.00f},  // pose comes from DDS; no internal motion/wobble
     };
 
     // p7_1b+ self-collision guard: executed shoulder-roll OFFSET clamped to
