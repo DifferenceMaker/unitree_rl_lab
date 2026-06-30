@@ -151,8 +151,12 @@ class Metrics:
         self.win_pg = []
         self.run_pg_sum = np.zeros(3)
         self.run_pg_n = 0
+        # raw IMU rpy (firmware Euler, rad): roll=lateral tilt, pitch=fwd tilt, yaw
+        self.win_rpy = []
+        self.run_rpy_sum = np.zeros(3)
+        self.run_rpy_n = 0
 
-    def step(self, dist, rel_h_l, rel_h_r, gyro, tilt, proj_grav):
+    def step(self, dist, rel_h_l, rel_h_r, gyro, tilt, proj_grav, rpy=None):
         for key, rel_h in (("L", rel_h_l), ("R", rel_h_r)):
             self.feet[key].update(rel_h)
 
@@ -167,6 +171,11 @@ class Metrics:
         self.run_gyro_n += 1
         self.run_pg_sum += pg
         self.run_pg_n += 1
+        if rpy is not None:
+            r = np.asarray(rpy, dtype=float)
+            self.win_rpy.append(r)
+            self.run_rpy_sum += r
+            self.run_rpy_n += 1
         self.win_samples += 1
 
         if tilt > FALL_TILT_RAD and not self._fallen:
@@ -184,6 +193,7 @@ class Metrics:
             self.win_dist = []
             self.win_gyro_sq = []
             self.win_pg = []
+            self.win_rpy = []
 
     def _print_window(self):
         now = time.monotonic()
@@ -202,13 +212,19 @@ class Metrics:
             lean_lat = math.degrees(math.atan2(pgm[1], -pgm[2]))
         else:
             pgm = np.full(3, float("nan")); pgs = pgm; lean_fwd = lean_lat = float("nan")
+        if self.win_rpy:
+            rpy_m = np.stack(self.win_rpy).mean(0)
+            imu_roll = math.degrees(rpy_m[0]); imu_pitch = math.degrees(rpy_m[1])
+        else:
+            imu_roll = imu_pitch = float("nan")
         print(f"[METRICS] window={self.window} steps ({win_s:.1f}s) / "
               f"touchdowns L={td_l} R={td_r} total={total} = {rate:.2f}/s / "
               f"feet_dist mean {mean_d:.3f} min {min_d:.3f} / "
               f"torso_ang_vel RMS {rms:.3f} / "
               f"proj_grav [{pgm[0]:+.3f},{pgm[1]:+.3f},{pgm[2]:+.3f}] "
               f"lean fwd={lean_fwd:+.1f} lat={lean_lat:+.1f}deg "
-              f"(wander gx={pgs[0]:.3f} gy={pgs[1]:.3f})", flush=True)
+              f"(wander gx={pgs[0]:.3f} gy={pgs[1]:.3f}) "
+              f"imu_rpy roll={imu_roll:+.1f} pitch={imu_pitch:+.1f}deg", flush=True)
 
     def summary(self):
         elapsed = time.monotonic() - self.t0
@@ -231,6 +247,13 @@ class Metrics:
         print(f"  torso_ang_vel   : RMS {rms:.3f} rad/s")
         print(f"  proj_grav (mean): [{pgm[0]:+.3f}, {pgm[1]:+.3f}, {pgm[2]:+.3f}]")
         print(f"  lean (mean)     : fwd {lean_fwd:+.1f}deg  lateral {lean_lat:+.1f}deg")
+        if self.run_rpy_n:
+            rpy_m = self.run_rpy_sum / self.run_rpy_n
+            print(f"  IMU rpy (mean)  : roll {math.degrees(rpy_m[0]):+.2f}deg  "
+                  f"pitch {math.degrees(rpy_m[1]):+.2f}deg  yaw {math.degrees(rpy_m[2]):+.2f}deg")
+            print("  >> IMU-bias test: compare IMU roll (and lean lateral) above to the iPhone")
+            print("     PHYSICAL torso angle while standing — body more tilted than the IMU reads")
+            print("     => IMU under-reports that tilt; the gap = ROLL_BIAS to apply.")
         print("=============================================", flush=True)
 
 
@@ -353,6 +376,7 @@ def main():
         q = [msg.motor_state[i].q for i in range(NUM_JOINTS)]
         quat = list(msg.imu_state.quaternion)  # wxyz
         gyro = np.array(msg.imu_state.gyroscope, dtype=float)
+        rpy = np.array(getattr(msg.imu_state, "rpy", (0.0, 0.0, 0.0)), dtype=float)  # firmware Euler (rad)
 
         for sdk_idx in range(NUM_JOINTS):
             data.qpos[qpos_addr[sdk_idx]] = q[sdk_idx]
@@ -373,7 +397,7 @@ def main():
         g_b = R.T @ np.array([0.0, 0.0, -1.0])
         tilt = math.acos(max(-1.0, min(1.0, -g_b[2])))
 
-        metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt, g_b)
+        metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt, g_b, rpy)
 
     metrics.summary()
 
