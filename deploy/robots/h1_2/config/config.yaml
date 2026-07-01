@@ -4,11 +4,17 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    BalanceP8_gold:
+    Balance_pay10_kp40:
       id: 4
       type: RLBase
-    Balance_upright_std005:
+    Balance_pay10_gold100:
       id: 5
+      type: RLBase
+    Balance_pay10_perjoint:
+      id: 6
+      type: RLBase
+    Balance_pay10_soft:
+      id: 7
       type: RLBase
 
   Passive:
@@ -33,8 +39,10 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      BalanceP8_gold:        RB + Y.on_pressed
-      Balance_upright_std005: RB + A.on_pressed
+      Balance_pay10_kp40:     RB + Y.on_pressed
+      Balance_pay10_gold100:  RB + A.on_pressed
+      Balance_pay10_perjoint: RB + X.on_pressed
+      Balance_pay10_soft:     RB + right.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -60,24 +68,44 @@ FSM:
       ]
     ]
 
-  # === p9 upright_std005 test (2 states): p8_gold baseline + the tighter-std variant.
-  # upright_bonus.std 0.01 -> 0.005 (4x narrower in the squared term). Hypothesis:
-  # gradient went dead -> policy abandoned the reward. EYEBALL TEST: if torso looks as
-  # vertical as gold, posture is unchanged (reward just stopped paying out); if visibly
-  # more tilted/wobbly, it genuinely gave up verticality. Confirm via flat_orientation_l2.
-  # Arm gains flat 40/3 both.
-  BalanceP8_gold:                       # RB+Y      upright_bonus std 0.01 (baseline)
+  # === payload10 x arm-gain test (4 states): SAME p9_payload10 policy (trained @ 40/3),
+  # deployed with 4 different arm kp/kd overrides (the p9 armgain configs). Quick check
+  # of whether stiffer arm gains help the payload10 policy carry loads (less sag under
+  # the wrist mass -> smaller CoM shift). If a stiffer set looks promising, TRAIN a
+  # payload run with those gains. TEST: load payload with ] (0.5 kg/hand), \ to zero.
+  # NOTE: shoulder effort_limit is 40 Nm -> ~10 kg at full extension saturates regardless
+  # of kp; expect the benefit at tucked/carry poses, not full reach.
+  # 14-dim order: [L/R sh_pitch, L/R sh_roll, L/R sh_yaw, L/R elbow_pitch, L/R elbow_roll,
+  #                L/R wrist_pitch, L/R wrist_yaw]  (sh_strong=pitch+roll, yaw_elbow=yaw+
+  #                elbow_pitch, wrist=elbow_roll+wrist_pitch+wrist_yaw)
+  Balance_pay10_kp40:                    # RB+Y      trained value: flat 40/3
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p8_gold_2026-06-15
+    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_upright_std005:               # RB+A      upright_bonus std 0.005 (tighter)
+  Balance_pay10_gold100:                 # RB+A      sh 100/2, yaw+elbow 50/2, wrist 50/2
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p9_upright_std005_2026-06-26
-    arm_kp: 40.0
-    arm_kd: 3.0
+    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
+    arm_kp: [100,100, 100,100, 50,50, 50,50, 50,50, 50,50, 50,50]
+    arm_kd: [2,2, 2,2, 2,2, 2,2, 2,2, 2,2, 2,2]
+    arm_transition_s: 4.0
+
+  Balance_pay10_perjoint:                # RB+X      sh 80/4, yaw+elbow 50/2, wrist 30/1
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
+    arm_kp: [80,80, 80,80, 50,50, 50,50, 30,30, 30,30, 30,30]
+    arm_kd: [4,4, 4,4, 2,2, 2,2, 1,1, 1,1, 1,1]
+    arm_transition_s: 4.0
+
+  Balance_pay10_soft:                    # RB+right  sh 60/3, yaw+elbow 50/2, wrist 30/1
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
+    arm_kp: [60,60, 60,60, 50,50, 50,50, 30,30, 30,30, 30,30]
+    arm_kd: [3,3, 3,3, 2,2, 2,2, 1,1, 1,1, 1,1]
     arm_transition_s: 4.0
