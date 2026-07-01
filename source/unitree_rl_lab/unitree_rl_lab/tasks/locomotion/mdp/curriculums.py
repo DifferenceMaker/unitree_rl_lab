@@ -376,7 +376,9 @@ def arm_pose_curriculum_phase4(
 
     Default hold_steps=24000 (~1000 iters per level).
 
-    Returns the current wobble amplitude (rad) for logging.
+    Returns the current envelope LEVEL INDEX (0..N-1) for logging, so
+    Curriculum/arm_pose reports how far the yaw/decouple/overhead ramp has
+    advanced (the wobble amplitude is pinned per level, so it was uninformative).
     """
     step = env.common_step_counter
 
@@ -405,7 +407,7 @@ def arm_pose_curriculum_phase4(
     command_term.cfg.decouple_lr = _pick(decouple_lr_levels, 0.0)
     command_term.cfg.pitch_overhead_amplitude = _pick(pitch_overhead_amplitude_levels, 0.0)
 
-    return torch.tensor(target_wobble, device=env.device)
+    return torch.tensor(float(level_idx), device=env.device)
 
 def sustained_push_curriculum(
     env: "ManagerBasedRLEnv",
