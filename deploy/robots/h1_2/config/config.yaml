@@ -4,17 +4,14 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_pay10_kp40:
+    BalanceP8_gold:
       id: 4
       type: RLBase
-    Balance_pay10_gold100:
+    Balance_envelope_v2:
       id: 5
       type: RLBase
-    Balance_pay10_perjoint:
+    Balance_envelope_v2_stiff:
       id: 6
-      type: RLBase
-    Balance_pay10_soft:
-      id: 7
       type: RLBase
 
   Passive:
@@ -39,10 +36,9 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_pay10_kp40:     RB + Y.on_pressed
-      Balance_pay10_gold100:  RB + A.on_pressed
-      Balance_pay10_perjoint: RB + X.on_pressed
-      Balance_pay10_soft:     RB + right.on_pressed
+      BalanceP8_gold:            RB + Y.on_pressed
+      Balance_envelope_v2:       RB + A.on_pressed
+      Balance_envelope_v2_stiff: RB + X.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -68,44 +64,36 @@ FSM:
       ]
     ]
 
-  # === payload10 x arm-gain test (4 states): SAME p9_payload10 policy (trained @ 40/3),
-  # deployed with 4 different arm kp/kd overrides (the p9 armgain configs). Quick check
-  # of whether stiffer arm gains help the payload10 policy carry loads (less sag under
-  # the wrist mass -> smaller CoM shift). If a stiffer set looks promising, TRAIN a
-  # payload run with those gains. TEST: load payload with ] (0.5 kg/hand), \ to zero.
-  # NOTE: shoulder effort_limit is 40 Nm -> ~10 kg at full extension saturates regardless
-  # of kp; expect the benefit at tucked/carry poses, not full reach.
-  # 14-dim order: [L/R sh_pitch, L/R sh_roll, L/R sh_yaw, L/R elbow_pitch, L/R elbow_roll,
-  #                L/R wrist_pitch, L/R wrist_yaw]  (sh_strong=pitch+roll, yaw_elbow=yaw+
-  #                elbow_pitch, wrist=elbow_roll+wrist_pitch+wrist_yaw)
-  Balance_pay10_kp40:                    # RB+Y      trained value: flat 40/3
+  # === GROUP 3: envelope v2 (both trained through the full expanded envelope — yaw ±0.9,
+  # decoupled L/R, overhead +1.5 — with hold_steps 12000). Baseline gold FALLS on OOD
+  # asymmetric/overhead poses (the waltz); v2 should hold them. v2=40/3, v2_stiff trained
+  # with stiff shoulders (80/4). KEY TEST via the CONTROLLER `arm <14 floats>` stdin (the
+  # sim sliders are symmetric — use arm cmd for asymmetric/decoupled poses):
+  #   waltz (killed gold):  arm 0.458 0.458 1.09 -1.09 0.945 0.945 0.173 0.173 0 0 0 0 0 0
+  #   asymmetric L/R:       arm -0.8 0.5 0.5 0.2 0.9 -0.9 1.0 0.2 0 0 0 0 0 0
+  #   overhead (arms up):   arm -1.5 -1.5 0.6 -0.6 0 0 0.3 0.3 0 0 0 0 0 0
+  #   back to default:      arm default
+  # Also push while holding a pose. Compare gold (falls) vs v2 (holds) vs v2_stiff.
+  BalanceP8_gold:                        # RB+Y   baseline (no envelope — falls on OOD poses)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
+    policy_dir: ../../../logs/milestones/p8_gold_2026-06-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_pay10_gold100:                 # RB+A      sh 100/2, yaw+elbow 50/2, wrist 50/2
+  Balance_envelope_v2:                   # RB+A   full envelope, gentler ramp, gains 40/3
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
-    arm_kp: [100,100, 100,100, 50,50, 50,50, 50,50, 50,50, 50,50]
-    arm_kd: [2,2, 2,2, 2,2, 2,2, 2,2, 2,2, 2,2]
+    policy_dir: ../../../logs/milestones/p10_envelope_v2_2026-07-01
+    arm_kp: 40.0
+    arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_pay10_perjoint:                # RB+X      sh 80/4, yaw+elbow 50/2, wrist 30/1
+  Balance_envelope_v2_stiff:             # RB+X   full envelope + TRAINED stiff sh 80/4·50/2·30/1
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
+    policy_dir: ../../../logs/milestones/p10_envelope_v2_stiff_2026-07-01
     arm_kp: [80,80, 80,80, 50,50, 50,50, 30,30, 30,30, 30,30]
     arm_kd: [4,4, 4,4, 2,2, 2,2, 1,1, 1,1, 1,1]
-    arm_transition_s: 4.0
-
-  Balance_pay10_soft:                    # RB+right  sh 60/3, yaw+elbow 50/2, wrist 30/1
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p9_payload10_2026-06-25
-    arm_kp: [60,60, 60,60, 50,50, 50,50, 30,30, 30,30, 30,30]
-    arm_kd: [3,3, 3,3, 2,2, 2,2, 1,1, 1,1, 1,1]
     arm_transition_s: 4.0
