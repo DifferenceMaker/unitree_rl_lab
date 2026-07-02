@@ -104,6 +104,19 @@ from rsl_rl.runners import OnPolicyRunner  # TODO: Consider printing the experim
 # (reinstall-proof) instead of editing site-packages.
 import wandb
 wandb.save = lambda *a, **k: None  # disable checkpoint upload; metric logging (wandb.log) untouched
+# Belt-and-suspenders: also no-op the WandbSummaryWriter upload methods DIRECTLY, so
+# the checkpoint/file upload is killed regardless of whether the installed rsl_rl
+# implements them via wandb.save() or wandb.Artifact()/log_artifact() (the impl has
+# varied across rsl_rl versions; patching wandb.save alone can miss the artifact path).
+# add_scalar / stop (wandb.log / wandb.finish) are untouched -> metric charts still work.
+try:
+    from rsl_rl.utils.wandb_utils import WandbSummaryWriter
+    WandbSummaryWriter.save_model = lambda self, *a, **k: None
+    WandbSummaryWriter.save_file = lambda self, *a, **k: None
+    print("[wandb-patch] checkpoint upload DISABLED (save_model/save_file no-op'd)")
+except Exception as _e:  # defensive: never block training on a patch failure
+    print(f"[wandb-patch] WARNING: could not patch WandbSummaryWriter ({_e}); "
+          "relying on wandb.save no-op only")
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab.envs import (
