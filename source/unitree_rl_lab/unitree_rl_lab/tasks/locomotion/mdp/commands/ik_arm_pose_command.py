@@ -260,16 +260,23 @@ class IKArmPoseCommand(CommandTerm):
             joint_pos = self.robot.data.joint_pos[:, jids]
             ik = self.ik[side]
             ik.set_command(self.target_pos_b[side], ee_quat=ee_quat_b)
-            goal_q = ik.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+            # The controller returns joint_pos + dq with dq = J^+ (x* - x).
+            # Apply dq ON TOP OF the current TARGET (integral action), not on
+            # the measured position: re-anchoring to joint_pos reaches
+            # equilibrium where the IK correction merely cancels the PD
+            # gravity sag, leaving a persistent Cartesian error (~sag, 0.2m+
+            # at arm kp 40). Integrating on the target keeps pushing until
+            # the PHYSICAL hand reaches the target, sag compensated.
+            dq = ik.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos) - joint_pos
 
-            # Peace-time envs head to the default pose instead of the IK goal.
             cur_q = self.joint_targets[:, cols]
-            goal_q = torch.where(
-                self.default_mode.unsqueeze(1), self.default_arm_pos[:, cols], goal_q
+            # Peace-time envs head to the default pose instead of the IK goal.
+            dq = torch.where(
+                self.default_mode.unsqueeze(1), self.default_arm_pos[:, cols] - cur_q, dq
             )
 
-            # Rate-limited step toward the goal; frozen hands hold.
-            delta = torch.clamp(goal_q - cur_q, -step_limit, step_limit)
+            # Rate-limited integration; frozen hands hold.
+            delta = torch.clamp(dq, -step_limit, step_limit)
             active = (~self.frozen[side] | self.default_mode).unsqueeze(1)
             new_q = cur_q + delta * active.float()
             new_q = torch.clamp(new_q, self.soft_lo[:, cols], self.soft_hi[:, cols])
@@ -369,14 +376,15 @@ class IKArmPoseCommandCfg(CommandTermCfg):
     default_pose_prob: float = 0.25
     """Peace-time anchor: probability a resample commands the default pose."""
 
-    max_joint_speed: float = 1.5
+    max_joint_speed: float = 0.6
     """Rate limit (rad/s) on the joint targets — the transition speed between
-    held poses, standing in for the deployment-side interpolation."""
+    held poses, standing in for the deployment-side interpolation (~4s ramps).
+    1.5 rad/s proved violent enough to knock over a wobble-trained policy."""
 
     converge_tol: float = 0.02
     """Hand-to-target distance (m) below which the hand's command freezes."""
 
-    settle_time: float = 4.0
+    settle_time: float = 6.0
     """Seconds after a resample before the command freezes regardless —
     bounds the stretch toward unreachable targets."""
 
