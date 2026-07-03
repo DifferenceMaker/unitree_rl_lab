@@ -1,0 +1,388 @@
+"""IK-resolved arm pose command — the "IK envelope" (p11).
+
+Replaces the joint-angle envelope (UniformArmPoseCommand) with what the robot
+actually does at deployment: the ActionModule solves MoveIt IK for Cartesian
+hand targets and streams the resulting joint vectors. Training now mirrors
+that pipeline:
+
+  - Every resample (2-10 s, mid-episode — via the standard CommandTerm
+    resampling machinery), each hand independently draws a Cartesian target
+    in the TORSO frame (same frame the deployment IK solves in). Asymmetric
+    L/R targets are the norm, not a curriculum level.
+  - Each step, a batched damped-least-squares differential IK controller
+    (isaaclab.controllers.DifferentialIKController — same pattern as Isaac
+    Lab's own test_differential_ik.py) pulls the 14 arm joint targets toward
+    the hand targets, rate-limited to max_joint_speed. Once a hand converges
+    (or settle_time expires — the analog of the deployment's partial-reach
+    bisection), its side of the command freezes: piecewise-constant held
+    pose, exactly like a streamed IK solution.
+  - With probability default_pose_prob a resample commands the DEFAULT pose
+    instead (arms down) — the "peace-time" anchor: quiet standing must stay
+    in-distribution.
+
+The policy observation is unchanged: the 14-dim absolute arm joint targets
+(same joint order as UniformArmPoseCommand) — warmstart compatible.
+
+Redundancy note: DLS seeded from the current pose resolves the 7-DOF arm's
+elbow null-space the same local way MoveIt's seeded KDL solver does, so the
+elbow "style" seen in training matches deployment.
+
+debug_vis=True shows one sphere per hand target (red = left, blue = right).
+"""
+
+from __future__ import annotations
+
+import torch
+from collections.abc import Sequence
+from dataclasses import MISSING
+from typing import TYPE_CHECKING
+
+from isaaclab.assets import Articulation
+from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
+from isaaclab.managers import CommandTerm, CommandTermCfg
+from isaaclab.utils import configclass
+from isaaclab.utils.math import matrix_from_quat, quat_inv, subtract_frame_transforms
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+class IKArmPoseCommand(CommandTerm):
+    """Cartesian hand targets resolved to joint targets by differential IK.
+
+    See module docstring. The command tensor is the (num_envs, 14) absolute
+    arm joint targets, identical in shape/order/semantics to
+    UniformArmPoseCommand's, so policies transfer between the two.
+    """
+
+    cfg: "IKArmPoseCommandCfg"
+
+    def __init__(self, cfg: "IKArmPoseCommandCfg", env: "ManagerBasedRLEnv"):
+        super().__init__(cfg, env)
+
+        self.robot: Articulation = env.scene[cfg.asset_name]
+
+        # 14 arm joints in asset order — same regex as UniformArmPoseCommand
+        # so the observation layout (and thus warmstarts) are unchanged.
+        self.all_arm_joint_ids, self.all_arm_joint_names = self.robot.find_joints(cfg.all_arm_joint_names)
+        self.num_arm_joints = len(self.all_arm_joint_ids)
+
+        # Per-arm joint ids + their column index inside the 14-dim command.
+        self.arm_jids: dict[str, list[int]] = {}
+        self.arm_cols: dict[str, torch.Tensor] = {}
+        for side, regexes in (("left", cfg.left_arm_joint_names), ("right", cfg.right_arm_joint_names)):
+            jids, _ = self.robot.find_joints(regexes)
+            self.arm_jids[side] = jids
+            self.arm_cols[side] = torch.tensor(
+                [self.all_arm_joint_ids.index(j) for j in jids], device=self.device, dtype=torch.long
+            )
+
+        # End-effector bodies + jacobian indexing (floating base: body index
+        # unshifted, joint columns offset by the 6 base DOFs).
+        self.ee_body_idx: dict[str, int] = {}
+        self.ee_jacobi_idx: dict[str, int] = {}
+        self.jacobi_joint_cols: dict[str, list[int]] = {}
+        for side, body_name in (("left", cfg.left_ee_body_name), ("right", cfg.right_ee_body_name)):
+            idx = self.robot.find_bodies(body_name)[0][0]
+            self.ee_body_idx[side] = idx
+            if self.robot.is_fixed_base:
+                self.ee_jacobi_idx[side] = idx - 1
+                self.jacobi_joint_cols[side] = list(self.arm_jids[side])
+            else:
+                self.ee_jacobi_idx[side] = idx
+                self.jacobi_joint_cols[side] = [j + 6 for j in self.arm_jids[side]]
+
+        self.torso_body_idx = self.robot.find_bodies(cfg.torso_body_name)[0][0]
+
+        # One batched DLS controller per arm (position-only v1: the 7-DOF arm
+        # resolves the extra DOFs minimally from the seed, like a seeded KDL
+        # solve; orientation constraints are a later fidelity step).
+        ik_cfg = DifferentialIKControllerCfg(command_type="position", use_relative_mode=False, ik_method="dls")
+        self.ik = {
+            "left": DifferentialIKController(ik_cfg, num_envs=env.num_envs, device=env.device),
+            "right": DifferentialIKController(ik_cfg, num_envs=env.num_envs, device=env.device),
+        }
+
+        # Default arm pose (num_envs, 14) — also the peace-time target.
+        dpos = self.robot.data.default_joint_pos
+        self.default_arm_pos = dpos[:, self.all_arm_joint_ids].clone()
+
+        # Soft joint limits with margin, over the 14 arm joints.
+        lims = self.robot.data.soft_joint_pos_limits[:, self.all_arm_joint_ids, :]
+        self.soft_lo = lims[..., 0] + cfg.soft_limit_margin
+        self.soft_hi = lims[..., 1] - cfg.soft_limit_margin
+
+        # The command: absolute arm joint targets. Starts at default.
+        self.joint_targets = self.default_arm_pos.clone()
+
+        # Per-arm Cartesian targets in the torso frame + per-env mode flags.
+        self.target_pos_b = {
+            "left": torch.zeros(env.num_envs, 3, device=env.device),
+            "right": torch.zeros(env.num_envs, 3, device=env.device),
+        }
+        self.default_mode = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self.frozen = {
+            "left": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+            "right": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        }
+        self.time_since_resample = torch.zeros(env.num_envs, device=env.device)
+
+        # Hand position at the DEFAULT pose in the torso frame — the anchor
+        # the workspace offsets are sampled around. Captured lazily on the
+        # first update (all envs sit at the default pose right after startup;
+        # body poses are stale during reset-time resampling, so it cannot be
+        # captured in _resample_command).
+        self.default_ee_pos_b: dict[str, torch.Tensor] | None = None
+        # Envs that resampled before the capture existed — re-rolled on capture.
+        self._pending_resample = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+        self.dt = env.step_dt
+
+        self.metrics["pos_err_left"] = torch.zeros(env.num_envs, device=env.device)
+        self.metrics["pos_err_right"] = torch.zeros(env.num_envs, device=env.device)
+
+    def __str__(self) -> str:
+        return (
+            f"IKArmPoseCommand(dls position IK, resample={self.cfg.resampling_time_range}s, "
+            f"default_pose_prob={self.cfg.default_pose_prob:.2f}, "
+            f"workspace_scale={self.cfg.workspace_scale:.2f}, "
+            f"max_joint_speed={self.cfg.max_joint_speed:.2f}rad/s)"
+        )
+
+    @property
+    def command(self) -> torch.Tensor:
+        """(num_envs, 14) absolute arm joint targets — same as UniformArmPoseCommand."""
+        return self.joint_targets
+
+    # ------------------------------------------------------------------
+    # resampling
+    # ------------------------------------------------------------------
+
+    def _resample_command(self, env_ids: Sequence[int]):
+        n = len(env_ids)
+        if n == 0:
+            return
+        if not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(env_ids, device=self.device, dtype=torch.long)
+
+        self.time_since_resample[env_ids] = 0.0
+        self.frozen["left"][env_ids] = False
+        self.frozen["right"][env_ids] = False
+
+        # Peace-time draw: whole robot goes to (stays at) the default pose.
+        self.default_mode[env_ids] = torch.rand(n, device=self.device) < self.cfg.default_pose_prob
+
+        if self.default_ee_pos_b is None:
+            # No workspace anchor yet (startup reset) — hold default until the
+            # first update captures it, then re-roll these envs.
+            self._pending_resample[env_ids] = True
+            self.default_mode[env_ids] = True
+            return
+
+        self._sample_targets(env_ids)
+
+    def _sample_targets(self, env_ids: torch.Tensor):
+        """Draw per-arm Cartesian targets (torso frame) for env_ids."""
+        n = len(env_ids)
+        s = float(self.cfg.workspace_scale)
+        for side in ("left", "right"):
+            lo, hi = self.cfg.workspace_offset[0], self.cfg.workspace_offset[1]
+            lo = torch.tensor(lo, device=self.device) * s
+            hi = torch.tensor(hi, device=self.device) * s
+            offs = lo + torch.rand(n, 3, device=self.device) * (hi - lo)
+            if side == "right":
+                offs[:, 1] = -offs[:, 1]  # mirror the outward direction
+            self.target_pos_b[side][env_ids] = self.default_ee_pos_b[side][env_ids] + offs
+
+    # ------------------------------------------------------------------
+    # per-step update
+    # ------------------------------------------------------------------
+
+    def _ee_state_b(self, side: str):
+        """EE position/orientation in the torso frame + torso world pose."""
+        torso_pose_w = self.robot.data.body_pose_w[:, self.torso_body_idx]
+        ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx[side]]
+        ee_pos_b, ee_quat_b = subtract_frame_transforms(
+            torso_pose_w[:, 0:3], torso_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
+        )
+        return ee_pos_b, ee_quat_b, torso_pose_w
+
+    def _update_command(self):
+        self.time_since_resample += self.dt
+
+        # Lazy workspace-anchor capture (first update: everything at default).
+        if self.default_ee_pos_b is None:
+            self.default_ee_pos_b = {}
+            for side in ("left", "right"):
+                ee_pos_b, _, _ = self._ee_state_b(side)
+                self.default_ee_pos_b[side] = ee_pos_b.clone()
+            pending = torch.nonzero(self._pending_resample).flatten()
+            if len(pending) > 0:
+                # Re-roll the startup resamples that had no anchor yet.
+                self.default_mode[pending] = (
+                    torch.rand(len(pending), device=self.device) < self.cfg.default_pose_prob
+                )
+                ik_envs = pending[~self.default_mode[pending]]
+                self._sample_targets(ik_envs)
+                self._pending_resample[:] = False
+
+        step_limit = self.cfg.max_joint_speed * self.dt
+
+        for side in ("left", "right"):
+            cols = self.arm_cols[side]
+            jids = self.arm_jids[side]
+
+            ee_pos_b, ee_quat_b, _ = self._ee_state_b(side)
+            pos_err = torch.norm(self.target_pos_b[side] - ee_pos_b, dim=-1)
+            # Peace-time envs track no Cartesian target — mask them out so the
+            # logged error reflects only actively-IK'd hands.
+            self.metrics[f"pos_err_{side}"] = torch.where(
+                self.default_mode, torch.zeros_like(pos_err), pos_err
+            )
+
+            # Freeze a hand once it converged or ran out of settle time
+            # (unreachable target -> hold the closest reached pose, like the
+            # deployment's partial-reach bisection).
+            self.frozen[side] |= pos_err < self.cfg.converge_tol
+            self.frozen[side] |= self.time_since_resample > self.cfg.settle_time
+
+            # Jacobian of this hand wrt its 7 arm joints, rotated into the
+            # torso frame (targets and errors live there).
+            jacobian = self.robot.root_physx_view.get_jacobians()[
+                :, self.ee_jacobi_idx[side], :, :
+            ][:, :, self.jacobi_joint_cols[side]]
+            torso_quat_w = self.robot.data.body_pose_w[:, self.torso_body_idx, 3:7]
+            rot = matrix_from_quat(quat_inv(torso_quat_w))
+            jacobian = torch.cat(
+                (torch.bmm(rot, jacobian[:, :3, :]), torch.bmm(rot, jacobian[:, 3:, :])), dim=1
+            )
+
+            joint_pos = self.robot.data.joint_pos[:, jids]
+            ik = self.ik[side]
+            ik.set_command(self.target_pos_b[side], ee_quat=ee_quat_b)
+            goal_q = ik.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+
+            # Peace-time envs head to the default pose instead of the IK goal.
+            cur_q = self.joint_targets[:, cols]
+            goal_q = torch.where(
+                self.default_mode.unsqueeze(1), self.default_arm_pos[:, cols], goal_q
+            )
+
+            # Rate-limited step toward the goal; frozen hands hold.
+            delta = torch.clamp(goal_q - cur_q, -step_limit, step_limit)
+            active = (~self.frozen[side] | self.default_mode).unsqueeze(1)
+            new_q = cur_q + delta * active.float()
+            new_q = torch.clamp(new_q, self.soft_lo[:, cols], self.soft_hi[:, cols])
+            self.joint_targets[:, cols] = new_q
+
+        if self.cfg.apply_directly:
+            self.robot.set_joint_position_target(self.joint_targets, joint_ids=self.all_arm_joint_ids)
+
+    def _update_metrics(self):
+        pass  # per-side position errors are refreshed inside _update_command
+
+    # ------------------------------------------------------------------
+    # debug visualization — one dot per hand target
+    # ------------------------------------------------------------------
+
+    def _set_debug_vis_impl(self, debug_vis: bool):
+        if debug_vis:
+            if not hasattr(self, "target_visualizer"):
+                import isaaclab.sim as sim_utils
+                from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+
+                self.target_visualizer = VisualizationMarkers(
+                    VisualizationMarkersCfg(
+                        prim_path="/Visuals/Command/arm_ik_targets",
+                        markers={
+                            "left": sim_utils.SphereCfg(
+                                radius=0.035,
+                                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.1, 0.1)),
+                            ),
+                            "right": sim_utils.SphereCfg(
+                                radius=0.035,
+                                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.3, 1.0)),
+                            ),
+                        },
+                    )
+                )
+            self.target_visualizer.set_visibility(True)
+        else:
+            if hasattr(self, "target_visualizer"):
+                self.target_visualizer.set_visibility(False)
+
+    def _debug_vis_callback(self, event):
+        if self.default_ee_pos_b is None:
+            return
+        torso_pose_w = self.robot.data.body_pose_w[:, self.torso_body_idx]
+        rot = matrix_from_quat(torso_pose_w[:, 3:7])
+        pos_w = []
+        for side in ("left", "right"):
+            # For peace-time envs the "target" is wherever the default hand sits.
+            tgt_b = torch.where(
+                self.default_mode.unsqueeze(1), self.default_ee_pos_b[side], self.target_pos_b[side]
+            )
+            pos_w.append(torso_pose_w[:, 0:3] + torch.bmm(rot, tgt_b.unsqueeze(-1)).squeeze(-1))
+        translations = torch.cat(pos_w, dim=0)
+        indices = torch.cat(
+            (
+                torch.zeros(self._env.num_envs, dtype=torch.long, device=self.device),
+                torch.ones(self._env.num_envs, dtype=torch.long, device=self.device),
+            )
+        )
+        self.target_visualizer.visualize(translations=translations, marker_indices=indices)
+
+
+@configclass
+class IKArmPoseCommandCfg(CommandTermCfg):
+    """Cfg for IKArmPoseCommand (the IK envelope)."""
+
+    class_type: type = IKArmPoseCommand
+
+    asset_name: str = MISSING
+    all_arm_joint_names: list[str] = MISSING
+    """All 14 arm joints — MUST be the same regex list as the old command so
+    the observation layout matches (warmstart compatibility)."""
+
+    left_arm_joint_names: list[str] = ["left_shoulder_.*", "left_elbow.*", "left_wrist.*"]
+    right_arm_joint_names: list[str] = ["right_shoulder_.*", "right_elbow.*", "right_wrist.*"]
+
+    left_ee_body_name: str = "left_wrist_yaw_link"
+    right_ee_body_name: str = "right_wrist_yaw_link"
+    torso_body_name: str = "torso_link"
+    """IK targets are expressed in this body's frame — matches the deployment
+    ActionModule, which solves MoveIt IK in torso_link."""
+
+    workspace_offset: tuple[tuple[float, float, float], tuple[float, float, float]] = (
+        (-0.05, -0.15, -0.10),
+        (0.55, 0.35, 0.85),
+    )
+    """(lo, hi) Cartesian offset box (m) added to the default hand position in
+    the torso frame, for the LEFT arm: x forward, y outward (mirrored for the
+    right arm; negative y = cross-body), z up. Defaults span thigh-level to
+    above-shoulder reach. Unreachable corners are fine — the hand stretches
+    toward them and freezes at settle_time (deployment partial-reach analog)."""
+
+    workspace_scale: float = 1.0
+    """Multiplier on the offset box — the curriculum knob (ramp small→full)."""
+
+    default_pose_prob: float = 0.25
+    """Peace-time anchor: probability a resample commands the default pose."""
+
+    max_joint_speed: float = 1.5
+    """Rate limit (rad/s) on the joint targets — the transition speed between
+    held poses, standing in for the deployment-side interpolation."""
+
+    converge_tol: float = 0.02
+    """Hand-to-target distance (m) below which the hand's command freezes."""
+
+    settle_time: float = 4.0
+    """Seconds after a resample before the command freezes regardless —
+    bounds the stretch toward unreachable targets."""
+
+    soft_limit_margin: float = 0.02
+    """Margin (rad) kept inside each soft joint limit."""
+
+    apply_directly: bool = True
+    resampling_time_range: tuple[float, float] = (2.0, 10.0)
+    debug_vis: bool = False
