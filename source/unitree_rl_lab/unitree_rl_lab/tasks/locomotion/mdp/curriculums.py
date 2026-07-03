@@ -467,3 +467,36 @@ def sustained_push_curriculum(
     event_term.params["duration_range_s"] = duration_range
  
     return torch.tensor(force_range[1], device=env.device)
+
+
+def ik_workspace_scale_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 6000,
+    hold_steps: int = 12000,
+    scale_levels: tuple = (0.6, 0.8, 1.0),
+) -> "torch.Tensor":
+    """p11 IK envelope: grow the Cartesian target box of IKArmPoseCommand.
+
+    workspace_scale multiplies the offset box the hand targets are drawn
+    from. Early levels keep targets near the default hand pose (mostly
+    reachable); the top level includes the stretch shell where the arm can
+    only partially reach (the deployment partial-reach analog). Replaces the
+    per-joint amplitude ramps of arm_pose_curriculum_phase4.
+
+    Returns the current scale for logging (Curriculum/ik_workspace).
+    """
+    step = env.common_step_counter
+
+    if step < warmup_steps:
+        level_idx = 0
+    else:
+        levels_advanced = (step - warmup_steps) // hold_steps
+        level_idx = min(int(levels_advanced), len(scale_levels) - 1)
+
+    scale = float(scale_levels[level_idx])
+    command_term = env.command_manager.get_term(command_term_name)
+    command_term.cfg.workspace_scale = scale
+
+    return torch.tensor(scale, device=env.device)
