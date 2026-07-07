@@ -228,6 +228,9 @@ class CurriculumCfg:
         },
     )
 
+    # p11 PROMOTION: push50 caps folded in (were p6-lowered 0.5 m/s / 30 N).
+    # Push toughness is now heritable via the p11_ik_main_refine warmstart —
+    # the ramp re-climbs quickly on a warmstarted policy.
     push_velocity = CurrTerm(
         func=mdp.push_velocity_curriculum,
         params={
@@ -235,7 +238,7 @@ class CurriculumCfg:
             "warmup_steps": 3000,           # ~125 iter, brief settle from warmstart
             "hold_steps": 3000,            # ~125 iter per level
             "levels": (
-                0.25, 0.5,    # p6: ceiling 0.5 m/s (was 1.5)
+                0.25, 0.5, 0.75, 1.0, 1.25, 1.5,    # p11: ceiling 1.5 m/s (was p6 0.5)
             ),
         },
     )
@@ -245,15 +248,19 @@ class CurriculumCfg:
         params={
             "event_term_name": "sustained_push_apply",
             "warmup_steps": 3000,
-            # 2 entries for 2 transitions between 3 levels (incl warmup)
+            # 4 entries for 4 transitions between 5 levels (incl warmup)
             "hold_steps_per_level": (
-                3000,    # warmup → 25N    (~125 iter)
-                4000,    # 25N → 40N        (~167 iter, +60% relative)
+                3000,    # warmup → 15N    (~125 iter)
+                4000,    # 15N → 30N
+                4000,    # 30N → 40N
+                4000,    # 40N → 50N
             ),
             "levels": (
                 ((0.0, 0.0),  (0.0, 0.0)),    # warmup: no push
-                ((0.0, 15.0), (1.5, 3.0)),    # p6: lower bound 0 kept
-                ((0.0, 30.0), (2.0, 3.5)),    # p6: ceiling 30N (was 75N)
+                ((0.0, 15.0), (1.5, 3.0)),
+                ((0.0, 30.0), (2.0, 3.5)),
+                ((0.0, 40.0), (2.0, 3.5)),
+                ((0.0, 50.0), (2.0, 4.0)),    # p11: ceiling 50N (was p6 30N)
             ),
         },
     )
@@ -478,11 +485,12 @@ class RewardsCfg:
     # "compromise" trap from doubled torso penalties
     torso_stability_bonus = RewTerm(
         func=mdp.torso_stability_bonus,
-        # p8_gold: promoted from queue override (overrides.json set_weight). Was p7_1d 5.0.
-        # SIGN NOTE: torso_stability_bonus returns exp(...) in (0,1], HIGH when torso is still.
-        # A NEGATIVE weight therefore penalizes stillness / rewards torso motion — surprising for
-        # a "bonus". This is faithful to gold's env.yaml (weight -12.0); see ARM_EXPANSION_RECON.md.
-        weight=-12.0,
+        # p11 PROMOTION (p11_ik_main_refine, 2026-07-07): +6.0. The gold-era -12
+        # (which REWARDED torso motion — see ARM_EXPANSION_RECON.md) caused the
+        # sym-lineage wobble/leg-spasm signature; the batch2 torso sweep settled
+        # the sign law (t3 fell / t45 restless / t6 calm) and p11 confirmed 6.0
+        # under IK arm motion. History: p7_1d 5.0 -> gold -12.0 -> p11 +6.0.
+        weight=6.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
             "std_lin": 0.07,	# kept — loosening risks unreachable under 0.25 wobble
@@ -510,7 +518,11 @@ class RewardsCfg:
     # expected) — gating it to non-push phases is an OPEN QUESTION, not gated here.
     heading_stable_bonus = RewTerm(
         func=mdp.heading_stable_bonus,
-        weight=0.0,
+        # p11 PROMOTION: 1.5 (was 0.0/off). Envelope runs without it rotated
+        # continually; refine doubled the earned bonus (0.208->0.404) with
+        # visibly snappier heading return. The push-compliance CAUTION above
+        # proved unfounded at 1.5 (push recovery unharmed through p11).
+        weight=1.5,
         params={"std": 0.1},
     )
 
@@ -532,7 +544,10 @@ class RewardsCfg:
     # dominates when a step is truly needed. Targets the continuous-stepping problem.
     feet_air_time_step = RewTerm(
         func=mdp.feet_air_time_step_penalty,
-        weight=-2.0,    # p8_gold: promoted from queue override (overrides.json set_weight). Was p7_1e -4.0.
+        # p11 PROMOTION: -3.0 (was gold -2.0; p7_1e ran -4.0). The single best
+        # stillness lever of batch2 (step3 stillest; calmed apex); confirmed in
+        # every p11 run. p12 probes -4.0.
+        weight=-3.0,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
             "touchdown_penalty": 0.4,
@@ -615,17 +630,17 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.commands.arm_pose_command.elbow_amplitude = 1.5
         self.commands.arm_pose_command.wobble_amplitude = 0.25  # p7_1b
 
-        # Force max impulse push velocity (skip ramp)
+        # Force max impulse push velocity (skip ramp) — p11 ceilings
         self.curriculum.push_velocity.params["warmup_steps"] = 0
-        self.curriculum.push_velocity.params["levels"] = (0.5,) * 2    # p6: match train ceiling
+        self.curriculum.push_velocity.params["levels"] = (1.5,) * 2
         self.events.push_robot.params["velocity_range"] = {
-            "x": (-0.5, 0.5), "y": (-0.5, 0.5),    # p6: match train ceiling
+            "x": (-1.5, 1.5), "y": (-1.5, 1.5),
         }
 
-        # Force max sustained push (skip warmup, top level)
+        # Force max sustained push (skip warmup, top level) — p11 ceilings
         self.curriculum.sustained_push.params["warmup_steps"] = 0
         self.curriculum.sustained_push.params["levels"] = (
-            ((0.0, 30.0), (2.0, 3.5)),    # p6: match train ceiling 30N
+            ((0.0, 50.0), (2.0, 4.0)),
         ) * 4
-        self.events.sustained_push_apply.params["force_magnitude_range"] = (0.0, 30.0)    # p6
+        self.events.sustained_push_apply.params["force_magnitude_range"] = (0.0, 50.0)
         self.events.sustained_push_apply.params["duration_range_s"] = (2.0, 4.0)

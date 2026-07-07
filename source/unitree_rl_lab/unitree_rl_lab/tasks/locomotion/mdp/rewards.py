@@ -611,3 +611,28 @@ def upright_bonus(
     asset = env.scene[asset_cfg.name]
     proj_gravity_xy_sq = torch.sum(asset.data.projected_gravity_b[:, :2] ** 2, dim=-1)
     return torch.exp(-proj_gravity_xy_sq / (std ** 2))
+
+def foot_impact_velocity(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """p12 soft-landing shaper: downward foot speed at the touchdown step.
+
+    Hardware motivation: hard heel strikes on cement peeled the foot rubber.
+    feet_air_time_step_penalty makes steps RARE; this makes the remaining
+    steps SOFT — the policy learns to decelerate the foot before contact.
+    Standing still => no touchdowns => 0 (stillness stays free). Use with a
+    NEGATIVE weight. Same just-landed bookkeeping as feet_air_time_step.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    if contact_sensor.cfg.track_air_time is False:
+        raise RuntimeError("Activate ContactSensor's track_air_time!")
+    asset = env.scene[asset_cfg.name]
+    current_contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    just_landed = (current_contact_time > 0.0) & (current_contact_time <= env.step_dt + 1e-6)
+    # Downward (negative z) world-frame velocity of the foot bodies, clamped to
+    # descent only — upward motion at grazing contact is not an impact.
+    vz = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 2]
+    impact_speed = torch.clamp(-vz, min=0.0) * just_landed.float()
+    return torch.sum(impact_speed, dim=1)
