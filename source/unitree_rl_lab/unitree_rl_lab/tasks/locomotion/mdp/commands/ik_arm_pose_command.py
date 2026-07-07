@@ -41,7 +41,13 @@ from isaaclab.assets import Articulation
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.managers import CommandTerm, CommandTermCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.math import matrix_from_quat, quat_inv, subtract_frame_transforms
+from isaaclab.utils.math import (
+    matrix_from_quat,
+    quat_from_euler_xyz,
+    quat_inv,
+    quat_mul,
+    subtract_frame_transforms,
+)
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -94,10 +100,16 @@ class IKArmPoseCommand(CommandTerm):
 
         self.torso_body_idx = self.robot.find_bodies(cfg.torso_body_name)[0][0]
 
-        # One batched DLS controller per arm (position-only v1: the 7-DOF arm
-        # resolves the extra DOFs minimally from the seed, like a seeded KDL
-        # solve; orientation constraints are a later fidelity step).
-        ik_cfg = DifferentialIKControllerCfg(command_type="position", use_relative_mode=False, ik_method="dls")
+        # One batched DLS controller per arm. Position-only by default (the
+        # 7-DOF arm resolves the extra DOFs minimally from the seed, like a
+        # seeded KDL solve). orientation_mode=True (p12+) switches to 6-DoF
+        # "pose" targets — deployment MoveIt is orientation-constrained, and
+        # position-only training left the wrist/roll command dims unvisited
+        # (the wrist_roll -2.4 OOD incident).
+        ik_cfg = DifferentialIKControllerCfg(
+            command_type="pose" if cfg.orientation_mode else "position",
+            use_relative_mode=False, ik_method="dls",
+        )
         self.ik = {
             "left": DifferentialIKController(ik_cfg, num_envs=env.num_envs, device=env.device),
             "right": DifferentialIKController(ik_cfg, num_envs=env.num_envs, device=env.device),
@@ -120,6 +132,19 @@ class IKArmPoseCommand(CommandTerm):
             "left": torch.zeros(env.num_envs, 3, device=env.device),
             "right": torch.zeros(env.num_envs, 3, device=env.device),
         }
+        # Orientation targets (pose mode): quat per arm + the sampled local
+        # delta, applied lazily to the MEASURED ee orientation on the first
+        # update after a resample (body poses are stale at reset-time
+        # resampling — same constraint as the position anchor).
+        ident = torch.zeros(env.num_envs, 4, device=env.device)
+        ident[:, 0] = 1.0
+        self.target_quat_b = {"left": ident.clone(), "right": ident.clone()}
+        self.orient_delta = {"left": ident.clone(), "right": ident.clone()}
+        self.orient_pending = {
+            "left": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+            "right": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        }
+
         self.default_mode = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self.frozen = {
             "left": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
@@ -194,6 +219,19 @@ class IKArmPoseCommand(CommandTerm):
                 offs[:, 1] = -offs[:, 1]  # mirror the outward direction
             self.target_pos_b[side][env_ids] = self.default_ee_pos_b[side][env_ids] + offs
 
+            if self.cfg.orientation_mode:
+                # Sample a bounded local rotation delta; identity for the
+                # (1 - orientation_prob) fraction (position-only-like draws).
+                # Applied to the MEASURED ee orientation on the next update.
+                lim = torch.tensor(self.cfg.orientation_delta_rpy, device=self.device)
+                rpy = (torch.rand(n, 3, device=self.device) * 2.0 - 1.0) * lim
+                constrained = torch.rand(n, device=self.device) < self.cfg.orientation_prob
+                rpy = rpy * constrained.unsqueeze(1).float()
+                self.orient_delta[side][env_ids] = quat_from_euler_xyz(
+                    rpy[:, 0], rpy[:, 1], rpy[:, 2]
+                )
+                self.orient_pending[side][env_ids] = True
+
     # ------------------------------------------------------------------
     # per-step update
     # ------------------------------------------------------------------
@@ -259,7 +297,22 @@ class IKArmPoseCommand(CommandTerm):
 
             joint_pos = self.robot.data.joint_pos[:, jids]
             ik = self.ik[side]
-            ik.set_command(self.target_pos_b[side], ee_quat=ee_quat_b)
+            if self.cfg.orientation_mode:
+                # Lazily lock in the orientation target: measured ee quat at
+                # the first update after resample, rotated by the sampled
+                # local delta ("solve from where you are" — keeps 6-DoF
+                # targets near-feasible while sweeping the wrist/roll dims).
+                pend = self.orient_pending[side]
+                if pend.any():
+                    self.target_quat_b[side][pend] = quat_mul(
+                        ee_quat_b[pend], self.orient_delta[side][pend]
+                    )
+                    self.orient_pending[side][:] = False
+                ik.set_command(
+                    torch.cat((self.target_pos_b[side], self.target_quat_b[side]), dim=1)
+                )
+            else:
+                ik.set_command(self.target_pos_b[side], ee_quat=ee_quat_b)
             # The controller returns joint_pos + dq with dq = J^+ (x* - x).
             # Apply dq ON TOP OF the current TARGET (integral action), not on
             # the measured position: re-anchoring to joint_pos reaches
@@ -390,6 +443,21 @@ class IKArmPoseCommandCfg(CommandTermCfg):
 
     soft_limit_margin: float = 0.02
     """Margin (rad) kept inside each soft joint limit."""
+
+    # --- 6-DoF orientation targets (p12+; deployment MoveIt is orientation-
+    # constrained, position-only training left wrist/roll command dims
+    # unvisited — the wrist_roll -2.4 OOD incident) ---
+    orientation_mode: bool = False
+    """Solve 6-DoF pose targets instead of position-only."""
+
+    orientation_delta_rpy: tuple[float, float, float] = (2.4, 0.8, 0.8)
+    """Max |roll,pitch,yaw| (rad) of the local rotation delta applied to the
+    measured ee orientation at resample. Roll span covers the observed
+    wrist_roll ±2.4 OOD spec."""
+
+    orientation_prob: float = 0.7
+    """Fraction of resamples that constrain orientation (identity delta
+    otherwise — those behave like position-only draws)."""
 
     apply_directly: bool = True
     resampling_time_range: tuple[float, float] = (2.0, 10.0)

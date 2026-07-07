@@ -636,3 +636,39 @@ def foot_impact_velocity(
     vz = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 2]
     impact_speed = torch.clamp(-vz, min=0.0) * just_landed.float()
     return torch.sum(impact_speed, dim=1)
+
+
+def capture_point_touchdown_distance(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    max_dist: float = 0.5,
+) -> torch.Tensor:
+    """p12/p13 step-placement shaper: distance from the landing foot to the
+    instantaneous capture point, charged once per touchdown.
+
+    Capture point: cp = com_xy + v_xy * sqrt(h/g) — the spot where planting
+    the foot absorbs the current momentum in ONE step. Landing far from cp is
+    the overshoot/multi-step signature (the "Figure robots don't overshoot"
+    observation). PENALTY form on purpose: a placement BONUS per touchdown
+    would let the policy farm reward by stepping in place onto cp; a penalty
+    can never make stepping profitable — stillness = 0, a perfectly placed
+    needed step ~ 0, an overshot step pays. Use with a NEGATIVE weight.
+    Root link is the CoM proxy (standing humanoid). Distance clamped so one
+    wild step can't dominate the return.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    if contact_sensor.cfg.track_air_time is False:
+        raise RuntimeError("Activate ContactSensor's track_air_time!")
+    asset = env.scene[asset_cfg.name]
+    current_contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    just_landed = (current_contact_time > 0.0) & (current_contact_time <= env.step_dt + 1e-6)
+
+    root_xy = asset.data.root_pos_w[:, :2]
+    v_xy = asset.data.root_lin_vel_w[:, :2]
+    h = torch.clamp(asset.data.root_pos_w[:, 2], min=0.3)
+    cp_xy = root_xy + v_xy * torch.sqrt(h / 9.81).unsqueeze(-1)
+
+    foot_xy = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    dist = torch.norm(foot_xy - cp_xy.unsqueeze(1), dim=-1).clamp(max=max_dist)
+    return torch.sum(dist * just_landed.float(), dim=1)
