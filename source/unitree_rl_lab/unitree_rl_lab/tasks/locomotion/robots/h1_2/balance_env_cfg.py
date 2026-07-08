@@ -406,7 +406,13 @@ class RewardsCfg:
     )
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
-        weight=-3.75,
+        # p12 HARDWARE CONSTRAINT (2026-07-08 incident): -3.75 -> -20. At
+        # -3.75 the p10-batch2 -> p11 -> p12 lineage parked hip yaws AT the
+        # +-0.43 mechanical stops (rent -0.17..-0.35/step, paid willingly);
+        # on the real robot the engage snap tripped motor protection (limp,
+        # power-cycle required). Limit-riding must be economically
+        # impossible, not merely taxed.
+        weight=-20.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEGS_TORSO_JOINT_REGEX)},
     )
 
