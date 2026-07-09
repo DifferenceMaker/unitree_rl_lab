@@ -59,6 +59,15 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
         }
     }
 
+    // Engage blend duration (leg+torso targets: measured -> policy over this
+    // window at state entry; <=0 disables). Hardware guard against stance
+    // snap; window-only, NOT a permanent filter (arch-B slew lesson).
+    if (cfg["engage_blend_s"]) {
+        engage_blend_s = cfg["engage_blend_s"].as<float>();
+    }
+    std::cout << "[FSM]   Engage blend: " << engage_blend_s
+              << "s (leg+torso targets, measured -> policy at entry)" << std::endl;
+
     this->registered_checks.emplace_back(
         std::make_pair(
             [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
@@ -211,10 +220,37 @@ void State_RLBase::run()
         // 13-action policy (Option II / v3): action is in policy action order, indexed
         // via LEG_TORSO_URDF_IDS to get the URDF (= articulation) index, then via
         // joint_ids_map to get the SDK motor index.
+
+        // Engage blend: first tick after entry captures the MEASURED pose;
+        // for engage_blend_s the written targets are a cosine blend from the
+        // measured pose to the policy targets. Prevents the FixStand->stance
+        // snap (2026-07-08: hip-yaw hit its mechanical stop in ~3 ticks and
+        // tripped motor protection). After the window: policy unfiltered.
+        if (engage_pending) {
+            for (size_t i = 0; i < 13; i++) {
+                int motor_idx = env->robot->data.joint_ids_map[LEG_TORSO_URDF_IDS[i]];
+                engage_q0[i] = lowstate->msg_.motor_state()[motor_idx].q();
+            }
+            engage_pending = false;
+            engage_t0 = std::chrono::steady_clock::now();
+        }
+        float blend = 1.0f;
+        if (engage_blend_s > 0.0f) {
+            float elapsed = std::chrono::duration<float>(
+                std::chrono::steady_clock::now() - engage_t0).count();
+            if (elapsed < engage_blend_s) {
+                float a = elapsed / engage_blend_s;
+                blend = 0.5f * (1.0f - std::cos(a * static_cast<float>(M_PI)));
+            }
+        }
+
         for (size_t i = 0; i < 13; i++) {
             int urdf_idx = LEG_TORSO_URDF_IDS[i];
             int motor_idx = env->robot->data.joint_ids_map[urdf_idx];
-            lowcmd->msg_.motor_cmd()[motor_idx].q() = action[i];
+            float target = (blend >= 1.0f)
+                ? action[i]
+                : engage_q0[i] + blend * (action[i] - engage_q0[i]);
+            lowcmd->msg_.motor_cmd()[motor_idx].q() = target;
     }
     } else {
         // 27-action policy (legacy / push_v4): direct articulation-order mapping.

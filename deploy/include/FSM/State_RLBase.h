@@ -37,6 +37,15 @@ public:
         }
 
         env->robot->update();
+
+        // Engage blend (2026-07-08 hip-yaw snap incident): on entry, arm the
+        // measured-pose capture; run() blends the written leg+torso targets
+        // from the measured joints to the policy targets over engage_blend_s.
+        // Prevents the FixStand->policy-stance snap that tripped the motor
+        // protection on hardware. Arms already ramp via arm_transition_s.
+        engage_pending = true;
+        engage_t0 = std::chrono::steady_clock::now();
+
         // Start policy thread
         policy_thread_running = true;
         policy_thread = std::thread([this]{
@@ -78,6 +87,13 @@ private:
 
     std::thread policy_thread;
     bool policy_thread_running = false;
+
+    // Engage blend state (see enter()). engage_blend_s is read from the
+    // state's config in the constructor (default 1.5 s; <=0 disables).
+    float engage_blend_s = 1.5f;
+    bool engage_pending = false;
+    std::array<float, 13> engage_q0{};
+    std::chrono::steady_clock::time_point engage_t0;
 };
 
 REGISTER_FSM(State_RLBase)
