@@ -100,8 +100,32 @@ int main(int argc, char** argv)
             }
             arm_pub.set_manual_pose(pose);
             std::cout << "[CMD] arm -> MANUAL pose set (slewing there)" << std::endl;
+        } else if (cmd == "fsm") {
+            // Joystickless FSM transitions (dead-gamepad / scripted testing):
+            //   fsm list            print available states
+            //   fsm <name> | <id>   request transition (normal exit/enter path)
+            std::string arg;
+            if (!(iss >> arg) || arg == "list") {
+                std::cout << "[CMD] states:";
+                for (auto& kv : FSMStringMap.left)
+                    std::cout << " " << kv.second << "(" << kv.first << ")";
+                std::cout << std::endl;
+                continue;
+            }
+            int id = 0;
+            if (FSMStringMap.right.count(arg)) {
+                id = FSMStringMap.right.at(arg);
+            } else {
+                try { id = std::stoi(arg); } catch (...) { id = 0; }
+                if (id == 0 || !FSMStringMap.left.count(id)) {
+                    std::cout << "[CMD] fsm: unknown state '" << arg << "' (try: fsm list)" << std::endl;
+                    continue;
+                }
+            }
+            FSMRequest.store(id);
+            std::cout << "[CMD] fsm -> requested " << FSMStringMap.left.at(id) << std::endl;
         } else {
-            std::cout << "[CMD] unknown: '" << cmd << "' (commands: arm)" << std::endl;
+            std::cout << "[CMD] unknown: '" << cmd << "' (commands: arm, fsm)" << std::endl;
         }
     }
 

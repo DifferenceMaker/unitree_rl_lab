@@ -2,6 +2,7 @@
 // All rights reserved.
 
 #pragma once
+#include <atomic>
 
 #include <boost/bimap.hpp>
 #include <string>
@@ -9,6 +10,11 @@
 #include <utility>
 
 inline boost::bimap<int, std::string> FSMStringMap;
+
+// Joystickless FSM override (sim2sim harness): stdin `fsm <name>` sets this
+// to a state id; CtrlFSM consumes it on the next 1 ms tick and performs the
+// normal exit()/enter() transition. 0 = no request.
+inline std::atomic<int> FSMRequest{0};
 
 class BaseState
 {

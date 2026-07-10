@@ -86,7 +86,9 @@ private:
         currentState->post_run();
         
         // Check if need to change state
-        int nextStateMode = 0;
+        // Joystickless override first (stdin `fsm <name>`, sim2sim harness):
+        int nextStateMode = FSMRequest.exchange(0);
+        if (nextStateMode == 0)
         for(int i(0); i<currentState->registered_checks.size(); i++)
         {
             if(currentState->registered_checks[i].first())
