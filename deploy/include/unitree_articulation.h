@@ -4,6 +4,7 @@
 #pragma once
 
 #include "isaaclab/assets/articulation/articulation.h"
+#include "LatencyStats.h"
 
 namespace unitree
 {
@@ -21,6 +22,10 @@ public:
     void update() override
     {
         std::lock_guard<std::mutex> lock(lowstate->mutex_);
+        // [dds_cpp latency] obs_age: lowstate DDS arrival -> this read of
+        // motor_state/IMU for the observation (policy thread). Gated to
+        // RLBase via Stats::enabled; no-op otherwise.
+        latency::Stats::instance().sample_obs_age();
         // base_angular_velocity
         for(int i(0); i<3; i++) {
             data.root_ang_vel_b[i] = lowstate->msg_.imu_state().gyroscope()[i];

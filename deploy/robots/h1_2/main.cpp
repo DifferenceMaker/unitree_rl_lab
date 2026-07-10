@@ -8,6 +8,7 @@
 #include "FSM/State_RLBase.h"
 #include "ArmPosePublisher.h"
 #include "ArmCmdSubscriber.h"
+#include "LatencyStats.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -24,7 +25,9 @@ void init_fsm_state()
         // exit(0);
     }
     FSMState::lowcmd = std::make_unique<LowCmd_t>();
-    FSMState::lowstate = std::make_shared<LowState_t>();
+    // StampedLowState: identical behavior + steady-clock arrival stamp for
+    // the [dds_cpp] latency stats (LatencyStats.h).
+    FSMState::lowstate = std::make_shared<latency::StampedLowState>();
     spdlog::info("Waiting for connection to robot...");
     FSMState::lowstate->wait_for_connection();
     spdlog::info("Connected to robot.");

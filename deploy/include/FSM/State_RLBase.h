@@ -10,6 +10,7 @@
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "isaaclab/envs/mdp/terminations.h"
 #include "ArmPosePublisher.h"
+#include "LatencyStats.h"
 
 class State_RLBase : public FSMState
 {
@@ -46,6 +47,10 @@ public:
         engage_pending = true;
         engage_t0 = std::chrono::steady_clock::now();
 
+        // [dds_cpp latency] stats window active only inside RLBase states.
+        latency_seq_consumed = latency::Stats::instance().action_seq.load(std::memory_order_relaxed);
+        latency::Stats::instance().enabled.store(true, std::memory_order_relaxed);
+
         // Start policy thread
         policy_thread_running = true;
         policy_thread = std::thread([this]{
@@ -76,6 +81,8 @@ public:
         std::cout << "[FSM] EXIT " << getStateString() << std::endl;
         std::cout << "============================================================" << std::endl;
         
+        latency::Stats::instance().enabled.store(false, std::memory_order_relaxed);
+
         policy_thread_running = false;
         if (policy_thread.joinable()) {
             policy_thread.join();
@@ -92,6 +99,7 @@ private:
     // state's config in the constructor (default 1.5 s; <=0 disables).
     float engage_blend_s = 1.5f;
     bool engage_pending = false;
+    uint64_t latency_seq_consumed = 0;   // [dds_cpp latency] run()-thread only
     std::array<float, 13> engage_q0{};
     std::chrono::steady_clock::time_point engage_t0;
 };

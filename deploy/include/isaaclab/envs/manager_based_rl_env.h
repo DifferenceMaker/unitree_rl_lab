@@ -9,6 +9,7 @@
 #include "isaaclab/manager/action_manager.h"
 #include "isaaclab/assets/articulation/articulation.h"
 #include "isaaclab/algorithms/algorithms.h"
+#include "LatencyStats.h"
 #include <iostream>
 #include "isaaclab/utils/utils.h"
 
@@ -83,6 +84,12 @@ public:
         } else {
             action_manager->process_action(action);
         }
+
+        // [dds_cpp latency] action produced: stamp + bump seq. The FSM's
+        // 1 kHz run() computes action_age on FIRST consumption of this seq.
+        latency::Stats::instance().action_stamp_ns.store(
+            latency::now_ns(), std::memory_order_relaxed);
+        latency::Stats::instance().action_seq.fetch_add(1, std::memory_order_relaxed);
     }
 
     // 0.0 = filter off (default). Set from the robot controller's config.yaml

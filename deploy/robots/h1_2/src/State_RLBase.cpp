@@ -177,6 +177,18 @@ void State_RLBase::run()
 
     auto action = env->action_manager->processed_actions();
 
+    // [dds_cpp latency] count each policy output ONCE (seq bump = new output;
+    // the 1 kHz re-writes of a held target are not new actions) + 1 Hz print.
+    {
+        auto& lstats = latency::Stats::instance();
+        uint64_t seq = lstats.action_seq.load(std::memory_order_relaxed);
+        if (seq != latency_seq_consumed) {
+            latency_seq_consumed = seq;
+            lstats.sample_action_age();
+        }
+        lstats.maybe_print();
+    }
+
     // DEBUG: log action + obs values once per second
     static int log_counter = 0;
     if (log_counter++ % 50 == 0) {
