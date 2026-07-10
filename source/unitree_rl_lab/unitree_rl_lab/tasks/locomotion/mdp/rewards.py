@@ -672,3 +672,29 @@ def capture_point_touchdown_distance(
     foot_xy = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
     dist = torch.norm(foot_xy - cp_xy.unsqueeze(1), dim=-1).clamp(max=max_dist)
     return torch.sum(dist * just_landed.float(), dim=1)
+
+
+def foot_homing_huber(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+    delta: float = 0.15,
+) -> torch.Tensor:
+    """p12e homing-v2: Huber-shaped pull of the feet toward their spawn spots.
+
+    The p12d homing L2 boost detonated when the 50 N sustained-push curriculum
+    forced large displacements (quadratic penalty cliff -> PPO collapse).
+    Huber keeps the L2's precision near home but saturates the GRADIENT:
+        f(d) = d^2 / (2*delta)      for d <= delta   (quadratic, slope d/delta)
+        f(d) = d - delta/2          for d >  delta   (linear, slope 1)
+    Gradient everywhere ("breadcrumbs"), bounded cost anywhere (no cliff under
+    forced displacement). Per foot, xy distance to spawn; summed. Use with a
+    NEGATIVE weight.
+    """
+    if not hasattr(env, "spawn_foot_pos") or asset_cfg.body_ids is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset = env.scene[asset_cfg.name]
+    current_foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    d = torch.norm(current_foot_pos - env.spawn_foot_pos, dim=-1)   # (N, feet)
+    huber = torch.where(d <= delta, d * d / (2.0 * delta), d - delta / 2.0)
+    return torch.sum(huber, dim=-1)
