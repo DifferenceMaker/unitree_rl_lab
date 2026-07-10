@@ -7,6 +7,7 @@
 
 #include <unitree/robot/channel/channel_publisher.hpp>
 #include <unitree/idl/ros2/String_.hpp>
+#include "FSM/BaseState.h"
 
 #include "ArmPosePublisher.h"
 
@@ -45,7 +46,7 @@ public:
         for (size_t i = 0; i < 14; ++i) js << (i ? "," : "") << arm.arm_kp(i);
         js << "],\"arm_kd\":[";
         for (size_t i = 0; i < 14; ++i) js << (i ? "," : "") << arm.arm_kd(i);
-        js << "]}";
+        js << "],\"fsm_keys\":\"" << fsm_keys_string() << "\"}";
 
         msg_.data(js.str());
         pub_->Write(msg_, 0);

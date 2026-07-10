@@ -8,6 +8,7 @@
 #include "FSM/State_RLBase.h"
 #include "ArmPosePublisher.h"
 #include "ArmCmdSubscriber.h"
+#include "FsmCmdSubscriber.h"
 #include "LatencyStats.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
@@ -59,6 +60,8 @@ int main(int argc, char** argv)
     // Decoupled arm-command interface: listen on rt/arm_pose_cmd and drive the
     // ArmPosePublisher into External mode (MuJoCo GUI / script / teleop sends poses).
     auto arm_cmd_sub = std::make_unique<h1_2::ArmCmdSubscriber>();
+    // Sim keyboard FSM control (rt/fsm_cmd digits -> FSMRequest).
+    auto fsm_cmd_sub = std::make_unique<h1_2::FsmCmdSubscriber>();
 
     std::cout << "Press [L2 + Up] to enter FixStand mode.\n";
     std::cout << "And then press [R1 + X] to start controlling the robot.\n";

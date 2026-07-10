@@ -3,6 +3,8 @@
 
 #pragma once
 #include <atomic>
+#include <vector>
+#include <utility>
 
 #include <boost/bimap.hpp>
 #include <string>
@@ -15,6 +17,42 @@ inline boost::bimap<int, std::string> FSMStringMap;
 // to a state id; CtrlFSM consumes it on the next 1 ms tick and performs the
 // normal exit()/enter() transition. 0 = no request.
 inline std::atomic<int> FSMRequest{0};
+
+// Number-key FSM map (sim2sim HUD/keyboard): '0'=Passive, '1'=FixStand,
+// '2'.. = remaining states in ascending id order. Shared by the controller
+// (rt/fsm_cmd handler) and the HUD string so both sides agree by construction.
+inline std::vector<std::pair<char, int>> fsm_key_map()
+{
+    std::vector<std::pair<char, int>> map;
+    int passive = FSMStringMap.right.count("Passive") ? FSMStringMap.right.at("Passive") : 0;
+    int fixstand = FSMStringMap.right.count("FixStand") ? FSMStringMap.right.at("FixStand") : 0;
+    if (passive)  map.push_back({'0', passive});
+    if (fixstand) map.push_back({'1', fixstand});
+    char key = '2';
+    for (auto& kv : FSMStringMap.left) {           // ascending id
+        if (kv.first == passive || kv.first == fixstand) continue;
+        if (key > '8') break;                       // '9' reserved (sim band toggle)
+        map.push_back({key++, kv.first});
+    }
+    return map;
+}
+
+inline std::string fsm_keys_string()
+{
+    std::string s;
+    for (auto& [key, id] : fsm_key_map()) {
+        if (!s.empty()) s += "  ";
+        s += key; s += "="; s += FSMStringMap.left.at(id);
+    }
+    return s;
+}
+
+inline int fsm_state_for_key(char c)
+{
+    for (auto& [key, id] : fsm_key_map())
+        if (key == c) return id;
+    return 0;
+}
 
 class BaseState
 {
