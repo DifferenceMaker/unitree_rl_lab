@@ -560,6 +560,29 @@ class RewardsCfg:
         },
     )
 
+    # p12 PROMOTION (2026-07-12): the p12d-winning recovery levers, folded in
+    # after the p12e inheritance incident (warmstart inherits WEIGHTS, not
+    # REWARDS — children must get the parent's economy from the BASE cfg).
+    # capture: land the recovery step ON the capture point (penalty form —
+    # a bonus would be farmable by stepping in place). slide: dragging a
+    # planted foot costs per-step (the touchdown-tax loophole closer).
+    capture_point_touchdown = RewTerm(
+        func=mdp.capture_point_touchdown_distance,
+        weight=-5.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+        },
+    )
+    feet_slide = RewTerm(
+        func=mdp.feet_slide,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+        },
+    )
+
     # p7_1d: stance-width anchor — penalize feet drawing too close (the inward-drift
     # failure from p7_1c). LOOSE: only bites below ~0.16 m (nominal ~0.20 m apart).
     feet_too_near = RewTerm(
