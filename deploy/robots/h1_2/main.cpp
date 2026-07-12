@@ -1,5 +1,7 @@
 #include <array>
 #include <sstream>
+#include <thread>
+#include <chrono>
 #include <string>
 
 #include "FSM/CtrlFSM.h"
@@ -9,6 +11,7 @@
 #include "ArmPosePublisher.h"
 #include "ArmCmdSubscriber.h"
 #include "FsmCmdSubscriber.h"
+#include "PolicyStatusPublisher.h"
 #include "LatencyStats.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
@@ -63,6 +66,20 @@ int main(int argc, char** argv)
     // Sim keyboard FSM control (rt/fsm_cmd digits -> FSMRequest).
     auto fsm_cmd_sub = std::make_unique<h1_2::FsmCmdSubscriber>();
 
+    // HUD status heartbeat from BOOT (the key list must render before any
+    // Balance state activates). RLBase states publish their own richer
+    // status from run(); this thread only fills the gaps (Passive/FixStand).
+    std::thread status_thread([&fsm]{
+        while (true) {
+            auto name = fsm->current_state_string();
+            if (name.rfind("Balance", 0) != 0) {
+                h1_2::PolicyStatusPublisher::instance().publish(name, /*force=*/true);
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    });
+    status_thread.detach();
+
     std::cout << "Press [L2 + Up] to enter FixStand mode.\n";
     std::cout << "And then press [R1 + X] to start controlling the robot.\n";
 
@@ -109,21 +126,28 @@ int main(int argc, char** argv)
             //   fsm <name> | <id>   request transition (normal exit/enter path)
             std::string arg;
             if (!(iss >> arg) || arg == "list") {
-                std::cout << "[CMD] states:";
-                for (auto& kv : FSMStringMap.left)
-                    std::cout << " " << kv.second << "(" << kv.first << ")";
-                std::cout << std::endl;
+                // SAME numbering as the HUD/keyboard (derived key map), NOT raw ids.
+                std::cout << "[CMD] keys: " << fsm_keys_string() << std::endl;
+                std::string overflow;
+                auto keymap = fsm_key_map();
+                for (auto& kv : FSMStringMap.left) {
+                    bool mapped = false;
+                    for (auto& [k, id] : keymap) if (id == kv.first) { mapped = true; break; }
+                    if (!mapped) overflow += " " + kv.second;
+                }
+                if (!overflow.empty())
+                    std::cout << "[CMD] stdin-only (no key):" << overflow << std::endl;
                 continue;
             }
             int id = 0;
             if (FSMStringMap.right.count(arg)) {
                 id = FSMStringMap.right.at(arg);
-            } else {
-                try { id = std::stoi(arg); } catch (...) { id = 0; }
-                if (id == 0 || !FSMStringMap.left.count(id)) {
-                    std::cout << "[CMD] fsm: unknown state '" << arg << "' (try: fsm list)" << std::endl;
-                    continue;
-                }
+            } else if (arg.size() == 1) {
+                id = fsm_state_for_key(arg[0]);   // digit = the HUD/keyboard key map
+            }
+            if (id == 0) {
+                std::cout << "[CMD] fsm: unknown '" << arg << "' (fsm list shows keys + names)" << std::endl;
+                continue;
             }
             FSMRequest.store(id);
             std::cout << "[CMD] fsm -> requested " << FSMStringMap.left.at(id) << std::endl;

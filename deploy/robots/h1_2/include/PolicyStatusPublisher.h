@@ -30,9 +30,9 @@ public:
     }
 
     // Call every control tick with the active FSM state name. Throttles internally.
-    void publish(const std::string& policy) {
+    void publish(const std::string& policy, bool force = false) {
         const bool changed = (policy != last_policy_);
-        if (!changed && (++tick_ % kHeartbeatTicks) != 0) {
+        if (!force && !changed && (++tick_ % kHeartbeatTicks) != 0) {
             return;
         }
         last_policy_ = policy;

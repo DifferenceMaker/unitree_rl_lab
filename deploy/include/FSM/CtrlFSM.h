@@ -76,6 +76,12 @@ public:
     }
 
     std::vector<std::shared_ptr<BaseState>> states;
+
+    std::string current_state_string()
+    {
+        return currentState ? currentState->getStateString() : std::string("?");
+    }
+
 private:
     const double dt = 0.001;
 
