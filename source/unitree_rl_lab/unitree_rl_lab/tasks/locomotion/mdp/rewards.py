@@ -643,6 +643,7 @@ def capture_point_touchdown_distance(
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg,
     max_dist: float = 0.5,
+    com_offset_b: tuple = (0.0, 0.0),
 ) -> torch.Tensor:
     """p12/p13 step-placement shaper: distance from the landing foot to the
     instantaneous capture point, charged once per touchdown.
