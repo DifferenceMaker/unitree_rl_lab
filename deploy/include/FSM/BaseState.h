@@ -42,9 +42,17 @@ inline std::vector<std::pair<char, int>> fsm_key_map()
 inline std::string fsm_keys_string()
 {
     std::string s;
-    for (auto& [key, id] : fsm_key_map()) {
+    auto keymap = fsm_key_map();
+    for (auto& [key, id] : keymap) {
         if (!s.empty()) s += "  ";
         s += key; s += "="; s += FSMStringMap.left.at(id);
+    }
+    // States beyond the key range: published with '-' (stdin `fsm <name>` only)
+    // so the HUD always shows the COMPLETE state list.
+    for (auto& kv : FSMStringMap.left) {
+        bool keyed = false;
+        for (auto& [k, id] : keymap) if (id == kv.first) { keyed = true; break; }
+        if (!keyed) { if (!s.empty()) s += "  "; s += "-="; s += kv.second; }
     }
     return s;
 }
