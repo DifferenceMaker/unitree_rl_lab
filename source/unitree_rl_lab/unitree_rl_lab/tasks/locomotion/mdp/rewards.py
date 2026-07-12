@@ -665,6 +665,17 @@ def capture_point_touchdown_distance(
     just_landed = (current_contact_time > 0.0) & (current_contact_time <= env.step_dt + 1e-6)
 
     root_xy = asset.data.root_pos_w[:, :2]
+    # CoM-proxy correction (2026-07-12): the pelvis root sits ~2 cm BEHIND the
+    # true whole-body CoM (measured +0.0198 m at default pose) — a pelvis-based
+    # capture point teaches aft-biased foot placement ("recovers, then falls
+    # backward"). com_offset_b shifts the proxy in the BASE frame (x forward),
+    # rotated into world by base yaw. (0,0) preserves the original behavior.
+    if com_offset_b[0] != 0.0 or com_offset_b[1] != 0.0:
+        from isaaclab.utils.math import quat_apply_yaw
+        offset3 = torch.zeros(env.num_envs, 3, device=env.device)
+        offset3[:, 0] = float(com_offset_b[0])
+        offset3[:, 1] = float(com_offset_b[1])
+        root_xy = root_xy + quat_apply_yaw(asset.data.root_quat_w, offset3)[:, :2]
     v_xy = asset.data.root_lin_vel_w[:, :2]
     h = torch.clamp(asset.data.root_pos_w[:, 2], min=0.3)
     cp_xy = root_xy + v_xy * torch.sqrt(h / 9.81).unsqueeze(-1)
