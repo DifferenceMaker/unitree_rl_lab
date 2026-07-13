@@ -97,6 +97,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_base:                            # RB+A     p12f control: pure refine, pelvis CP
     transitions:
@@ -105,6 +106,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_cpcom:                           # RB+X     CP +2cm fwd (com_offset_b), warmstart
     transitions:
@@ -113,6 +115,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_cpclean:                         # RB+right CP +2cm fwd from sym_12k (habit-free)
     transitions:
@@ -121,6 +124,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_comx0:                           # RB+down  CoM-over-pelvis MODEL, from scratch @7400
     transitions:                           # native scene = scene_comx0.xml (batch B)
@@ -129,6 +133,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_scratch20:                       # RB+B     pre-capture ancestor (lean-hunt reference)
     transitions:
@@ -137,3 +142,4 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
