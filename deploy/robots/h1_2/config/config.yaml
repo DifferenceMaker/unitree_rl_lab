@@ -4,14 +4,23 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    BalanceP8_gold:
+    Balance_parent:
       id: 4
       type: RLBase
-    Balance_envelope_v2:
+    Balance_base:
       id: 5
       type: RLBase
-    Balance_envelope_v2_stiff:
+    Balance_cpcom:
       id: 6
+      type: RLBase
+    Balance_cpclean:
+      id: 7
+      type: RLBase
+    Balance_comx0:
+      id: 8
+      type: RLBase
+    Balance_scratch20:
+      id: 9
       type: RLBase
 
   Passive:
@@ -36,9 +45,12 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      BalanceP8_gold:            RB + Y.on_pressed
-      Balance_envelope_v2:       RB + A.on_pressed
-      Balance_envelope_v2_stiff: RB + X.on_pressed
+      Balance_parent:    RB + Y.on_pressed
+      Balance_base:      RB + A.on_pressed
+      Balance_cpcom:     RB + X.on_pressed
+      Balance_cpclean:   RB + right.on_pressed
+      Balance_comx0:     RB + down.on_pressed
+      Balance_scratch20: RB + B.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -64,36 +76,64 @@ FSM:
       ]
     ]
 
-  # === GROUP 3: envelope v2 (both trained through the full expanded envelope — yaw ±0.9,
-  # decoupled L/R, overhead +1.5 — with hold_steps 12000). Baseline gold FALLS on OOD
-  # asymmetric/overhead poses (the waltz); v2 should hold them. v2=40/3, v2_stiff trained
-  # with stiff shoulders (80/4). KEY TEST via the CONTROLLER `arm <14 floats>` stdin (the
-  # sim sliders are symmetric — use arm cmd for asymmetric/decoupled poses):
-  #   waltz (killed gold):  arm 0.458 0.458 1.09 -1.09 0.945 0.945 0.173 0.173 0 0 0 0 0 0
-  #   asymmetric L/R:       arm -0.8 0.5 0.5 0.2 0.9 -0.9 1.0 0.2 0 0 0 0 0 0
-  #   overhead (arms up):   arm -1.5 -1.5 0.6 -0.6 0 0 0.3 0.3 0 0 0 0 0 0
-  #   back to default:      arm default
-  # Also push while holding a pose. Compare gold (falls) vs v2 (holds) vs v2_stiff.
-  BalanceP8_gold:                        # RB+Y   baseline (no envelope — falls on OOD poses)
+  # === p12f CP/model diagnostics eval ===
+  # TWO BATCHES — the robot model is global per sim launch
+  # (unitree_mujoco simulate/config.yaml `robot_scene`):
+  #   Batch A  robot_scene: scene_sym.xml    -> parent/base/cpcom/cpclean/scratch20
+  #            (their native model). comx0 here = MISMATCHED pair: policy expects
+  #            CoM over pelvis, sim CoM +2.2cm fwd -> forward lean EXPECTED.
+  #   Batch B  robot_scene: scene_comx0.xml  -> comx0 native. CROSS-TEST: run
+  #            parent/base on this scene too — if they lean/fall BACKWARD like
+  #            the real robot did on 07-12, the hardware failure is reproduced
+  #            in sim and the model hypothesis is confirmed.
+  # A/B question (batch A, side view): do cpcom/cpclean place recovery steps
+  # less aft than base? base(3000) vs cpcom(3000) = the CP A/B;
+  # cpcom_clean(2950, OOM-killed, healthy) = corrected CP without unlearning tax.
+  # comx0 snap = model_7400 of 15000 (mid-training snapshot).
+  Balance_parent:                          # RB+Y     p12d capture_slide (reference)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p8_gold_2026-06-15
+    policy_dir: ../../../logs/milestones/p12d_refine_capture_slide_2026-07-09
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_envelope_v2:                   # RB+A   full envelope, gentler ramp, gains 40/3
+  Balance_base:                            # RB+A     p12f control: pure refine, pelvis CP
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p10_envelope_v2_2026-07-01
+    policy_dir: ../../../logs/milestones/p12f_base_2026-07-12
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_envelope_v2_stiff:             # RB+X   full envelope + TRAINED stiff sh 80/4·50/2·30/1
+  Balance_cpcom:                           # RB+X     CP +2cm fwd (com_offset_b), warmstart
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p10_envelope_v2_stiff_2026-07-01
-    arm_kp: [80,80, 80,80, 50,50, 50,50, 30,30, 30,30, 30,30]
-    arm_kd: [4,4, 4,4, 2,2, 2,2, 1,1, 1,1, 1,1]
+    policy_dir: ../../../logs/milestones/p12f_cpcom_2026-07-12
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+
+  Balance_cpclean:                         # RB+right CP +2cm fwd from sym_12k (habit-free)
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12f_cpcom_clean_2026-07-12
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+
+  Balance_comx0:                           # RB+down  CoM-over-pelvis MODEL, from scratch @7400
+    transitions:                           # native scene = scene_comx0.xml (batch B)
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12f_comx0_snap_2026-07-13
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+
+  Balance_scratch20:                       # RB+B     pre-capture ancestor (lean-hunt reference)
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12c_scratch20_2026-07-08
+    arm_kp: 40.0
+    arm_kd: 3.0
     arm_transition_s: 4.0
