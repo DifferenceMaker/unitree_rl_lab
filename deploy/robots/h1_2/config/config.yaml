@@ -4,23 +4,20 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_parent:
+    Balance_sym:
       id: 4
       type: RLBase
-    Balance_base:
+    Balance_comx0:
       id: 5
       type: RLBase
-    Balance_cpcom:
+    Balance_comx06:
       id: 6
       type: RLBase
-    Balance_cpclean:
+    Balance_comx11:
       id: 7
       type: RLBase
-    Balance_comx0:
+    Balance_comx17:
       id: 8
-      type: RLBase
-    Balance_scratch20:
-      id: 9
       type: RLBase
 
   Passive:
@@ -45,12 +42,11 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_parent:    RB + Y.on_pressed
-      Balance_base:      RB + A.on_pressed
-      Balance_cpcom:     RB + X.on_pressed
-      Balance_cpclean:   RB + right.on_pressed
-      Balance_comx0:     RB + down.on_pressed
-      Balance_scratch20: RB + B.on_pressed
+      Balance_sym:    RB + Y.on_pressed
+      Balance_comx0:  RB + A.on_pressed
+      Balance_comx06: RB + X.on_pressed
+      Balance_comx11: RB + right.on_pressed
+      Balance_comx17: RB + down.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -76,30 +72,17 @@ FSM:
       ]
     ]
 
-  # === p12f CP/model diagnostics eval ===
-  # TWO BATCHES — the robot model is global per sim launch
-  # (unitree_mujoco simulate/config.yaml `robot_scene`):
-  #   Batch A  robot_scene: scene_sym.xml    -> parent/base/cpcom/cpclean/scratch20
-  #            (their native model). comx0 here = MISMATCHED pair: policy expects
-  #            CoM over pelvis, sim CoM +2.2cm fwd -> forward lean EXPECTED.
-  #   Batch B  robot_scene: scene_comx0.xml  -> comx0 native. CROSS-TEST: run
-  #            parent/base on this scene too — if they lean/fall BACKWARD like
-  #            the real robot did on 07-12, the hardware failure is reproduced
-  #            in sim and the model hypothesis is confirmed.
-  # A/B question (batch A, side view): do cpcom/cpclean place recovery steps
-  # less aft than base? base(3000) vs cpcom(3000) = the CP A/B;
-  # cpcom_clean(2950, OOM-killed, healthy) = corrected CP without unlearning tax.
-  # comx0 snap = model_7400 of 15000 (mid-training snapshot).
-  Balance_parent:                          # RB+Y     p12d capture_slide (reference)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12d_refine_capture_slide_2026-07-09
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_base:                            # RB+A     p12f control: pure refine, pelvis CP
+  # === p12f CoM-x BISECTION (hardware) ===
+  # One axis, five points, ordered by the model's CoM fwd-of-pelvis offset:
+  #   RB+Y  sym    +22.4mm  (p12f_base 3k refine   — falls BACKWARD, slow reaction: the 07-13 anchor)
+  #   RB+A  comx0    0.0mm  (from-scratch 8250     — settles FORWARD, hair-trigger fwd: other anchor)
+  #   RB+X  comx06  +5.6mm  (from-scratch snap 7475)
+  #   RB+r  comx11 +11.2mm  (from-scratch snap 7475 — midpoint, primary probe)
+  #   RB+d  comx17 +16.8mm  (from-scratch snap 7450)
+  # VERDICT CRITERIA: still stance + SYMMETRIC fore/aft reaction threshold
+  # (asymmetry direction tells which way the true CoM lies from that model).
+  # All snaps iteration-matched (~7.5-8.2k); judge tendency, not polish.
+  Balance_sym:
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p12f_base_2026-07-12
@@ -108,37 +91,37 @@ FSM:
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_cpcom:                           # RB+X     CP +2cm fwd (com_offset_b), warmstart
+  Balance_comx0:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_cpcom_2026-07-12
+    policy_dir: ../../../logs/milestones/p12f_comx0_scratch_2026-07-12
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_cpclean:                         # RB+right CP +2cm fwd from sym_12k (habit-free)
+  Balance_comx06:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_cpcom_clean_2026-07-12
+    policy_dir: ../../../logs/milestones/p12f_comx06_snap_2026-07-13
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_comx0:                           # RB+down  CoM-over-pelvis MODEL, from scratch @7400
-    transitions:                           # native scene = scene_comx0.xml (batch B)
+  Balance_comx11:
+    transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_comx0_snap_2026-07-13
+    policy_dir: ../../../logs/milestones/p12f_comx11_snap_2026-07-13
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_scratch20:                       # RB+B     pre-capture ancestor (lean-hunt reference)
+  Balance_comx17:
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12c_scratch20_2026-07-08
+    policy_dir: ../../../logs/milestones/p12f_comx17_snap_2026-07-13
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
