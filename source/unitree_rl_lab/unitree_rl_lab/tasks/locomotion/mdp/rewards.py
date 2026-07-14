@@ -638,6 +638,32 @@ def foot_impact_velocity(
     return torch.sum(impact_speed, dim=1)
 
 
+def feet_flat_orientation(
+    env: ManagerBasedRLEnv,
+    height_thresh: float = 0.12,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize tilted feet near the ground (HuB feet-orientation term).
+
+    For each foot body below height_thresh, the penalty is the xy-norm of the
+    gravity direction expressed in the foot frame (0 = sole level, grows with
+    tilt). Targets edge-first / heel-first strikes: a tilted touchdown slaps
+    (loudness) and shrinks the support patch regardless of descent speed --
+    the failure mode the impact-VELOCITY proxy (softland) missed.
+    """
+    from isaaclab.utils.math import quat_apply_inverse
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat = asset.data.body_quat_w[:, asset_cfg.body_ids, :]
+    pos_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    n_feet = quat.shape[1]
+    g_world = torch.tensor([0.0, 0.0, -1.0], device=env.device).expand(env.num_envs, n_feet, 3)
+    g_foot = quat_apply_inverse(quat.reshape(-1, 4), g_world.reshape(-1, 3)).reshape(env.num_envs, n_feet, 3)
+    tilt = torch.norm(g_foot[..., :2], dim=-1)
+    near = (pos_z < height_thresh).float()
+    return (tilt * near).sum(dim=1)
+
+
 def capture_point_touchdown_distance(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,

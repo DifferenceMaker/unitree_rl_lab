@@ -734,7 +734,7 @@ ARM_DEPLOY_KD = 3.0
 
 UNITREE_H1_2_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
-        asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2.urdf"),
+        asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2_comx06.urdf"),  # comx06 = standard since p12f bisection (CoM +5.6mm fwd of pelvis; SYM +22.4mm fell backward on hardware)
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.98),                  # p7 crouch: lower pelvis for bent legs

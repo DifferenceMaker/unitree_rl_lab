@@ -572,6 +572,8 @@ class RewardsCfg:
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+            # comx06 fold: pelvis sits 5.6mm aft of the model's true CoM
+            "com_offset_b": (0.0056, 0.0),
         },
     )
     feet_slide = RewTerm(
