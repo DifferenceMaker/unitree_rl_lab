@@ -98,6 +98,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_comx06_full:        # RB+A   same comx06 run, final checkpoint @10375 — polish compare
     transitions:
@@ -106,6 +107,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_widestance:         # RB+X   stance 0.26m — left-fall-loop fix?
     transitions:
@@ -114,6 +116,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_feetnear:             # RB+rt  feet_too_near -40 — overshoot fix?
     transitions:
@@ -122,6 +125,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_wide_feetnear:   # RB+dn  both stance levers
     transitions:
@@ -130,6 +134,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_wide_micropush: # RB+lf  proven-keepers combo
     transitions:
@@ -138,6 +143,7 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
 
   Balance_micropush_1s:     # RB+up  1s micropush cadence
     transitions:
@@ -146,3 +152,4 @@ FSM:
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
+    engage_blend_s: 1.5
