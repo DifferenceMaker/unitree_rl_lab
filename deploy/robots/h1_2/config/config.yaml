@@ -4,10 +4,10 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_ref7475:
+    Balance_comx06_snap:
       id: 4
       type: RLBase
-    Balance_full10k:
+    Balance_comx06_full:
       id: 5
       type: RLBase
     Balance_widestance:
@@ -48,8 +48,8 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_ref7475:        RB + Y.on_pressed
-      Balance_full10k:        RB + A.on_pressed
+      Balance_comx06_snap:        RB + Y.on_pressed
+      Balance_comx06_full:        RB + A.on_pressed
       Balance_widestance:     RB + X.on_pressed
       Balance_feetnear:       RB + right.on_pressed
       Balance_wide_feetnear:  RB + down.on_pressed
@@ -91,7 +91,7 @@ FSM:
   # imu_noise_std_deg 5 is the standard corrupted eval; set 0 for clean reads.
   # Singles = model_10474 (snap7475 + 3k); combos = model_11474 (+4k).
 
-  Balance_ref7475:          # RB+Y   hardware-proven reference
+  Balance_comx06_snap:          # RB+Y   comx06 @7475 = THE hardware-tested bisection winner (reference)
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p12f_comx06_snap_2026-07-13
@@ -99,7 +99,7 @@ FSM:
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_full10k:        # RB+A   same run @10375 — polish compare
+  Balance_comx06_full:        # RB+A   same comx06 run, final checkpoint @10375 — polish compare
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p12f_comx06_scratch_2026-07-13
