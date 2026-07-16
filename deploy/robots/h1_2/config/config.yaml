@@ -7,23 +7,26 @@ FSM:
     Balance_comx06_snap:
       id: 4
       type: RLBase
-    Balance_comx06_full:
+    Balance_fric:
       id: 5
       type: RLBase
-    Balance_widestance:
+    Balance_highfric:
       id: 6
       type: RLBase
-    Balance_feetnear:
+    Balance_hiproll:
       id: 7
       type: RLBase
-    Balance_wide_feetnear:
+    Balance_taucap:
       id: 8
       type: RLBase
-    Balance_wide_micropush:
+    Balance_flatfoot:
       id: 9
       type: RLBase
-    Balance_micropush_1s:
+    Balance_comdr:
       id: 10
+      type: RLBase
+    Balance_impact600:
+      id: 11
       type: RLBase
 
   Passive:
@@ -48,13 +51,14 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_comx06_snap:        RB + Y.on_pressed
-      Balance_comx06_full:        RB + A.on_pressed
-      Balance_widestance:     RB + X.on_pressed
-      Balance_feetnear:       RB + right.on_pressed
-      Balance_wide_feetnear:  RB + down.on_pressed
-      Balance_wide_micropush: RB + left.on_pressed
-      Balance_micropush_1s:   RB + up.on_pressed
+      Balance_comx06_snap: RB + Y.on_pressed
+      Balance_fric:        RB + A.on_pressed
+      Balance_highfric:    RB + X.on_pressed
+      Balance_hiproll:     RB + right.on_pressed
+      Balance_taucap:      RB + down.on_pressed
+      Balance_flatfoot:    RB + left.on_pressed
+      Balance_comdr:       RB + up.on_pressed
+      Balance_impact600:   RB + B.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -80,18 +84,17 @@ FSM:
       ]
     ]
 
-  # === p12g wave-1 sim2sim eval (stance/anti-squeeze axes) ===
+  # === p12g wave-2 sim2sim eval — ANTI-SQUEEZE VERDICTS + probes ===
+  # All singles = model_10474 (comx06 snap 7475 + 3k), comx06 fold base.
   # TWO-SCENE PLAN (unitree_mujoco simulate/config.yaml `robot_scene`):
-  #   Pass 1  scene_comx06.xml      -> "previous friction": feet can CREEP.
-  #           Watch the POSES policies take while slipping slightly — the
-  #           inward-pull habit shows as slow narrowing / toe-in drift.
-  #   Pass 2  scene_comx06_grip.xml -> cement (friction 2.5): feet PIN.
-  #           The squeeze shows as grinding posture instead of narrowing
-  #           (hip-roll tau plateau — invisible to the eye, watch stance lean).
-  # imu_noise_std_deg 5 is the standard corrupted eval; set 0 for clean reads.
-  # Singles = model_10474 (snap7475 + 3k); combos = model_11474 (+4k).
-
-  Balance_comx06_snap:          # RB+Y   comx06 @7475 = THE hardware-tested bisection winner (reference)
+  #   Pass 1  scene_comx06.xml      -> creep floor: general behavior/stillness.
+  #   Pass 2  scene_comx06_grip.xml -> cement (friction 2.5): THE verdict pass
+  #           for fric/highfric/hiproll — feet pin; a fixed policy holds a
+  #           relaxed stance (no grinding lean, no inward pressing); the 07-15
+  #           failure signature was tau pinned at the cap from engage.
+  # Ultimate pass bar is ROS: |tau|max << 120 at quiet stance, zero
+  # 'TAU CAP binding' lines, m5 ankle-roll temp flat over 6 min.
+  Balance_comx06_snap:          # RB+Y / key 2   reference (hardware-proven; squeezes)
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p12f_comx06_snap_2026-07-13
@@ -99,50 +102,58 @@ FSM:
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_comx06_full:        # RB+A   same comx06 run, final checkpoint @10375 — polish compare
+  Balance_fric:                 # RB+A / key 3   realistic friction band U(1.0,1.6)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_comx06_scratch_2026-07-13
+    policy_dir: ../../../logs/milestones/p12g_fric_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_widestance:         # RB+X   stance 0.26m — left-fall-loop fix?
+  Balance_highfric:             # RB+X / key 4   exaggerated friction U(1.0,3.0)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_widestance_2026-07-14
+    policy_dir: ../../../logs/milestones/p12g_highfric_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_feetnear:             # RB+rt  feet_too_near -40 — overshoot fix?
+  Balance_hiproll:              # RB+right / key 5   hip-roll tau^2 price
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_feetnear_2026-07-14
+    policy_dir: ../../../logs/milestones/p12g_hiproll_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_wide_feetnear:   # RB+dn  both stance levers
+  Balance_taucap:               # RB+down / key 6   0.6x effort envelope (recovery-in-cap)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wide_feetnear_2026-07-14
+    policy_dir: ../../../logs/milestones/p12g_taucap_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_wide_micropush: # RB+lf  proven-keepers combo
+  Balance_flatfoot:             # RB+left / key 7   feet-orientation penalty (loudness)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wide_micropush_2026-07-14
+    policy_dir: ../../../logs/milestones/p12g_flatfoot_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
 
-  Balance_micropush_1s:     # RB+up  1s micropush cadence
-    transitions:
+  Balance_comdr:                # RB+up / key 8   torso CoM x U(+-0.02) insurance
+    transitions:                # WATCH: sway reaction must NOT dull
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_micropush_1s_2026-07-14
+    policy_dir: ../../../logs/milestones/p12g_comdr_2026-07-15
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+
+  Balance_impact600:            # RB+B / stdin `fsm Balance_impact600` or numpad via '-'
+    transitions:                # 600N contact-force cap (landing softness probe)
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12g_impact600_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
