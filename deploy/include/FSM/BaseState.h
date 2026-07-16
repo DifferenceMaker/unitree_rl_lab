@@ -31,9 +31,9 @@ inline std::vector<std::pair<char, int>> fsm_key_map()
     char key = '2';
     for (auto& kv : FSMStringMap.left) {           // ascending id
         if (kv.first == passive || kv.first == fixstand) continue;
-        if (key > '8') break;                       // '9' = band TOGGLE (reserved).
-        // CAVEAT: 7/8 double as band-LENGTH keys when the band is enabled —
-        // pressing them then adjusts the band AND switches policy.
+        if (key > '9') break;                       // full digit range: FSM input
+        // comes from the NUMPAD (sim, bd5645a) / stdin — the elastic-band keys
+        // are MAIN-ROW 7/8/9 only, so the old '9'-reserved cap is obsolete.
         map.push_back({key++, kv.first});
     }
     return map;
