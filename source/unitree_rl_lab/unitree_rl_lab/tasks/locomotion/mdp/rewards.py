@@ -515,6 +515,31 @@ def base_pos_xy_l2_from_spawn(
     return torch.sum(delta ** 2, dim=-1)
 
 
+def base_forward_zone_penalty(
+    env: "ManagerBasedRLEnv",
+    threshold: float = 0.10,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DESK LINE: penalize forward base drift into the desk zone (asymmetric).
+
+    Forward = the spawn heading (+x in the spawn frame). Only forward drift
+    BEYOND `threshold` is penalized (one-sided linear hinge) — the robot may
+    sway / step laterally or backward freely, but drifting toward the desk in
+    front costs. This is the "geographic desk zone" penalty: dense (a gradient
+    that eases the base away), NOT a termination (a shove into the desk is not
+    a failure to end the episode on). Pairs with the light symmetric
+    base_pos_xy_l2_from_spawn. Needs env.spawn_root_xy + env.spawn_yaw
+    (capture_spawn_state).
+    """
+    if not hasattr(env, "spawn_root_xy") or not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    forward_disp = torch.sum(delta * fwd, dim=-1)
+    return torch.clamp(forward_disp - threshold, min=0.0)
+
+
 def foot_displacement_l2_from_spawn(
     env: "ManagerBasedRLEnv",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
