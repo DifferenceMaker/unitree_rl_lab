@@ -4,29 +4,20 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_comx06_snap:
+    Balance_sym_ref:
       id: 4
       type: RLBase
     Balance_wfm:
       id: 5
       type: RLBase
-    Balance_fric_latloop:
+    Balance_platinum:
       id: 6
       type: RLBase
-    Balance_highfric:
+    Balance_latloop:
       id: 7
       type: RLBase
-    Balance_hiproll:
+    Balance_foot_silence:
       id: 8
-      type: RLBase
-    Balance_fric:
-      id: 9
-      type: RLBase
-    Balance_heading25:
-      id: 10
-      type: RLBase
-    Balance_taucap:
-      id: 11
       type: RLBase
 
   Passive:
@@ -51,14 +42,11 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_comx06_snap:  RB + Y.on_pressed
+      Balance_sym_ref:      RB + Y.on_pressed
       Balance_wfm:          RB + A.on_pressed
-      Balance_fric_latloop: RB + X.on_pressed
-      Balance_highfric:     RB + right.on_pressed
-      Balance_hiproll:      RB + down.on_pressed
-      Balance_fric:         RB + left.on_pressed
-      Balance_heading25:    RB + up.on_pressed
-      Balance_taucap:       RB + B.on_pressed
+      Balance_platinum:     RB + X.on_pressed
+      Balance_latloop:      RB + right.on_pressed
+      Balance_foot_silence: RB + down.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -84,83 +72,53 @@ FSM:
       ]
     ]
 
-  # === p12g FINAL-CANDIDATE eval — anti-squeeze family + behavior combo + axes ===
-  # Numpad keys: 2 snap / 3 wfm / 4 fric_latloop / 5 highfric / 6 hiproll /
-  #              7 fric / 8 heading25 / 9 orient
-  # TWO SCENES (unitree_mujoco simulate/config.yaml robot_scene):
-  #   scene_comx06.xml       creep floor — general behavior/stillness/heading.
-  #   scene_comx06_grip.xml  cement (fric 2.5, elliptic cone) — THE anti-squeeze
-  #     verdict pass: reference (snap) grinds/braces; a fixed policy stands relaxed.
-  # Torque proof (excess hip-roll): run tau_monitor.py alongside — reports
-  #   |tau|max(motor) + hip-roll m2/m8, mirrors the ROS lowstate_health_probe.
-  # fric_hiproll (handoff recipe) still training — add on numpad slot when harvested.
-  Balance_comx06_snap:          # key 2  REFERENCE — hardware-proven; squeezes (the baseline to beat)
+  # === p12h SHOD/SYM eval — the four SYM-line candidates vs the SYM reference ===
+  # SIM: set unitree_mujoco simulate/config.yaml robot_scene = scene_sym.xml
+  #      (creep, matches these SYM policies) or scene_sym_grip.xml (cement, the
+  #      anti-squeeze verdict pass). launch_sim2sim.sh --tau shows hip-roll m2/m8.
+  # wfm/platinum were PPO-diverged → these are the pre-divergence plateau
+  # checkpoints (wfm@21150, platinum@21350). latloop@21996 + foot_silence@22996
+  # completed cleanly.
+  Balance_sym_ref:          # RB+Y  p12f_base (SYM 19k) — the validated shod reference to beat
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_comx06_snap_2026-07-13
+    policy_dir: ../../../logs/milestones/p12f_base_2026-07-12
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_wfm:                  # key 3  widestance + feetnear -40 + micropush 1-3s (THE behavior combo)
+  Balance_wfm:              # RB+A  widestance + feetnear -40 + micropush (stance behavior)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wfm_2026-07-16
+    policy_dir: ../../../logs/milestones/p12h_sym_wfm_2026-07-20
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_fric_latloop:         # key 4  friction DR + tau^2 hip_roll AND ankle_roll (full anti-squeeze)
+  Balance_platinum:         # RB+X  wfm + fric_latloop (THE deploy candidate)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_fric_latloop_2026-07-16
+    policy_dir: ../../../logs/milestones/p12h_sym_platinum_2026-07-20
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_highfric:             # key 5  friction U(1.0,3.0) only (anti-squeeze exposure single)
+  Balance_latloop:          # RB+right  friction DR + tau^2 hip+ankle (anti-squeeze)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_highfric_2026-07-15
+    policy_dir: ../../../logs/milestones/p12h_sym_latloop_2026-07-20
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_hiproll:              # key 6  hip-roll tau^2 only (anti-squeeze price single)
+  Balance_foot_silence:     # RB+down  flatfoot + impact600 + softland (slam fix)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_hiproll_2026-07-15
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_fric:                 # key 7  friction U(1.0,1.6) realistic band (dose A/B vs highfric)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_fric_2026-07-15
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_heading25:            # key 8  heading pair 1.5 -> 2.5 (orientation recovery axis)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_heading25_2026-07-16
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_taucap:               # key 9  leg/torso effort limits x0.6 (recovery lives inside the deploy wire cap)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_taucap_2026-07-15
+    policy_dir: ../../../logs/milestones/p12h_sym_foot_silence_2026-07-20
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
