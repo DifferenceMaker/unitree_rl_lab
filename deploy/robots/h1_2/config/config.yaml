@@ -85,8 +85,10 @@ FSM:
     ]
 
   # === p12i SHOD+RUBBER eval — comx06 base, warmstart p12g_wide_feetnear ===
-  # SIM: unitree_mujoco robot_scene = scene_sym_soft08.xml (the 0.08 cushion =
-  #      hardware-matched shod sole). launch_sim2sim.sh --tau for hip-roll torque.
+  # SIM: unitree_mujoco robot_scene = scene_comx06_soft08.xml (comx06 body +5.6mm
+  #      + 0.08 cushion). MUST be the comx06 body — scene_sym_soft08 (SYM +22.4mm)
+  #      is the WRONG body for these comx06 policies (spurious forward lean).
+  #      launch_sim2sim.sh --tau for hip-roll torque.
   # All p12i = wide_feetnear stance (0.13/0.22/-40) + terrain compliant cushion.
   # cush50 = pre-divergence pick @model_14950; others completed.
   # Read: cushion sweep (35/50/75), does latloop splay legs (cush50 vs latloop),
