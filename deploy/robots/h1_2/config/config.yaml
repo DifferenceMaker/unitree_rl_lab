@@ -4,20 +4,29 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_sym_ref:
+    Balance_parent:
       id: 4
       type: RLBase
-    Balance_wfm:
+    Balance_cush50:
       id: 5
       type: RLBase
-    Balance_platinum:
+    Balance_latloop:
       id: 6
       type: RLBase
-    Balance_latloop:
+    Balance_latloop_comdr:
       id: 7
       type: RLBase
-    Balance_foot_silence:
+    Balance_comdr:
       id: 8
+      type: RLBase
+    Balance_imudr:
+      id: 9
+      type: RLBase
+    Balance_cush35:
+      id: 10
+      type: RLBase
+    Balance_cush75:
+      id: 11
       type: RLBase
 
   Passive:
@@ -42,11 +51,14 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_sym_ref:      RB + Y.on_pressed
-      Balance_wfm:          RB + A.on_pressed
-      Balance_platinum:     RB + X.on_pressed
-      Balance_latloop:      RB + right.on_pressed
-      Balance_foot_silence: RB + down.on_pressed
+      Balance_parent:       RB + Y.on_pressed
+      Balance_cush50:       RB + A.on_pressed
+      Balance_latloop:      RB + X.on_pressed
+      Balance_latloop_comdr: RB + right.on_pressed
+      Balance_comdr:        RB + down.on_pressed
+      Balance_imudr:        RB + left.on_pressed
+      Balance_cush35:       RB + up.on_pressed
+      Balance_cush75:       RB + B.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -72,53 +84,80 @@ FSM:
       ]
     ]
 
-  # === p12h SHOD/SYM eval — the four SYM-line candidates vs the SYM reference ===
-  # SIM: set unitree_mujoco simulate/config.yaml robot_scene = scene_sym.xml
-  #      (creep, matches these SYM policies) or scene_sym_grip.xml (cement, the
-  #      anti-squeeze verdict pass). launch_sim2sim.sh --tau shows hip-roll m2/m8.
-  # wfm/platinum were PPO-diverged → these are the pre-divergence plateau
-  # checkpoints (wfm@21150, platinum@21350). latloop@21996 + foot_silence@22996
-  # completed cleanly.
-  Balance_sym_ref:          # RB+Y  p12f_base (SYM 19k) — the validated shod reference to beat
+  # === p12i SHOD+RUBBER eval — comx06 base, warmstart p12g_wide_feetnear ===
+  # SIM: unitree_mujoco robot_scene = scene_sym_soft08.xml (the 0.08 cushion =
+  #      hardware-matched shod sole). launch_sim2sim.sh --tau for hip-roll torque.
+  # All p12i = wide_feetnear stance (0.13/0.22/-40) + terrain compliant cushion.
+  # cush50 = pre-divergence pick @model_14950; others completed.
+  # Read: cushion sweep (35/50/75), does latloop splay legs (cush50 vs latloop),
+  # is CoM-DR/IMU-OU worth it (comdr/imudr vs cush50).
+  Balance_parent:          # RB+Y  p12g_wide_feetnear (comx06, the parent/reference)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12f_base_2026-07-12
+    policy_dir: ../../../logs/milestones/p12g_wide_feetnear_2026-07-14
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_wfm:              # RB+A  widestance + feetnear -40 + micropush (stance behavior)
+  Balance_cush50:          # RB+A  + 50k cushion (control: wide_feetnear on the shod sole)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12h_sym_wfm_2026-07-20
+    policy_dir: ../../../logs/milestones/p12i_cush50_2026-07-21
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_platinum:         # RB+X  wfm + fric_latloop (THE deploy candidate)
+  Balance_latloop:         # RB+X  cush50 + tau^2 hip+ankle (squeeze fix — watch for splay)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12h_sym_platinum_2026-07-20
+    policy_dir: ../../../logs/milestones/p12i_latloop_2026-07-21
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_latloop:          # RB+right  friction DR + tau^2 hip+ankle (anti-squeeze)
+  Balance_latloop_comdr:   # RB+right  cush50 + tau^2 + CoM DR
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12h_sym_latloop_2026-07-20
+    policy_dir: ../../../logs/milestones/p12i_latloop_comdr_2026-07-21
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_foot_silence:     # RB+down  flatfoot + impact600 + softland (slam fix)
+  Balance_comdr:           # RB+down  cush50 + CoM DR +-2cm
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12h_sym_foot_silence_2026-07-20
+    policy_dir: ../../../logs/milestones/p12i_comdr_2026-07-22
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_imudr:           # RB+left  cush50 + IMU OU noise
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12i_imudr_2026-07-22
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_cush35:          # RB+up  35k cushion (softer sweep point)
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12i_cush35_2026-07-21
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_cush75:          # RB+B  75k cushion (firmer sweep point)
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12i_cush75_2026-07-21
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
