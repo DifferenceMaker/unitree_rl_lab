@@ -72,3 +72,35 @@ def base_ang_vel_ou(
     asset = env.scene[asset_cfg.name]
     err = _imu_ou_err_quat(env, std_deg, tau_ms)
     return _math_utils.quat_apply_inverse(err, asset.data.root_ang_vel_b)
+
+
+def anchor_point_b(
+    env: ManagerBasedRLEnv,
+    fwd_offset: float = 0.5,
+    height_w: float = 1.0,
+    noise_std: float = 0.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DESK LINE v2: the anchor point in the BASE frame (3 floats).
+
+    The anchor is a world-fixed point derived from spawn: spawn_xy + fwd_offset
+    along the spawn heading, at ABSOLUTE world height height_w (the desk point,
+    ~1.0 m). Deploy analog: the visual model publishes a desk point and the
+    controller feeds it to the policy in the base frame — this obs is that
+    contract, trained. noise_std adds gaussian jitter (robustness to a noisy
+    detector). Needs capture_spawn_state buffers; zeros until they exist.
+    """
+    asset = env.scene[asset_cfg.name]
+    if not hasattr(env, "spawn_root_xy") or not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, 3, device=env.device)
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    anchor_w = torch.cat(
+        [env.spawn_root_xy + fwd_offset * fwd,
+         torch.full((env.num_envs, 1), height_w, device=env.device)], dim=-1,
+    )
+    rel_b = _math_utils.quat_apply_inverse(
+        asset.data.root_quat_w, anchor_w - asset.data.root_pos_w
+    )
+    if noise_std > 0.0:
+        rel_b = rel_b + torch.randn_like(rel_b) * noise_std
+    return rel_b

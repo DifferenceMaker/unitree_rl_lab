@@ -761,3 +761,76 @@ def foot_homing_huber(
     d = torch.norm(current_foot_pos - env.spawn_foot_pos, dim=-1)   # (N, feet)
     huber = torch.where(d <= delta, d * d / (2.0 * delta), d - delta / 2.0)
     return torch.sum(huber, dim=-1)
+
+
+def anchor_hold_l2(
+    env: "ManagerBasedRLEnv",
+    fwd_offset: float = 0.5,
+    heading_scale: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DESK LINE v2: strong symmetric attractor to the start pose, anchor-framed.
+
+    Squared xy distance from spawn PLUS squared heading error toward the anchor
+    (fwd_offset ahead of spawn — 'keep the camera on the point'). Quadratic =>
+    near-zero gradient at zero error (free micro-sway) and a steep
+    return-to-start-pose pull when displaced. Weight it to DOMINATE the zone /
+    homing terms: it converts 'anywhere behind the wall is fine' (the fz6
+    backlean, 2026-07-24) into 'exactly HERE is the sweet spot'.
+    """
+    if not hasattr(env, "spawn_root_xy") or not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
+    pos_err2 = torch.sum(delta * delta, dim=-1)
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    to_anchor = env.spawn_root_xy + fwd_offset * fwd - asset.data.root_pos_w[:, :2]
+    desired_yaw = torch.atan2(to_anchor[:, 1], to_anchor[:, 0])
+    q = asset.data.root_quat_w
+    yaw = torch.atan2(
+        2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+        1.0 - 2.0 * (q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3]),
+    )
+    yaw_err = torch.atan2(torch.sin(desired_yaw - yaw), torch.cos(desired_yaw - yaw))
+    return pos_err2 + heading_scale * yaw_err * yaw_err
+
+
+def base_radial_zone_penalty(
+    env: "ManagerBasedRLEnv",
+    threshold: float = 0.10,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DESK LINE: radial stay-put hinge — free inside `threshold` in ANY
+    direction, linear cost outside. The all-around companion to the one-sided
+    base_forward_zone_penalty (which stays as the harder desk wall on top);
+    closes the free-backward-drift gap (sim2sim 2026-07-24). Same dense
+    not-a-termination philosophy.
+    """
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    d = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1)
+    return torch.clamp(d - threshold, min=0.0)
+
+
+def planted_in_zone_bonus(
+    env: "ManagerBasedRLEnv",
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DESK LINE 'boxing' bonus: +1 per control tick while BOTH feet are in
+    contact AND the base is inside the radial zone. Pays for absorbing pushes
+    planted; stops paying the tick a foot lifts or ground is conceded. NOT a
+    stepping penalty — the fall-avoidance step stays available, it just earns
+    nothing while airborne/displaced (no slide loophole: sliding out of the
+    zone also stops the pay).
+    """
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids]
+    both_planted = (forces.norm(dim=-1) > 1.0).all(dim=-1)
+    asset = env.scene[asset_cfg.name]
+    d = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1)
+    return (both_planted & (d < threshold)).float()

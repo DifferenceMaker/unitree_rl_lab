@@ -34,6 +34,7 @@ import os
 
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
@@ -100,7 +101,8 @@ def _apply_overrides(cfg_self, overrides: dict):
     for line in overrides.get("edit_raw", []):
         print(f"[QUEUE]   edit_raw    {line}")
         exec(line, {"mdp": mdp, "RewTerm": RewTerm, "EventTerm": EventTerm,
-                    "SceneEntityCfg": SceneEntityCfg}, {"self": cfg_self})
+                    "ObsTerm": ObsTerm, "SceneEntityCfg": SceneEntityCfg},
+             {"self": cfg_self})
 
     print(f"[QUEUE] overrides applied for job '{job}'")
 
