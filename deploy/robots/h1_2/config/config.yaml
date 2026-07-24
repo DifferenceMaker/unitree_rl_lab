@@ -4,23 +4,14 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_parent:
+    Balance_symdr:
       id: 4
       type: RLBase
-    Balance_full:
+    Balance_desk:
       id: 5
       type: RLBase
-    Balance_drnoloop:
+    Balance_desk_fz6:
       id: 6
-      type: RLBase
-    Balance_fullcush35:
-      id: 7
-      type: RLBase
-    Balance_symdr:
-      id: 8
-      type: RLBase
-    Balance_fullcush75:
-      id: 9
       type: RLBase
 
   Passive:
@@ -45,12 +36,9 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_parent:      RB + Y.on_pressed
-      Balance_full:        RB + A.on_pressed
-      Balance_drnoloop:    RB + X.on_pressed
-      Balance_fullcush35:  RB + right.on_pressed
-      Balance_symdr:       RB + down.on_pressed
-      Balance_fullcush75:  RB + left.on_pressed
+      Balance_symdr:       RB + Y.on_pressed
+      Balance_desk:        RB + A.on_pressed
+      Balance_desk_fz6:    RB + X.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -76,55 +64,17 @@ FSM:
       ]
     ]
 
-  # === p12i CROSS-BODY eval — 4 harvested H200 runs + parent (2026-07-22) ===
-  # CROSS-BODY TEST: run each policy on BOTH mujoco bodies:
-  #   1) robot_scene = scene_comx06_soft08.xml  (comx06 +5.6mm, previous belief)
-  #   2) robot_scene = scene_sym_soft08.xml      (SYM +22.4mm, NEW hypothesis;
-  #      h1_2_sym.xml torso 0.03 == symdr's training body — verified matched)
-  # parent/full/drnoloop/fullcush35 are comx06-trained (matched on scene 1,
-  # cross-body on scene 2); symdr is SYM-trained (matched on scene 2, cross on 1).
-  # full     = cush50 + latloop tau^2 + CoM DR + IMU OU (all mechanics), comx06.
-  # drnoloop = cush50 + CoM DR + IMU OU (no latloop), comx06.
-  # fullcush35 = full but 35k cushion, comx06.
-  # symdr    = SYM body + comdr +-2cm + cush50 + micropush, warmstart wfm.
-  # launch_sim2sim.sh --tau for hip-roll torque.
-  Balance_parent:          # RB+Y  p12g_wide_feetnear (comx06 reference)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wide_feetnear_2026-07-14
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_full:            # RB+A  p12i_full (comx06, all mechanics)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_full_2026-07-22
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_drnoloop:        # RB+X  p12i_dr_noloop (comx06, DR without latloop)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_dr_noloop_2026-07-22
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_fullcush35:      # RB+right  p12i_full_cush35 (comx06, full @ 35k cushion)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_full_cush35_2026-07-22
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_symdr:           # RB+down  p12i_symdr (SYM +22.4mm, the new-hypothesis run)
+  # === p12j DESK-LINE hardware eval (2026-07-24) — first desk policies ===
+  # All SYM body (+22.4mm, hardware-validated CoM 2026-07-23). symdr = the
+  # general-line SYM reference (balance comparison point); desk/fz6 = the
+  # desk line (gentle curriculum <=0.30 m/s / <=15N, orient 6-DoF arms,
+  # forward-zone penalty, homing -1.5, cush75, scratch 10k @ 8192).
+  # HARDWARE READS: (1) planted desk stillness vs symdr; (2) forward-zone on
+  # the real floor — does it hold position when bumped from BEHIND (sim2sim
+  # showed free backward drift — the known gap, radial-zone run pending);
+  # (3) desk (-3) vs fz6 (-6): does the stronger wall read on hardware;
+  # (4) arm orient tracking under teleop.
+  Balance_symdr:           # RB+Y  p12i_symdr (general SYM reference)
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p12i_symdr_2026-07-22
@@ -133,10 +83,19 @@ FSM:
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_fullcush75:      # RB+left  p12i_full_cush75 (comx06, full @ 75k FIRM cushion)
+  Balance_desk:            # RB+A  p12j_desk (desk baseline, forward-zone -3)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_full_cush75_2026-07-22
+    policy_dir: ../../../logs/milestones/p12j_desk_2026-07-23
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_desk_fz6:        # RB+X  p12j_desk_fz6 (forward-zone -6)
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12j_desk_fz6_2026-07-23
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
