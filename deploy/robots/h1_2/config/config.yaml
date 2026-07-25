@@ -16,12 +16,6 @@ FSM:
     Balance_sym_fwdleft:
       id: 7
       type: RLBase
-    Balance_desk_tilt:
-      id: 8
-      type: RLBase
-    Balance_desk_boxing:
-      id: 9
-      type: RLBase
 
   Passive:
     transitions:
@@ -49,8 +43,6 @@ FSM:
       Balance_sym_sharp:   RB + A.on_pressed
       Balance_sym_latloop: RB + X.on_pressed
       Balance_sym_fwdleft: RB + right.on_pressed
-      Balance_desk_tilt:   RB + down.on_pressed
-      Balance_desk_boxing: RB + left.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -76,7 +68,7 @@ FSM:
       ]
     ]
 
-  # === p12j/p12k EVAL — generals (no-DR SYM batch) + desk line (2026-07-25) ===
+  # === p12j SYM HW eval — generals only (2026-07-25); desk line NOT hw-ready ===
   # ALL SYM-trained. SIM: robot_scene = scene_sym_soft08.xml (SYM body + 0.08
   # cushion — solref re-ID pending, sweep scenes soft04/05/06/07 ready).
   # launch_sim2sim.sh --tau; monitor: leanFwd/leanLat + ankP/ankR + hipR.
@@ -122,20 +114,4 @@ FSM:
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_desk_tilt:       # RB+down  p12j_desk_tilt (hip-hinge reach experiment)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12j_desk_tilt_2026-07-24
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
 
-  Balance_desk_boxing:     # RB+left  p12k_desk_boxing (planted-in-zone bonus)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12k_desk_boxing_2026-07-24
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
