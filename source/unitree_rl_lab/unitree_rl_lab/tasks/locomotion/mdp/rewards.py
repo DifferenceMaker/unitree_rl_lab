@@ -834,3 +834,22 @@ def planted_in_zone_bonus(
     asset = env.scene[asset_cfg.name]
     d = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1)
     return (both_planted & (d < threshold)).float()
+
+
+def joint_torque_over_limit(
+    env: "ManagerBasedRLEnv",
+    limit_nm: float = 80.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Hinged over-torque penalty: zero below `limit_nm`, linear on the excess.
+
+    The burnout guard (hardware 2026-07-25): sym_sharp locked into an isometric
+    hip-roll squeeze at 102/136 Nm for ~4.5 min, heating 52->75C (~5C/min) until
+    the Unitree safety damped the leg. The FUNCTIONAL lateral band (~35-70 Nm,
+    thermally flat) must stay free — blanket tau^2 (latloop) punished it and the
+    policy could not stand. This hinge prices ONLY the pathological band: apply
+    to hip_roll (and optionally ankle_roll) via asset_cfg joint_names.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    tau = asset.data.applied_torque[:, asset_cfg.joint_ids]
+    return torch.clamp(tau.abs() - limit_nm, min=0.0).sum(dim=-1)
