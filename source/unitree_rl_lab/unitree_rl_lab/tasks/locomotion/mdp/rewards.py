@@ -853,3 +853,38 @@ def joint_torque_over_limit(
     asset: Articulation = env.scene[asset_cfg.name]
     tau = asset.data.applied_torque[:, asset_cfg.joint_ids]
     return torch.clamp(tau.abs() - limit_nm, min=0.0).sum(dim=-1)
+
+
+def anchor_hold_bonus(
+    env: "ManagerBasedRLEnv",
+    fwd_offset: float = 0.5,
+    heading_scale: float = 0.5,
+    sigma: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """ANCHOR ROUND 2: bounded attractor kernel, exp(-(pos_err^2 + hs*yaw_err^2)/sigma^2).
+
+    anchor_1's unbounded quadratic (-30 * d^2) diverged PPO via VALUE-function
+    explosion: outlier envs (pushed/walked far) accumulated astronomically
+    negative returns that poisoned the critic while the MEDIAN policy still
+    looked fine on film (2026-07-25 checkpoint autopsy). This kernel is bounded
+    [0,1]: max per-step loss for an outlier = just missing the bonus. Same
+    attractor shape — ~free inside sigma (micro-sway), pull beyond, saturates
+    far away. Use as a POSITIVE reward (weight ~ +8).
+    """
+    if not hasattr(env, "spawn_root_xy") or not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
+    pos_err2 = torch.sum(delta * delta, dim=-1)
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    to_anchor = env.spawn_root_xy + fwd_offset * fwd - asset.data.root_pos_w[:, :2]
+    desired_yaw = torch.atan2(to_anchor[:, 1], to_anchor[:, 0])
+    q = asset.data.root_quat_w
+    yaw = torch.atan2(
+        2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+        1.0 - 2.0 * (q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3]),
+    )
+    yaw_err = torch.atan2(torch.sin(desired_yaw - yaw), torch.cos(desired_yaw - yaw))
+    err2 = pos_err2 + heading_scale * yaw_err * yaw_err
+    return torch.exp(-err2 / (sigma * sigma))
