@@ -4,29 +4,23 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_parent:
+    Balance_symdr:
       id: 4
       type: RLBase
-    Balance_cush50:
+    Balance_sym_sharp:
       id: 5
       type: RLBase
-    Balance_latloop:
+    Balance_sym_latloop:
       id: 6
       type: RLBase
-    Balance_latloop_comdr:
+    Balance_sym_fwdleft:
       id: 7
       type: RLBase
-    Balance_comdr:
+    Balance_desk_tilt:
       id: 8
       type: RLBase
-    Balance_imudr:
+    Balance_desk_boxing:
       id: 9
-      type: RLBase
-    Balance_cush35:
-      id: 10
-      type: RLBase
-    Balance_cush75:
-      id: 11
       type: RLBase
 
   Passive:
@@ -51,14 +45,12 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_parent:       RB + Y.on_pressed
-      Balance_cush50:       RB + A.on_pressed
-      Balance_latloop:      RB + X.on_pressed
-      Balance_latloop_comdr: RB + right.on_pressed
-      Balance_comdr:        RB + down.on_pressed
-      Balance_imudr:        RB + left.on_pressed
-      Balance_cush35:       RB + up.on_pressed
-      Balance_cush75:       RB + B.on_pressed
+      Balance_symdr:       RB + Y.on_pressed
+      Balance_sym_sharp:   RB + A.on_pressed
+      Balance_sym_latloop: RB + X.on_pressed
+      Balance_sym_fwdleft: RB + right.on_pressed
+      Balance_desk_tilt:   RB + down.on_pressed
+      Balance_desk_boxing: RB + left.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -84,82 +76,65 @@ FSM:
       ]
     ]
 
-  # === p12i SHOD+RUBBER eval — comx06 base, warmstart p12g_wide_feetnear ===
-  # SIM: unitree_mujoco robot_scene = scene_comx06_soft08.xml (comx06 body +5.6mm
-  #      + 0.08 cushion). MUST be the comx06 body — scene_sym_soft08 (SYM +22.4mm)
-  #      is the WRONG body for these comx06 policies (spurious forward lean).
-  #      launch_sim2sim.sh --tau for hip-roll torque.
-  # All p12i = wide_feetnear stance (0.13/0.22/-40) + terrain compliant cushion.
-  # cush50 = pre-divergence pick @model_14950; others completed.
-  # Read: cushion sweep (35/50/75), does latloop splay legs (cush50 vs latloop),
-  # is CoM-DR/IMU-OU worth it (comdr/imudr vs cush50).
-  Balance_parent:          # RB+Y  p12g_wide_feetnear (comx06, the parent/reference)
+  # === p12j/p12k EVAL — generals (no-DR SYM batch) + desk line (2026-07-25) ===
+  # ALL SYM-trained. SIM: robot_scene = scene_sym_soft08.xml (SYM body + 0.08
+  # cushion — solref re-ID pending, sweep scenes soft04/05/06/07 ready).
+  # launch_sim2sim.sh --tau; monitor: leanFwd/leanLat + ankP/ankR + hipR.
+  # Reads: (1) sym_sharp vs symdr — does NO-CoM-DR sharpen reaction (the late
+  # backward save)? (2) sym_latloop — squeeze trim (hardware baseline hipR
+  # 47/62). (3) sym_fwdleft — fixed +10mm fwd/+5mm left: overshoot expected
+  # (backward/right lean) = CoM bracket confirmation. (4) desk_tilt — did the
+  # hip-hinge emerge (butt back, knees drop, feet planted)? (5) desk_boxing —
+  # planted absorption vs stepping.
+  Balance_symdr:           # RB+Y  p12i_symdr (SYM+comdr reference, hardware-validated)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wide_feetnear_2026-07-14
+    policy_dir: ../../../logs/milestones/p12i_symdr_2026-07-22
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_cush50:          # RB+A  + 50k cushion (control: wide_feetnear on the shod sole)
+  Balance_sym_sharp:       # RB+A  p12j_sym_sharp (no-DR, cush75, scratch)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_cush50_2026-07-21
+    policy_dir: ../../../logs/milestones/p12j_sym_sharp_2026-07-23
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_latloop:         # RB+X  cush50 + tau^2 hip+ankle (squeeze fix — watch for splay)
+  Balance_sym_latloop:     # RB+X  p12j_sym_sharp_latloop (+tau^2 anti-squeeze)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_latloop_2026-07-21
+    policy_dir: ../../../logs/milestones/p12j_sym_sharp_latloop_2026-07-23
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_latloop_comdr:   # RB+right  cush50 + tau^2 + CoM DR
+  Balance_sym_fwdleft:     # RB+right  p12j_sym_fwdleft (fixed CoM +10fwd/+5left — bracket test)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_latloop_comdr_2026-07-21
+    policy_dir: ../../../logs/milestones/p12j_sym_fwdleft_2026-07-23
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_comdr:           # RB+down  cush50 + CoM DR +-2cm
+  Balance_desk_tilt:       # RB+down  p12j_desk_tilt (hip-hinge reach experiment)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_comdr_2026-07-22
+    policy_dir: ../../../logs/milestones/p12j_desk_tilt_2026-07-24
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_imudr:           # RB+left  cush50 + IMU OU noise
+  Balance_desk_boxing:     # RB+left  p12k_desk_boxing (planted-in-zone bonus)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_imudr_2026-07-22
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_cush35:          # RB+up  35k cushion (softer sweep point)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_cush35_2026-07-21
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_cush75:          # RB+B  75k cushion (firmer sweep point)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_cush75_2026-07-21
+    policy_dir: ../../../logs/milestones/p12k_desk_boxing_2026-07-24
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
