@@ -384,10 +384,14 @@ class IKArmPoseCommand(CommandTerm):
             )
             pos_w.append(torso_pose_w[:, 0:3] + torch.bmm(rot, tgt_b.unsqueeze(-1)).squeeze(-1))
         translations = torch.cat(pos_w, dim=0)
+        # derive the env count from a tensor in hand — self._env.num_envs touches
+        # env.scene, which is already destroyed when the render callback fires one
+        # last time during env.close() (teardown AttributeError, 2026-07-26)
+        n = self.default_mode.shape[0]
         indices = torch.cat(
             (
-                torch.zeros(self._env.num_envs, dtype=torch.long, device=self.device),
-                torch.ones(self._env.num_envs, dtype=torch.long, device=self.device),
+                torch.zeros(n, dtype=torch.long, device=self.device),
+                torch.ones(n, dtype=torch.long, device=self.device),
             )
         )
         self.target_visualizer.visualize(translations=translations, marker_indices=indices)
