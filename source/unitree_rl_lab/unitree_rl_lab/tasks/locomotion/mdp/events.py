@@ -167,3 +167,34 @@ def capture_spawn_state(
     if asset_cfg.body_ids is not None and len(asset_cfg.body_ids) == 2:
         foot_pos = asset.data.body_pos_w[env_ids][:, asset_cfg.body_ids, :2]
         env.spawn_foot_pos[env_ids] = foot_pos
+
+def resample_reach_point(
+    env: "ManagerBasedRLEnv",
+    env_ids: "torch.Tensor",
+    fwd_range: tuple = (0.30, 0.80),
+    lat_range: tuple = (-0.30, 0.30),
+    height_range: tuple = (0.90, 1.15),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """DP2B TILT2: sample a WORLD-frame reach point per episode (reset mode),
+    in the spawn-yaw frame ahead of the spawn: forward 0.3-0.8 m (beyond the
+    ~0.41 m upright arm reach by design — the hinge stimulus), lateral +-0.3,
+    world height 0.9-1.15 (the 1 m desk band). Stored as env.reach_point_w for
+    reach_point_b (obs) and hand_reach_bonus (reward). Requires
+    capture_spawn_state (runs earlier in the same reset event list).
+    """
+    import torch
+    if not hasattr(env, "reach_point_w"):
+        env.reach_point_w = torch.zeros(env.num_envs, 3, device=env.device)
+    if not hasattr(env, "spawn_root_xy"):
+        return
+    n = len(env_ids)
+    dev = env.device
+    fwd_d = fwd_range[0] + torch.rand(n, device=dev) * (fwd_range[1] - fwd_range[0])
+    lat_d = lat_range[0] + torch.rand(n, device=dev) * (lat_range[1] - lat_range[0])
+    h = height_range[0] + torch.rand(n, device=dev) * (height_range[1] - height_range[0])
+    yaw = env.spawn_yaw[env_ids]
+    c, s = torch.cos(yaw), torch.sin(yaw)
+    env.reach_point_w[env_ids, 0] = env.spawn_root_xy[env_ids, 0] + fwd_d * c - lat_d * s
+    env.reach_point_w[env_ids, 1] = env.spawn_root_xy[env_ids, 1] + fwd_d * s + lat_d * c
+    env.reach_point_w[env_ids, 2] = h

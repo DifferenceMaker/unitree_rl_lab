@@ -888,3 +888,60 @@ def anchor_hold_bonus(
     yaw_err = torch.atan2(torch.sin(desired_yaw - yaw), torch.cos(desired_yaw - yaw))
     err2 = pos_err2 + heading_scale * yaw_err * yaw_err
     return torch.exp(-err2 / (sigma * sigma))
+
+
+def shoulder_pose_target(
+    env: "ManagerBasedRLEnv",
+    target_height: float = 1.25,
+    target_fwd: float = 0.15,
+    heading_from_spawn: bool = True,
+    shoulder_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_shoulder_pitch_link"]),
+    ankle_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """DP2B LEAN (the boss's static pre-tilt): hold the SHOULDER midpoint at a
+    forward-and-low target — one body point constrained, everything else free.
+
+    err = (shoulder_mid_z - target_height)^2
+        + (forward_offset(shoulder_mid vs ankle_mid, spawn-yaw frame) - target_fwd)^2
+
+    Both measurements are body-configuration-invariant (world height + offset
+    from the SUPPORT, in the spawn heading) — NOT torso-frame, which would lean
+    with the robot (the tilt-1 frame bug). With shoulders held forward+low and
+    CoM-over-feet enforced by not-falling, the pelvis migrates backward and the
+    knees soften on their own: physics supplies the counterweight, no pose
+    prescription. Pair with flat_orientation_l2 tuned DOWN (~-0.5), not zeroed.
+    """
+    if not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[shoulder_cfg.name]
+    sh_mid = asset.data.body_pos_w[:, shoulder_cfg.body_ids].mean(dim=1)   # (N,3)
+    ank_mid = asset.data.body_pos_w[:, ankle_cfg.body_ids].mean(dim=1)
+    h_err = sh_mid[:, 2] - target_height
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    fwd_off = torch.sum((sh_mid[:, :2] - ank_mid[:, :2]) * fwd, dim=-1)
+    f_err = fwd_off - target_fwd
+    return h_err * h_err + f_err * f_err
+
+
+def hand_reach_bonus(
+    env: "ManagerBasedRLEnv",
+    sigma: float = 0.2,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_wrist_yaw_link"]),
+) -> torch.Tensor:
+    """DP2B TILT2: bounded bonus for the CLOSEST hand approaching the WORLD-frame
+    reach point (env.reach_point_w, resampled per episode by
+    resample_reach_point). exp(-(min_hand_dist/sigma)^2), in [0,1].
+
+    THE lean gradient: the policy cannot move the arms (externally driven), but
+    it can move the shoulders they hang from — when the point is beyond upright
+    reach, leaning is the only way to collect. World-frame by construction:
+    leaning toward the point genuinely closes the distance (the tilt-1
+    torso-frame bug is structurally impossible here).
+    """
+    if not hasattr(env, "reach_point_w"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    hands = asset.data.body_pos_w[:, asset_cfg.body_ids]                   # (N,2,3)
+    d = torch.norm(hands - env.reach_point_w.unsqueeze(1), dim=-1)         # (N,2)
+    dmin = d.min(dim=-1).values
+    return torch.exp(-(dmin / sigma) ** 2)

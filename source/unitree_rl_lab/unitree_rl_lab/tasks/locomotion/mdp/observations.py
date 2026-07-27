@@ -104,3 +104,25 @@ def anchor_point_b(
     if noise_std > 0.0:
         rel_b = rel_b + torch.randn_like(rel_b) * noise_std
     return rel_b
+
+
+def reach_point_b(
+    env: ManagerBasedRLEnv,
+    noise_std: float = 0.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """DP2B TILT2: the world-frame reach point (env.reach_point_w, resampled per
+    episode by resample_reach_point) expressed in the BASE frame — the policy's
+    perception of the target it should serve with a hand. Deploy analog: the
+    vision stack publishes the point; the controller feeds it in base frame.
+    Zeros until the buffer exists.
+    """
+    asset = env.scene[asset_cfg.name]
+    if not hasattr(env, "reach_point_w"):
+        return torch.zeros(env.num_envs, 3, device=env.device)
+    rel_b = _math_utils.quat_apply_inverse(
+        asset.data.root_quat_w, env.reach_point_w - asset.data.root_pos_w
+    )
+    if noise_std > 0.0:
+        rel_b = rel_b + torch.randn_like(rel_b) * noise_std
+    return rel_b
