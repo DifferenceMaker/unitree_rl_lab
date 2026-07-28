@@ -404,21 +404,73 @@ class RobotPlayEnvCfg(RobotEnvCfg):
 # =====================================================================
 from .balance_env_cfg_queue import _apply_overrides, _load_overrides  # noqa: E402
 
-SYM_URDF = "h1_2.urdf"      # hardware-validated shod CoM (torso inertial x=+0.0155)
-COMX06_URDF = "h1_2_comx06.urdf"  # barefoot-era default on aspired/training
+SYM_URDF = "h1_2.urdf"
+COMX06_URDF = "h1_2_comx06.urdf"
+
+# The hardware-validated shod CoM, measured 2026-07-23 by ankle torque + lean.
+# NOTE (2026-07-28): the file NAME is not enough to identify the body. There are
+# two different h1_2.urdf files in play:
+#   <assets>/robot/h1_2/h1_2.urdf                        torso x=0.0155 y=0.002797  (STOCK Unitree)
+#   <assets>/robot/h1_2/sweep/SYM/robot/h1_2/h1_2.urdf   torso x=0.03   y=0.0       (SYM)
+# Only the second is SYM. So we verify the CONTENTS, not the filename, and say
+# so in the log — a silent CoM mismatch has no other symptom in training.
+SYM_TORSO_X = 0.03
+SYM_TORSO_Y = 0.0
+
+
+def _torso_com(urdf_path):
+    """(x, y) of torso_link's inertial origin, or None if unreadable."""
+    import re
+    try:
+        src = open(urdf_path).read()
+    except OSError:
+        return None
+    link = re.search(r'<link\s+name="torso_link".*?</link>', src, re.S)
+    if not link:
+        return None
+    o = re.search(r'<inertial>.*?<origin[^>]*xyz="([^"]+)"', link.group(0), re.S)
+    if not o:
+        return None
+    parts = o.group(1).split()
+    return float(parts[0]), float(parts[1])
 
 
 def _pin_sym_asset(cfg) -> None:
-    """Force the SYM body regardless of what UNITREE_H1_2_CFG defaults to.
+    """Resolve the SYM body and VERIFY it, loudly.
 
-    Filename-swap (not an absolute path) so it works both locally
-    (assets/robot/h1_2/) and on the H200 (assets/robot/h1_2/sweep/SYM/robot/h1_2/),
-    exactly like the desk jobs' edit_raw does.
+    1. swap comx06 -> h1_2.urdf (the barefoot-era default on aspired/training)
+    2. if a sweep/SYM tree sits alongside, prefer it — that is the real SYM body
+       and the one p12k_desk_anchor2 trained on
+    3. read torso_link's inertial origin and print it; warn if it is not SYM
     """
+    import os
+
     path = cfg.scene.robot.spawn.asset_path
     if COMX06_URDF in path:
-        cfg.scene.robot.spawn.asset_path = path.replace(COMX06_URDF, SYM_URDF)
-    print(f"[walk] robot asset: {cfg.scene.robot.spawn.asset_path}")
+        path = path.replace(COMX06_URDF, SYM_URDF)
+
+    # Prefer an adjacent sweep/SYM body if one exists (H200 layout).
+    h1_2_dir = os.path.dirname(path)
+    sweep = os.path.join(h1_2_dir, "sweep", "SYM", "robot", "h1_2", SYM_URDF)
+    if os.path.exists(sweep):
+        path = sweep
+
+    cfg.scene.robot.spawn.asset_path = path
+    com = _torso_com(path)
+    if com is None:
+        print(f"[walk] !! robot asset: {path} (could NOT read torso CoM to verify)")
+        return
+    x, y = com
+    ok = abs(x - SYM_TORSO_X) < 1e-4 and abs(y - SYM_TORSO_Y) < 1e-4
+    tag = "SYM (hardware-validated shod CoM)" if ok else "!! NOT SYM !!"
+    print(f"[walk] robot asset: {path}")
+    print(f"[walk] torso CoM x={x:+.4f} y={y:+.4f} -> {tag}")
+    if not ok:
+        print(
+            f"[walk] !! WARNING: expected SYM torso x={SYM_TORSO_X} y={SYM_TORSO_Y}. "
+            f"Point ROBOT_ASSETS_DIR at the sweep/SYM tree "
+            f"(<assets>/robot/h1_2/sweep/SYM) to train on the desk-line body."
+        )
 
 
 @configclass
