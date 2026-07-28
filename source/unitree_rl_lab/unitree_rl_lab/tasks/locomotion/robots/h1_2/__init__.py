@@ -87,3 +87,31 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# --- Locomotion (lm line, 2026-07-28) --------------------------------
+# 27-action walk (13 leg+torso + 14 arm). SEPARATE deploy path from the
+# 13-action balance/desk line by design — arms swing for human-like gait.
+# experiment_name derives to unitree_h1_2_walk (own log dir, no mixing
+# with the balance warmstart lineage).
+gym.register(
+    id="Unitree-H1_2-Walk",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.walk_env_cfg:RobotEnvCfg",
+        "play_env_cfg_entry_point": f"{__name__}.walk_env_cfg:RobotPlayEnvCfg",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:WalkPPORunnerCfg",
+    },
+)
+
+# Queue-trainable variant: reads QUEUE_JOB_JSON + pins the SYM asset.
+gym.register(
+    id="Unitree-H1_2-Walk-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.walk_env_cfg:RobotEnvCfgWalkQueue",
+        "play_env_cfg_entry_point": f"{__name__}.walk_env_cfg:RobotPlayEnvCfgWalkQueue",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:WalkPPORunnerCfg",
+    },
+)

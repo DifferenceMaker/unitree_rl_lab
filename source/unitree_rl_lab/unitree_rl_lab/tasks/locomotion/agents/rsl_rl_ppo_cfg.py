@@ -56,3 +56,20 @@ class QueuePPORunnerCfg(BasePPORunnerCfg):
     """Queue tasks share the base experiment_name so warmstart from
     milestones/<slug> resolves under logs/rsl_rl/unitree_h1_2_balance/."""
     experiment_name = "unitree_h1_2_balance"
+
+@configclass
+class WalkPPORunnerCfg(BasePPORunnerCfg):
+    """Locomotion (lm line) runner.
+
+    Pins experiment_name so BOTH Unitree-H1_2-Walk and Unitree-H1_2-Walk-Q log
+    into logs/rsl_rl/unitree_h1_2_walk/. Without this, cli_args derives the name
+    from the task id (task.lower().replace("-","_")), so the -Q variant would
+    land in unitree_h1_2_walk_q/ and later lm runs could not warmstart from
+    earlier ones by run name. Same reason V5PPORunnerCfg/QueuePPORunnerCfg pin
+    "unitree_h1_2_balance".
+
+    Deliberately NOT sharing the balance experiment_name: 27-action walk is a
+    separate policy line and deploy path from the 13-action balance/desk head.
+    """
+
+    experiment_name = "unitree_h1_2_walk"
