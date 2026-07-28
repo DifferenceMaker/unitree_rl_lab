@@ -73,3 +73,15 @@ class WalkPPORunnerCfg(BasePPORunnerCfg):
     """
 
     experiment_name = "unitree_h1_2_walk"
+
+
+@configclass
+class LieDownPPORunnerCfg(BasePPORunnerCfg):
+    """Safety lie-down (sd line) runner.
+
+    Own experiment_name / log dir: 27-action but a different action TRANSFORM
+    (relative-to-measured-q, not default-offset) and reward economy — never
+    warmstart from or into the balance/walk lineages.
+    """
+
+    experiment_name = "unitree_h1_2_liedown"

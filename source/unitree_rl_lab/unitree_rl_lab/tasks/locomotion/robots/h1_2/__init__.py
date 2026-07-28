@@ -115,3 +115,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:WalkPPORunnerCfg",
     },
 )
+
+# --- Safety lie-down (sd line, 2026-07-28) ---------------------------
+# 27-action RELATIVE joint-position policy (HoST-style β bound): on trigger
+# (overheat/low battery) the robot lowers itself slowly to supine. Separate
+# deploy transform from every other line — target = measured q + Δ.
+gym.register(
+    id="Unitree-H1_2-LieDown",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.liedown_env_cfg:RobotEnvCfg",
+        "play_env_cfg_entry_point": f"{__name__}.liedown_env_cfg:RobotPlayEnvCfg",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LieDownPPORunnerCfg",
+    },
+)
