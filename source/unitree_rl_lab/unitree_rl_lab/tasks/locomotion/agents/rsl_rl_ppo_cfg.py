@@ -85,3 +85,18 @@ class LieDownPPORunnerCfg(BasePPORunnerCfg):
     """
 
     experiment_name = "unitree_h1_2_liedown"
+
+
+@configclass
+class GraspPPORunnerCfg(BasePPORunnerCfg):
+    """Inspire FTP tactile grasp (gr line). Own experiment_name so Grasp and
+    Grasp-Q share one log dir (the WalkPPORunnerCfg pattern) and never mix with
+    the balance lineage. Smaller net: 29-dim actor obs does not need 512."""
+
+    experiment_name = "unitree_h1_2_grasp"
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=1.0,
+        actor_hidden_dims=[256, 128, 64],
+        critic_hidden_dims=[256, 128, 64],
+        activation="elu",
+    )
