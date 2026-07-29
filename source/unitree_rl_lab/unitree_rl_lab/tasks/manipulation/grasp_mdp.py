@@ -317,12 +317,22 @@ def pad_arrangement_bonus(env: "ManagerBasedRLEnv", force_thr: float = 0.5) -> t
     return 0.3 * any_c + 0.7 * closure
 
 
-def crush_penalty(env: "ManagerBasedRLEnv", total_thr: float = 30.0) -> torch.Tensor:
+def crush_penalty(
+    env: "ManagerBasedRLEnv", total_thr: float = 30.0, max_excess: float = 100.0
+) -> torch.Tensor:
     """Hinged penalty on total pad force above threshold — the anti-burnout
     pattern (hinged cap, not blanket tau^2): squeezing hard enough to hold is
-    free, crushing is not."""
+    free, crushing is not.
+
+    gr2b: now BOUNDED (max_excess). The unbounded form was the direct cause of
+    gr2a's blowup: pad force is in newtons with no ceiling, so a finger slam
+    produced an arbitrarily large penalty, the value target followed it, and the
+    run went -2.7e13 -> -3.5e25 within ~50 iterations. Same failure family as
+    anchor1's unbounded -30*d^2 attractor; same fix (bound it). Clipping costs
+    nothing behaviourally — anything past +100 N of excess is already a hard
+    crush, and the gradient below the cap is unchanged."""
     total = _pad_force_mags(env).sum(dim=-1)
-    return (total - total_thr).clamp(min=0.0)
+    return (total - total_thr).clamp(min=0.0, max=max_excess)
 
 
 # ---------------------------------------------------------------------------
