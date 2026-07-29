@@ -210,7 +210,10 @@ class EventCfg:
         params={
             "palm_xy": (0.0, 0.12),
             "xy_jitter": 0.03,
-            "gap_range": (0.02, 0.08),
+            # gr2: operator measured the hand can close on the cube out to 7cm max
+            # (at 7cm it is fingertip-only, not a palm grasp). 8cm was OUT OF REACH,
+            # so part of the old distribution was unsolvable by construction.
+            "gap_range": (0.0, 0.07),
             "cube_height": CUBE_SIZE[2],
             "retract_time_range": (2.0, 4.0),
         },
@@ -227,7 +230,12 @@ class EventCfg:
 @configclass
 class RewardsCfg:
     # THE dish: cube stays at the palm once the support is gone (bounded kernel)
-    hold_cube = RewTerm(func=grasp_mdp.hold_cube_bonus, weight=8.0, params={"sigma": 0.06})
+    # gr2: 8.0 -> 40.0 (operator: a grasping policy should value grasping REALLY
+    # highly). NOTE the companion change in hold_cube_bonus: the pre-retract gate
+    # dropped 0.25 -> 0.05 and is now CONTACT-GATED. Raising the weight alone would
+    # have made the do-nothing exploit stronger, not weaker — the platform holds the
+    # cube near the palm for free, so proximity alone must not pay much.
+    hold_cube = RewTerm(func=grasp_mdp.hold_cube_bonus, weight=40.0, params={"sigma": 0.06})
     # dense shaping toward force closure (thumb + opposing finger pads loaded)
     pad_arrangement = RewTerm(
         func=grasp_mdp.pad_arrangement_bonus, weight=1.0, params={"force_thr": 0.5}
@@ -235,7 +243,10 @@ class RewardsCfg:
     # hinged anti-crush (the 80Nm-cap pattern: holding is free, crushing is not)
     crush = RewTerm(func=grasp_mdp.crush_penalty, weight=-0.05, params={"total_thr": 30.0})
     # smoothness
-    action_rate = RewTerm(func=base_mdp.action_rate_l2, weight=-0.05)
+    # gr2: -0.05 -> -0.01. Closing the fingers cost action_rate NOW for a payoff
+    # that only arrives at retract seconds later; the policy never crossed that
+    # valley and froze instead (measured pad_force_sum = 0.000 N).
+    action_rate = RewTerm(func=base_mdp.action_rate_l2, weight=-0.01)
 
 
 @configclass

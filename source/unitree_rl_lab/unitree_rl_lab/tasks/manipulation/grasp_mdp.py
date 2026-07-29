@@ -295,7 +295,14 @@ def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tens
     cube: RigidObject = env.scene["cube"]
     p_pos, _ = _palm_pose(env)
     d = (cube.data.root_pos_w - p_pos).norm(dim=-1)
-    gate = 0.25 + 0.75 * env.grasp_retracted.float()   # 25% pre-retract shaping, 100% after
+    # gr2: the old gate was 0.25 + 0.75*retracted, i.e. a flat 25% payment for the
+    # cube merely being NEAR the palm before retract — which the platform provides
+    # for free. Measured: doing nothing earned +0.10/episode from this term while
+    # never touching the cube (pad_force_sum = 0.000 N). Now the pre-retract share
+    # is small AND requires actual pad contact, so proximity alone pays ~nothing
+    # and the prize lives where it belongs: after the support is gone.
+    touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    gate = 0.05 * touching + 0.95 * env.grasp_retracted.float()
     return torch.exp(-((d / sigma) ** 2)) * gate
 
 

@@ -112,7 +112,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
 class EventCfg:
     """Contact-rich task → keep contact-relevant DR ON from iter 0
     (friction, restitution, PD gains), unlike the balance line's DR-off
-    stance. Body/CoM DR stays OFF — comx06 is the calibrated body."""
+    stance. Body/CoM DR stays OFF — SYM is the calibrated (shod) body."""
 
     physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
@@ -262,7 +262,8 @@ class RewardsCfg:
     # ---- Task: get down, get supine, get still ----
     height_descent = RewTerm(
         func=mdp.height_descent_progress,
-        weight=4.0,
+        weight=15.0,   # sd2: 4.0 -> 15.0. Getting DOWN is the job; it was the
+                       # weakest task term while every regulariser fired.
         params={"target_height": TARGET_HEIGHT, "start_height": START_HEIGHT},
     )
     lying_orientation = RewTerm(
@@ -286,6 +287,30 @@ class RewardsCfg:
         },
     )
 
+    # sd2: reward a slow DELIBERATE descent, not merely the absence of a fast one.
+    # descent_rate_limit alone scored "never move" == "descend perfectly".
+    controlled_descent = RewTerm(
+        func=mdp.controlled_descent_bonus,
+        weight=8.0,
+        params={"target_speed": 0.20, "std": 0.12, "min_height": 0.30},
+    )
+    # sd2: the COMPLETION payment — replaces an alive bonus for a one-shot task.
+    # Conditional on having finished (low + supine + stopped), not on time survived.
+    settled_supine = RewTerm(
+        func=mdp.settled_supine_bonus,
+        weight=20.0,
+        params={"height_thr": 0.30, "gravity_x_thr": -0.7, "lin_thr": 0.15, "ang_thr": 0.5},
+    )
+    # sd2: TERMINAL PENALTY on the forbidden terminal state. This is the fix for
+    # the learned-suicide exploit: faceplanting was a free exit from accumulated
+    # cost, so the optimum was to reach it in 9 steps. Now it costs more than the
+    # whole episode's regularisers.
+    faceplant_penalty = RewTerm(
+        func=mdp.is_terminated_term,
+        weight=-200.0,
+        params={"term_keys": ["faceplant"]},
+    )
+
     # ---- Safety: slow + soft (FIRM damage triplet + SafeFall groups) ----
     descent_rate = RewTerm(
         func=mdp.descent_rate_limit,
@@ -304,7 +329,7 @@ class RewardsCfg:
     # lying is free and only slams/hard leans pay.
     torso_impact = RewTerm(
         func=mdp.contact_force_above_threshold,
-        weight=-0.02,
+        weight=-0.20,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["torso_link"]),
             "threshold": 450.0,
@@ -312,7 +337,7 @@ class RewardsCfg:
     )
     arm_impact = RewTerm(
         func=mdp.contact_force_above_threshold,
-        weight=-0.01,
+        weight=-0.10,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
@@ -325,7 +350,7 @@ class RewardsCfg:
     )
     knee_hip_impact = RewTerm(
         func=mdp.contact_force_above_threshold,
-        weight=-0.003,
+        weight=-0.03,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=[".*_knee_link", ".*_hip_.*_link"]
@@ -335,7 +360,7 @@ class RewardsCfg:
     )
     pelvis_impact = RewTerm(
         func=mdp.contact_force_above_threshold,
-        weight=-0.003,
+        weight=-0.03,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["pelvis"]),
             "threshold": 600.0,

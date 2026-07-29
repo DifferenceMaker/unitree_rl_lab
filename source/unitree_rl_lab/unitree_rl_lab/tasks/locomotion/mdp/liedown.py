@@ -257,3 +257,57 @@ def prone_orientation(
     unterminated."""
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.projected_gravity_b[:, 0] > gravity_x_threshold
+
+
+def controlled_descent_bonus(
+    env: ManagerBasedRLEnv,
+    target_speed: float = 0.20,
+    std: float = 0.12,
+    min_height: float = 0.30,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """SD2: the POSITIVE twin of descent_rate_limit.
+
+    descent_rate_limit only punishes going down too fast, so "not descending at
+    all" scores identically to "descending perfectly" — there was no gradient
+    that made a slow, deliberate descent better than standing still. This pays
+    an exp kernel for keeping the downward base speed NEAR target_speed while
+    still above min_height (i.e. while there is descending left to do):
+
+        exp(-((v_down - target_speed) / std)^2),  gated on pelvis > min_height
+
+    v_down is positive going down. Standing still (v_down=0) scores
+    exp(-(0.20/0.12)^2) = 0.06; descending at 0.20 m/s scores 1.0. Above
+    min_height the gate closes so the robot is not asked to keep sinking once
+    it is already down — quiet_lying takes over there.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    v_down = -asset.data.root_lin_vel_w[:, 2]
+    gate = (asset.data.root_pos_w[:, 2] > min_height).float()
+    return torch.exp(-(((v_down - target_speed) / std) ** 2)) * gate
+
+
+def settled_supine_bonus(
+    env: ManagerBasedRLEnv,
+    height_thr: float = 0.30,
+    gravity_x_thr: float = -0.7,
+    lin_thr: float = 0.15,
+    ang_thr: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """SD2 terminal-shaped SUCCESS signal: 1.0 while the robot is genuinely
+    down, on its back, and stopped — the 'you have finished the job' payment.
+
+    Distinct from quiet_lying (a soft exp kernel that pays partial credit for
+    being nearly-still): this is a hard indicator, so a policy that lingers
+    half-supine gets nothing from it. It is what replaces an alive bonus for a
+    do-one-thing-then-stop task: the reward for existing is conditional on
+    having COMPLETED the descent, not on time survived.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    low = asset.data.root_pos_w[:, 2] < height_thr
+    supine = asset.data.projected_gravity_b[:, 0] < gravity_x_thr
+    still = (asset.data.root_lin_vel_w.norm(dim=-1) < lin_thr) & (
+        asset.data.root_ang_vel_w.norm(dim=-1) < ang_thr
+    )
+    return (low & supine & still).float()
