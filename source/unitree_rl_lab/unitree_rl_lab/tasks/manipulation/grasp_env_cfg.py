@@ -213,7 +213,14 @@ class EventCfg:
             # gr2: operator measured the hand can close on the cube out to 7cm max
             # (at 7cm it is fingertip-only, not a palm grasp). 8cm was OUT OF REACH,
             # so part of the old distribution was unsolvable by construction.
-            "gap_range": (0.0, 0.07),
+            # gr2: the real fix is the CEILING 0.08 -> 0.07. Operator measured the
+            # hand can only close on the cube out to 7cm (fingertip-only at 7cm), so
+            # part of the old distribution was unsolvable by construction.
+            # The 0.02 FLOOR is kept from gr1 on measurement: dropping it pressed the
+            # cube into the palm and pre-loaded the pads, taking crush from -0.0064
+            # (gr1 @ it 3) to -0.3581 (gr2 @ it 3, 56x) — crush would have become the
+            # dominant term and taught "do not touch the cube", exactly backwards.
+            "gap_range": (0.02, 0.07),
             "cube_height": CUBE_SIZE[2],
             "retract_time_range": (2.0, 4.0),
         },

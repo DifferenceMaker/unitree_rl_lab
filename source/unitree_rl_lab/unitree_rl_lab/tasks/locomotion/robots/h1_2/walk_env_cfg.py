@@ -306,7 +306,23 @@ class RewardsCfg:
         weight=-1,
         params={
             "threshold": 1,
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle_roll.*).*"]),
+            # lm2 FIX: the old filter was "everything except ankle_roll", which
+            # silently counted 4 bodies on EVERY step of EVERY episode — measured
+            # left_wrist_yaw_link 475.08 N / L_thumb_proximal 475.08 N /
+            # right_wrist_yaw_link 466.28 N / R_thumb_proximal 466.28 N. The
+            # identical pairs give it away: the hands are merged into wrist_yaw by
+            # a URDF fixed joint, so the sensor reports the JOINT CONSTRAINT force
+            # carrying the hand, not an environmental contact. Result was a
+            # constant count of 4 -> a flat -80/episode tax with zero gradient
+            # (~29% of the run's 193.96 return) while the real signal it was meant
+            # to give (a knee or the torso hitting the ground) was 1/5 of the noise.
+            # Now an explicit WHITELIST of bodies that genuinely must not touch down.
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["torso_link", "pelvis", ".*_hip_.*_link", ".*_knee_link",
+                            ".*_elbow_.*_link", ".*_shoulder_.*_link",
+                            ".*_ankle_pitch_link"],
+            ),
         },
     )
 
