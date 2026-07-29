@@ -311,3 +311,114 @@ def settled_supine_bonus(
         asset.data.root_ang_vel_w.norm(dim=-1) < ang_thr
     )
     return (low & supine & still).float()
+
+
+def seed_descent_state(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    seed_fraction: float = 0.5,
+    start_height: float = 0.95,
+    end_height: float = 0.20,
+    end_pitch_deg: float = -80.0,
+    anneal_steps: int = 6_000_000,
+    u_lo_start: float = 0.6,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """SD2B: BACKWARD-CHAINING goal seeding — the fix for "the two biggest
+    rewards read 0.0000 forever". A random seed_fraction of resets does NOT
+    start standing: it starts PART-WAY down the descent path, at progress
+    u in [u_lo, 1] (u=1 = fully supine on the ground). Seeded envs experience
+    quiet_lying/lying_orientation/settled pay from step 0, the value function
+    learns the goal state is valuable, and that value propagates backward to
+    the standing starts.
+
+    "Progressively raise the robot up": u_lo anneals from u_lo_start down to 0
+    over anneal_steps common steps — early training seeds cluster NEAR the
+    goal, later training seeds span the whole path back up to standing.
+
+    Pose along the path: pelvis height lerp(start_height -> end_height),
+    pitch lerp(0 -> end_pitch_deg) about +y (pitching BACKWARD: base x-axis
+    tips upward -> supine, gravity_b x -> -1). JOINTS interpolate default
+    crouch -> flat (zeros: straight legs, arms at sides) with the same u, and
+    the root gets +0.05 m clearance so nothing spawns intersecting the ground.
+    First smoke without this: the crouch legs punched through the floor at
+    high u, PhysX depenetration launched every robot, and 100% of episodes
+    died ballistic at ~26 steps = the 0.5 s spawn grace + 1.
+
+    Runs AFTER reset_base/reset_robot_joints in the event list (overwrites the
+    root state of the seeded subset only).
+    """
+    asset = env.scene[asset_cfg.name]
+    n = len(env_ids)
+    if n == 0:
+        return
+    dev = env.device
+    seeded = torch.rand(n, device=dev) < seed_fraction
+    ids = env_ids[seeded]
+    if len(ids) == 0:
+        return
+    # annealed lower bound: near-goal early, whole-path later
+    frac = min(1.0, float(env.common_step_counter) / float(anneal_steps))
+    u_lo = u_lo_start * (1.0 - frac)
+    u = u_lo + torch.rand(len(ids), device=dev) * (1.0 - u_lo)
+
+    root = asset.data.default_root_state[ids].clone()
+    root[:, :3] = env.scene.env_origins[ids]
+    root[:, 2] = start_height + u * (end_height - start_height) + 0.05
+    pitch = torch.deg2rad(torch.tensor(end_pitch_deg, device=dev)) * u
+    half = pitch / 2.0
+    root[:, 3] = torch.cos(half)   # w
+    root[:, 4] = 0.0               # x
+    root[:, 5] = torch.sin(half)   # y  (pitch about +y; negative angle = backward)
+    root[:, 6] = 0.0               # z
+    root[:, 7:] = 0.0              # zero velocity
+    asset.write_root_pose_to_sim(root[:, :7], env_ids=ids)
+    asset.write_root_velocity_to_sim(root[:, 7:], env_ids=ids)
+    # joints: default crouch at u=0 -> flat (zeros) at u=1
+    jp = asset.data.default_joint_pos[ids] * (1.0 - u.unsqueeze(-1))
+    jv = torch.zeros_like(jp)
+    asset.write_joint_state_to_sim(jp, jv, env_ids=ids)
+
+
+def settled_success(
+    env: ManagerBasedRLEnv,
+    height_thr: float = 0.30,
+    gravity_x_thr: float = -0.7,
+    lin_thr: float = 0.15,
+    ang_thr: float = 0.5,
+    sustain_steps: int = 25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """SD2B SUCCESS termination: low AND supine AND stopped, SUSTAINED for
+    sustain_steps consecutive control steps (0.5 s at 50 Hz — a settle, not a
+    bounce through the target region). Ends the episode so the return is
+    bounded and the optimum is to FINISH, not to linger collecting per-step
+    bonuses. Pair with an is_terminated_term success bonus."""
+    asset = env.scene[asset_cfg.name]
+    if not hasattr(env, "liedown_settle_count"):
+        env.liedown_settle_count = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    ok = (
+        (asset.data.root_pos_w[:, 2] < height_thr)
+        & (asset.data.projected_gravity_b[:, 0] < gravity_x_thr)
+        & (asset.data.root_lin_vel_w.norm(dim=-1) < lin_thr)
+        & (asset.data.root_ang_vel_w.norm(dim=-1) < ang_thr)
+    )
+    env.liedown_settle_count = torch.where(
+        ok, env.liedown_settle_count + 1, torch.zeros_like(env.liedown_settle_count)
+    )
+    return env.liedown_settle_count >= sustain_steps
+
+
+def prone_excess(
+    env: ManagerBasedRLEnv,
+    threshold: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """SD2B: hinged per-step penalty on FORWARD pitch (toward prone) — replaces
+    the faceplant TERMINATION. sd1/sd2 proved the termination was a free exit
+    from accumulated cost: the policy reached it in 9 steps, 100% of episodes.
+    As a bounded per-step cost with no exit attached, tipping forward is just
+    a bad place to be that must be lived with — recovering toward supine is
+    the only way to stop paying. relu(gravity_b_x - threshold), max ~0.5."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return (asset.data.projected_gravity_b[:, 0] - threshold).clamp(min=0.0)

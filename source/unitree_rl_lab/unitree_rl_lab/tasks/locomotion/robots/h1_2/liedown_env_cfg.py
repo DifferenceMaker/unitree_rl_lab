@@ -162,6 +162,23 @@ class EventCfg:
         },
     )
 
+    # sd2b: backward-chaining goal seeding — half the resets start PART-WAY down
+    # (u in [u_lo,1], u_lo annealing 0.6 -> 0 over ~6M steps = "progressively
+    # raise the robot up"). Fixes the 0.0000 gated rewards: the value function
+    # meets the goal state from step 0. Must run AFTER reset_base/reset_robot_joints.
+    seed_descent = EventTerm(
+        func=mdp.seed_descent_state,
+        mode="reset",
+        params={
+            "seed_fraction": 0.5,
+            "start_height": START_HEIGHT,
+            "end_height": 0.20,
+            "end_pitch_deg": -80.0,
+            "anneal_steps": 6_000_000,
+            "u_lo_start": 0.6,
+        },
+    )
+
 
 @configclass
 class ActionsCfg:
@@ -301,14 +318,20 @@ class RewardsCfg:
         weight=20.0,
         params={"height_thr": 0.30, "gravity_x_thr": -0.7, "lin_thr": 0.15, "ang_thr": 0.5},
     )
-    # sd2: TERMINAL PENALTY on the forbidden terminal state. This is the fix for
-    # the learned-suicide exploit: faceplanting was a free exit from accumulated
-    # cost, so the optimum was to reach it in 9 steps. Now it costs more than the
-    # whole episode's regularisers.
-    faceplant_penalty = RewTerm(
+    # sd2b: SUCCESS bonus on the settled termination (x dt: 1000 -> +20 effective,
+    # fires once). With settled ending the episode, finishing beats lingering.
+    success = RewTerm(
         func=mdp.is_terminated_term,
-        weight=-200.0,
-        params={"term_keys": ["faceplant"]},
+        weight=1000.0,
+        params={"term_keys": ["settled"]},
+    )
+    # sd2b: prone as a bounded per-step cost (replaces the faceplant termination):
+    # relu(gravity_x - 0.5) x -10 x dt = at most -0.1/step, -25 over a full episode.
+    # No exit attached — recovering toward supine is the only way to stop paying.
+    prone_penalty = RewTerm(
+        func=mdp.prone_excess,
+        weight=-10.0,
+        params={"threshold": 0.5},
     )
 
     # ---- Safety: slow + soft (FIRM damage triplet + SafeFall groups) ----
@@ -341,9 +364,17 @@ class RewardsCfg:
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
-                # wrist_yaw carries the merged hand bodies (URDF fixed-joint merge)
-                body_names=[".*_shoulder_.*_link", ".*_elbow_.*_link",
-                            ".*_wrist_.*_link"],
+                # sd2b FIX — wrists REMOVED from this sensor. The hands are merged
+                # into wrist_yaw by a URDF fixed joint, and the contact sensor
+                # reports the JOINT CONSTRAINT force carrying the hand (~470 N,
+                # always, standing or lying — the same phantom as walk's
+                # undesired_contacts, found 2026-07-29). Against a 100 N threshold
+                # that was a permanent ~-1.5/step tax: it was arm_impact at 65% of
+                # ALL sd1 cost, and in sd2b it made the ballistic exit at 26 steps
+                # (~-38) rationally cheaper than living 250 steps (~-370) — the
+                # policy flailed on purpose to die. Hand-slam protection is covered
+                # by yank (force RATE, immune to constant offsets).
+                body_names=[".*_shoulder_.*_link", ".*_elbow_.*_link"],
             ),
             "threshold": 100.0,
         },
@@ -370,31 +401,34 @@ class RewardsCfg:
     # Arms carry load only lightly: τ² scoped to arms (40/18 Nm actuators).
     arm_torque = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-5.0e-4,
+        weight=-5.0e-5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_REGEX)},
     )
 
     # ---- Regularization (HoST group, our units) ----
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
-    action_smoothness = RewTerm(func=mdp.action_smoothness_2nd, weight=-0.05)
+    # sd2b: always-on quadratics gutted — "penalties should be constraints,
+    # not costs". sd2 measured 1000:1 penalties:rewards; existence itself was
+    # a net loss. Damage triplet (yank/momentum/impacts) + dof_pos_limits stay.
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    action_smoothness = RewTerm(func=mdp.action_smoothness_2nd, weight=-0.01)
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
-        weight=-2.0e-3,
+        weight=-2.0e-4,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX)},
     )
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
-        weight=-2.5e-7,
+        weight=-2.5e-8,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX)},
     )
     joint_torques = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-2.5e-6,
+        weight=-2.5e-7,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX)},
     )
     joint_power = RewTerm(
         func=mdp.energy,
-        weight=-2.5e-5,
+        weight=-2.5e-6,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX)},
     )
     dof_pos_limits = RewTerm(
@@ -402,7 +436,7 @@ class RewardsCfg:
         weight=-5.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=BODY_JOINT_REGEX)},
     )
-    base_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    base_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.005)
 
 
 @configclass
@@ -411,13 +445,31 @@ class TerminationsCfg:
     goal), non-foot contact (every body may touch ground)."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    ballistic = DoneTerm(
-        func=mdp.root_velocity_limit,
-        params={"max_lin_vel": 2.5, "max_ang_vel": 6.0},
-    )
-    faceplant = DoneTerm(
-        func=mdp.prone_orientation,
-        params={"gravity_x_threshold": 0.75},
+    # sd2b: ballistic REMOVED for training. History of this line: every exit that
+    # exists gets exploited (sd1/sd2 faceplant in 9 steps; then ballistic at
+    # eplen=grace+1 in 100% of episodes even at raised 3.5/10 limits — the
+    # half-trained policy flails over any line, and it killed every SEEDED env
+    # ~13 steps after landing, before 25 still steps could ever be demonstrated:
+    # quiet_lying read exactly 0.0000 across all of training). Terminations are
+    # training-only structure — nothing deploys them — so with ballistic gone the
+    # only doors are SUCCESS and TIMEOUT: flailing has no exit, seeds must live,
+    # stillness gets sampled, the success value finally enters the dataset.
+    # (Zero-action physics never trips 3.5/10 anyway — probe max 2.73/6.12.)
+    # sd2b: faceplant termination REMOVED — sd1/sd2 proved any cheap exit gets
+    # exploited (100% faceplant in 9 steps; the -200-weight terminal penalty was
+    # only -4 effective after the x dt scaling and never closed the gap). Prone is
+    # now a hinged per-step COST (rewards.prone_penalty) that must be lived with.
+    settled = DoneTerm(
+        func=mdp.settled_success,
+        params={
+            "height_thr": 0.30,
+            "gravity_x_thr": -0.7,
+            # sampleable under PPO exploration noise (std ~1 keeps the root
+            # jittering); tighten as a curriculum once success rate is real
+            "lin_thr": 0.20,
+            "ang_thr": 0.8,
+            "sustain_steps": 15,
+        },
     )
 
 
@@ -436,7 +488,10 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         # Horizon deliberately longer than the descent (FIRM): ~8 s to get
         # down leaves ~12 s where quiet_lying is the only income — holding
         # the final pose IS the majority of the optimal return.
-        self.episode_length_s = 20.0
+        # sd2b: 20 -> 5 s. Lying down is a 1-3 s action; the 20 s horizon is
+        # what made "survive earning nothing" cost ~-217 and dwarf any sane
+        # terminal penalty. 5 s bounds the worst case at ~1/4 of that.
+        self.episode_length_s = 5.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material

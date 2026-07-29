@@ -209,7 +209,12 @@ class EventCfg:
         mode="reset",
         params={
             "palm_xy": (0.0, 0.12),
-            "xy_jitter": 0.03,
+            # gr2b: 0.03 -> 0.01. The cube is 6cm wide; a 3cm lateral offset puts
+            # it half outside the finger span and the fingers close BESIDE it
+            # (measured dxy 2.6cm at spawn; pad contact ~1% of steps across gr1
+            # AND gr2a = two reward configs, same no-contact verdict -> alignment,
+            # not reward, was the binding constraint). Widen back as DR later.
+            "xy_jitter": 0.01,
             # gr2: operator measured the hand can close on the cube out to 7cm max
             # (at 7cm it is fingertip-only, not a palm grasp). 8cm was OUT OF REACH,
             # so part of the old distribution was unsolvable by construction.
@@ -220,9 +225,14 @@ class EventCfg:
             # cube into the palm and pre-loaded the pads, taking crush from -0.0064
             # (gr1 @ it 3) to -0.3581 (gr2 @ it 3, 56x) — crush would have become the
             # dominant term and taught "do not touch the cube", exactly backwards.
-            "gap_range": (0.02, 0.07),
+            "gap_range": (0.02, 0.04),
             "cube_height": CUBE_SIZE[2],
-            "retract_time_range": (2.0, 4.0),
+            # gr2b: retract at 0.3-1.0s (was 2-4s). A rollout is ~24 steps = 0.5s;
+            # a 2-4s payoff sits 4-8 rollouts past the closing action, where GAE
+            # cannot reach and only a slow value function can bridge. 0.3-1.0s puts
+            # the consequence inside/adjacent to the rollout -> credit assignment
+            # becomes local. Curriculum the delay back up in gr3.
+            "retract_time_range": (0.3, 1.0),
         },
     )
     # per-control-step check: retract the support when its time comes
@@ -244,8 +254,13 @@ class RewardsCfg:
     # cube near the palm for free, so proximity alone must not pay much.
     hold_cube = RewTerm(func=grasp_mdp.hold_cube_bonus, weight=40.0, params={"sigma": 0.06})
     # dense shaping toward force closure (thumb + opposing finger pads loaded)
+    # gr2b: 1.0 -> 10.0 — the operator's "reward each second the fingers are in
+    # contact with the cube". This IS the contact-per-tick term (0.3 any pad
+    # loaded, +0.7 thumb+opposing-finger force closure); at 1.0 vs hold_cube 40 it
+    # was invisible. Contact is the missing behaviour, so pay for contact
+    # directly, not only for its downstream consequence.
     pad_arrangement = RewTerm(
-        func=grasp_mdp.pad_arrangement_bonus, weight=1.0, params={"force_thr": 0.5}
+        func=grasp_mdp.pad_arrangement_bonus, weight=10.0, params={"force_thr": 0.5}
     )
     # hinged anti-crush (the 80Nm-cap pattern: holding is free, crushing is not)
     crush = RewTerm(func=grasp_mdp.crush_penalty, weight=-0.05, params={"total_thr": 30.0, "max_excess": 100.0})
