@@ -184,7 +184,7 @@ class ObservationsCfg:
         joint_pos = ObsTerm(
             func=grasp_mdp.driver_joint_pos, noise=Unoise(n_min=-0.01, n_max=0.01)
         )
-        last_action = ObsTerm(func=base_mdp.last_action)
+        last_action = ObsTerm(func=base_mdp.last_action, clip=(-5.0, 5.0))
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -196,9 +196,17 @@ class ObservationsCfg:
 
         pad_forces = ObsTerm(func=grasp_mdp.pad_forces_log)
         joint_pos = ObsTerm(func=grasp_mdp.driver_joint_pos)
-        last_action = ObsTerm(func=base_mdp.last_action)
-        cube_pos = ObsTerm(func=grasp_mdp.cube_pos_in_palm)
-        cube_vel = ObsTerm(func=grasp_mdp.cube_vel_in_palm)
+        last_action = ObsTerm(func=base_mdp.last_action, clip=(-5.0, 5.0))
+        # gr3 OBS BOMB FIX (gr3_padtier, it 53): all REWARDS are bounded now,
+        # but the value function still exploded 1.1 -> 4.4e28 in five
+        # iterations off a single sample. Probe: pinch-ejection/cube-spin
+        # drives |cube_vel_in_palm| to 86-150 (angular part) and a dropped
+        # cube puts |cube_pos_in_palm| at 1.25 m — raw into a critic trained
+        # on ~0.1-scale inputs. Every-term-bounded applies to OBSERVATIONS
+        # too. Past these clips the exact value carries no information: a
+        # cube 0.5 m from the palm is gone, a cube at 10 rad/s is dropped.
+        cube_pos = ObsTerm(func=grasp_mdp.cube_pos_in_palm, clip=(-0.5, 0.5))
+        cube_vel = ObsTerm(func=grasp_mdp.cube_vel_in_palm, clip=(-10.0, 10.0))
         support = ObsTerm(func=grasp_mdp.support_state)
 
         def __post_init__(self):
