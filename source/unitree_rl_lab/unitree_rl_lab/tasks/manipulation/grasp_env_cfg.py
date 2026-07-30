@@ -80,7 +80,16 @@ class GraspSceneCfg(InteractiveSceneCfg):
             asset_path=HAND_URDF,
             fix_base=True,
             merge_fixed_joints=False,  # the 17 pads must stay separate bodies
-            convert_mimic_joints_to_normal_joints=True,  # importer drops <mimic>; coupling lives in the action term
+            # gr3: NATIVE MIMIC (operator call, probe-vindicated). The old
+            # convert=True comment claimed the importer drops <mimic>; in the
+            # current importer the native path just WORKS, and it is the exact
+            # linkage: loaded-close deviation 1.0-2.6 deg vs 68 deg (converted,
+            # soft) and 5.7-21 deg (best software coupling emulation). The
+            # measured-state + back-drive layer in CoupledFingerAction stays:
+            # same ratios, consistent with the constraint, harmless
+            # belt-and-braces — this exact combination is what the probe
+            # measured. 12 DOFs still reported; the constraint binds them.
+            convert_mimic_joints_to_normal_joints=False,
             activate_contact_sensors=True,
             joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
                 gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
