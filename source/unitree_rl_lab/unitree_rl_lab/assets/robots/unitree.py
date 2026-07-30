@@ -734,13 +734,16 @@ ARM_DEPLOY_KD = 3.0
 
 UNITREE_H1_2_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
-        # SYM = the hardware-validated SHOD CoM (torso x +0.030), standard since the
-        # shoe finding: putting shoes on the robot moved the CoM belief back to SYM,
-        # superseding the earlier bare-foot p12f verdict that had picked comx06.
-        # NOTE: this path deliberately does NOT fall back to <assets>/robot/h1_2/h1_2.urdf
-        # — that file is a DIFFERENT (stock) body with the same name, and silently
-        # training on it is the trap that cost us a phase. Missing asset = loud failure.
-        asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/sweep/SYM/robot/h1_2/h1_2.urdf"),
+        # comx06 (torso x −0.0176) = the 3D-PRINTED-SOLES standard, re-crowned by the
+        # 2026-07-30 hardware verdict: comx06-trained p12f/p12g policies (wide_micropush
+        # best) run flawlessly on the new soles — the shoes and their SYM CoM shift
+        # (+0.030) are retired. SYM remains correct only for shod-era-trained lines
+        # (desk/anchor2/dp2b lineage) — those pin it in their own cfgs, not here.
+        # See aspired-isaac-lab assets/robot/h1_2/MODELS.md (CURRENT table).
+        # NOTE: distinct filename by design (h1_2_comx06.urdf) — never the bare
+        # h1_2.urdf, whose contents differ per tree (stock locally, SYM on the pod);
+        # that silent-swap trap cost a phase (2026-07-28). Missing asset = loud failure.
+        asset_path=os.path.join(os.environ.get("ROBOT_ASSETS_DIR", os.path.expanduser("~/Projects/robot_projects/assets")), "robot/h1_2/h1_2_comx06.urdf"),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.98),                  # p7 crouch: lower pelvis for bent legs
