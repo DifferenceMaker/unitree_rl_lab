@@ -945,3 +945,47 @@ def hand_reach_bonus(
     d = torch.norm(hands - env.reach_point_w.unsqueeze(1), dim=-1)         # (N,2)
     dmin = d.min(dim=-1).values
     return torch.exp(-(dmin / sigma) ** 2)
+
+
+def feet_gait_recovery(
+    env: "ManagerBasedRLEnv",
+    period: float,
+    offset: list[float],
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 0.5,
+    gate_speed: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """P13: walk's feet_gait adapted for the BALANCE task — same antiphase
+    contact-schedule reward, but gated on RECOVERY-IN-PROGRESS (base speed >
+    gate_speed) instead of walk's velocity-command gate, which balance does not
+    have. Ungated, the free-running phase clock demands one foot airborne half
+    the time and INDUCES marching at rest — the exact fidget the balance line
+    fights. Gated: at rest the term is silent; the moment the robot is already
+    moving (stepping to catch itself), it pays for one-foot-planted antiphase
+    stepping. "You may step whenever you must — but when you do, step
+    rhythmically: one foot planted, proper swing."
+
+    NOTE (deliberate): NO gait-phase observation is added — the policy cannot
+    see the clock (keeps the 87-obs warmstart/deploy contract). It does not
+    need to: with antiphase offsets, matching the hidden clock in expectation
+    means "exactly one foot in contact, alternating at ~period" (right-foot
+    match pays 2/2, wrong-foot 0/2, double-support or double-air 1/2) — the
+    gradient favors paced single-support stepping regardless of phase
+    alignment. If the pace itself matters later, the phase obs is a p14
+    decision (obs change = scratch run).
+    """
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
+
+    global_phase = ((env.episode_length_buf * env.step_dt) % period / period).unsqueeze(1)
+    leg_phase = torch.cat([(global_phase + o) % 1.0 for o in offset], dim=-1)
+
+    reward = torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+    for i in range(len(sensor_cfg.body_ids)):
+        is_stance = leg_phase[:, i] < threshold
+        reward += (~(is_stance ^ is_contact[:, i])).float()
+
+    asset = env.scene[asset_cfg.name]
+    recovering = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
+    return reward * recovering.float()
