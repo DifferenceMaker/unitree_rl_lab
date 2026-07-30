@@ -24,3 +24,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspPPORunnerCfg",
     },
 )
+
+# gr3b: residual-wrist variant — floating hand base + 6-DoF WristPoseAction
+# (12 actions, 35-dim actor obs). Same PPO cfg; dims are introspected.
+gym.register(
+    id="Unitree-H1_2-Grasp-Wrist-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg:RobotEnvCfgGraspWristQueue",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg:RobotEnvCfgGraspWristQueue",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspPPORunnerCfg",
+    },
+)

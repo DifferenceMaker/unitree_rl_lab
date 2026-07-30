@@ -235,6 +235,14 @@ class EventCfg:
             "retract_time_range": (0.3, 1.0),
         },
     )
+    # gr3a: glide the support start->final each step (no-op when
+    # reset_scene.approach_drop_range stays (0,0) — the gr2b behaviour)
+    approach = EventTerm(
+        func=grasp_mdp.approach_support,
+        mode="interval",
+        interval_range_s=(0.02, 0.02),
+        params={},
+    )
     # per-control-step check: retract the support when its time comes
     retract = EventTerm(
         func=grasp_mdp.retract_support,
@@ -270,7 +278,11 @@ class RewardsCfg:
     # diverged. The valley it was meant to solve is already 5x more crossable from
     # hold_cube alone: post-retract that now pays 40*1*dt = 0.8/step vs gr1's
     # 0.16/step, for the same action cost. One variable, not two.
-    action_rate = RewTerm(func=base_mdp.action_rate_l2, weight=-0.05)
+    # gr3: BOUNDED. The unbounded form killed gr2_grasp_b at it 720 (-3.1e6/ep,
+    # NaN std) once rising exploration std fed raw-action jitter into it.
+    action_rate = RewTerm(
+        func=grasp_mdp.action_rate_clamped, weight=-0.05, params={"max_sq": 25.0}
+    )
 
 
 @configclass
@@ -320,6 +332,25 @@ class RobotEnvCfgGraspQueue(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+@configclass
+class RobotEnvCfgGraspWristQueue(RobotEnvCfgGraspQueue):
+    """gr3b: residual wrist. Hand base floats (gravity off) and a 6-DoF
+    WristPoseAction moves it kinematically inside a small box around the spawn
+    pose (last-centimetre alignment, cannot fly away). Action 6+6=12, actor obs
+    29+6=35 (wrist offset added). NOTE: job overrides are applied by the parent
+    BEFORE these edits, so jobs cannot modify the wrist wiring itself."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot.spawn.fix_base = False
+        self.scene.robot.spawn.rigid_props = sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=True
+        )
+        self.actions.wrist = grasp_mdp.WristPoseActionCfg(asset_name="robot")
+        self.observations.policy.wrist_pose = ObsTerm(func=grasp_mdp.wrist_pose_offset)
+        self.observations.critic.wrist_pose = ObsTerm(func=grasp_mdp.wrist_pose_offset)
 
 
 @configclass

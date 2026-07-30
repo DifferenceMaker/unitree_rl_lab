@@ -228,6 +228,9 @@ def reset_grasp_scene(
     cube_height: float = 0.055,
     platform_thickness: float = 0.02,
     retract_time_range: tuple = (3.0, 5.0),
+    approach_drop_range: tuple = (0.0, 0.0),
+    approach_lateral: float = 0.0,
+    approach_time_range: tuple = (0.6, 1.5),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
     """Reset: place the kinematic platform so the palm-to-cube-top gap is
@@ -250,6 +253,32 @@ def reset_grasp_scene(
     plat_pose[:, 1] = origins[:, 1] + palm_xy[1]
     plat_pose[:, 2] = plat_top - platform_thickness / 2
     plat_pose[:, 3] = 1.0
+
+    # gr3a approach phase: spawn the support BELOW/BESIDE its final pose and let
+    # approach_support() glide it in — relativity's moving palm. drop==0 -> off.
+    if not hasattr(env, "grasp_plat_final"):
+        env.grasp_plat_final = torch.zeros(env.num_envs, 3, device=dev)
+        env.grasp_plat_start = torch.zeros(env.num_envs, 3, device=dev)
+        env.grasp_app_T = torch.zeros(env.num_envs, device=dev)
+    env.grasp_plat_final[env_ids] = plat_pose[:, :3]
+    drop = approach_drop_range[0] + torch.rand(n, device=dev) * (
+        approach_drop_range[1] - approach_drop_range[0]
+    )
+    app_on = drop > 1e-6
+    start = plat_pose[:, :3].clone()
+    start[:, 2] -= drop
+    ang = torch.rand(n, device=dev) * 2 * torch.pi
+    start[:, 0] += approach_lateral * torch.cos(ang) * app_on.float()
+    start[:, 1] += approach_lateral * torch.sin(ang) * app_on.float()
+    env.grasp_plat_start[env_ids] = start
+    env.grasp_app_T[env_ids] = torch.where(
+        app_on,
+        approach_time_range[0]
+        + torch.rand(n, device=dev) * (approach_time_range[1] - approach_time_range[0]),
+        torch.zeros(n, device=dev),
+    )
+    plat_pose[:, :3] = start          # spawn at the approach start
+    plat_top = start[:, 2] + platform_thickness / 2  # cube spawns ON the start pose
     platform.write_root_pose_to_sim(plat_pose, env_ids=env_ids)
 
     cube_pose = torch.zeros(n, 7, device=dev)
@@ -262,9 +291,10 @@ def reset_grasp_scene(
     cube.write_root_pose_to_sim(cube_pose, env_ids=env_ids)
     cube.write_root_velocity_to_sim(torch.zeros(n, 6, device=dev), env_ids=env_ids)
 
-    env.grasp_retract_t[env_ids] = retract_time_range[0] + torch.rand(n, device=dev) * (
-        retract_time_range[1] - retract_time_range[0]
-    )
+    # retract clock starts AFTER the approach lands (T_app=0 when approach off)
+    env.grasp_retract_t[env_ids] = env.grasp_app_T[env_ids] + retract_time_range[0] + torch.rand(
+        n, device=dev
+    ) * (retract_time_range[1] - retract_time_range[0])
     env.grasp_retracted[env_ids] = False
 
 
@@ -306,14 +336,43 @@ def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tens
     return torch.exp(-((d / sigma) ** 2)) * gate
 
 
-def pad_arrangement_bonus(env: "ManagerBasedRLEnv", force_thr: float = 0.5) -> torch.Tensor:
+def pad_arrangement_bonus(
+    env: "ManagerBasedRLEnv", force_thr: float = 0.5, closure_mode: str = "any"
+) -> torch.Tensor:
     """Dense pre-grasp shaping: 0.3 for any pad contact, +0.7 for FORCE
     CLOSURE (a thumb pad AND an opposing finger pad both loaded) — rewards
-    grasps, not scoops."""
+    grasps, not scoops.
+
+    closure_mode:
+      "any"   — gr2b behaviour: closure is binary, thumb + at least ONE
+                opposing finger (this is how the thumb+pinky grip got full pay)
+      "count" — gr3d: closure scales with HOW MANY of the four opposing
+                fingers are loaded (thumb_loaded * n_fingers/4): thumb+1 pays
+                0.3+0.175, thumb+4 pays the full 1.0 — load sharing is paid
+                directly, wrap grasps dominate pinches, no grip is prescribed."""
     f = _pad_force_mags(env)
     thumb_m, finger_m = _pad_masks(env)
-    any_c = (f > force_thr).any(dim=-1).float()
-    closure = ((f[:, thumb_m] > force_thr).any(dim=-1) & (f[:, finger_m] > force_thr).any(dim=-1)).float()
+    loaded = f > force_thr
+    any_c = loaded.any(dim=-1).float()
+    thumb_any = loaded[:, thumb_m].any(dim=-1).float()
+    if closure_mode == "count":
+        names = env.scene.sensors["pad_sensor"].body_names
+        if not hasattr(env, "grasp_finger_group"):
+            import re
+            groups = torch.full((len(names),), -1, dtype=torch.long, device=env.device)
+            for gi, key in enumerate(("index", "middle", "ring", "little")):
+                for bi, bn in enumerate(names):
+                    if key in bn:
+                        groups[bi] = gi
+            env.grasp_finger_group = groups
+        per_finger = torch.zeros(f.shape[0], 4, device=env.device, dtype=torch.bool)
+        for gi in range(4):
+            m = env.grasp_finger_group == gi
+            if m.any():
+                per_finger[:, gi] = loaded[:, m].any(dim=-1)
+        closure = thumb_any * per_finger.float().sum(dim=-1) / 4.0
+    else:
+        closure = thumb_any * loaded[:, finger_m].any(dim=-1).float()
     return 0.3 * any_c + 0.7 * closure
 
 
@@ -343,3 +402,170 @@ def cube_dropped(env: "ManagerBasedRLEnv", z_threshold: float = 0.08) -> torch.T
     before retract it fell off the platform. Either way the episode is over."""
     cube: RigidObject = env.scene["cube"]
     return (cube.data.root_pos_w[:, 2] - env.scene.env_origins[:, 2]) < z_threshold
+
+
+# ---------------------------------------------------------------------------
+# gr3 kit
+# ---------------------------------------------------------------------------
+def action_rate_clamped(env: "ManagerBasedRLEnv", max_sq: float = 25.0) -> torch.Tensor:
+    """gr3: BOUNDED action-rate penalty. The unbounded base_mdp.action_rate_l2
+    killed gr2_grasp_b at it 720: rising exploration std grew raw-action jitter,
+    the quadratic hit -3.1e6/episode, the value target followed, NaN std — the
+    third unbounded-term explosion of the gr line (crush gr2a, action_rate
+    gr2b). Sum of squared deltas, clamped per env per step. 6 actions in
+    [-1,1]: normal operation sums <1; the 25.0 cap only engages in the flail
+    regime the clamp exists to defuse."""
+    d = env.action_manager.action - env.action_manager.prev_action
+    return torch.sum(torch.square(d), dim=-1).clamp(max=max_sq)
+
+
+def approach_support(env: "ManagerBasedRLEnv", env_ids: torch.Tensor):
+    """gr3a: MOVING-PALM curriculum, implemented by relativity. The policy is
+    blind to world pose (tactile + drivers only), so moving the SUPPORT+CUBE
+    toward the palm is observationally identical to the palm approaching the
+    cube — with zero articulation surgery. Each control step, envs still in
+    their approach window get the platform smoothstep-lerped from its spawned
+    start pose (below/beside the final pose) to the final pose; the cube rides
+    on top (kinematic platform, gentle speeds, friction carries it). No-op for
+    envs with approach disabled (T_app == 0) or already retracted."""
+    _buffers(env)
+    if not hasattr(env, "grasp_app_T"):
+        return
+    t = env.episode_length_buf.float() * env.step_dt
+    active = (env.grasp_app_T > 0.0) & (~env.grasp_retracted) & (t < env.grasp_app_T + 0.1)
+    ids = torch.nonzero(active).squeeze(-1)
+    if len(ids) == 0:
+        return
+    platform: RigidObject = env.scene["platform"]
+    f = (t[ids] / env.grasp_app_T[ids]).clamp(0.0, 1.0)
+    s = f * f * (3.0 - 2.0 * f)                      # smoothstep
+    pos = env.grasp_plat_start[ids] + (env.grasp_plat_final[ids] - env.grasp_plat_start[ids]) * s.unsqueeze(-1)
+    pose = torch.zeros(len(ids), 7, device=env.device)
+    pose[:, :3] = pos
+    pose[:, 3] = 1.0
+    platform.write_root_pose_to_sim(pose, env_ids=ids)
+    platform.write_root_velocity_to_sim(torch.zeros(len(ids), 6, device=env.device), env_ids=ids)
+
+
+def pad_contacts_noisy(
+    env: "ManagerBasedRLEnv",
+    thr_range: tuple = (0.3, 1.5),
+    dropout_p: float = 0.05,
+) -> torch.Tensor:
+    """gr3c: BINARIZED tactile with per-episode sensor DR — the deploy-contract
+    answer to 'the FTP tactile has no sim model'. Instead of asking the policy
+    to trust sim force MAGNITUDES (which real taxel pooling will not reproduce),
+    give it contact BOOLEANS behind a randomized threshold: per episode, each of
+    the 17 pads draws its own threshold U[thr_range] and is dead (stuck at 0)
+    with p=dropout_p. Real-side mapping becomes 'pooled taxel value > calib
+    threshold', which survives any monotone calibration. 17-dim, same slot
+    count as pad_forces_log."""
+    f = _pad_force_mags(env)
+    n, p = f.shape
+    if not hasattr(env, "grasp_tact_thr"):
+        env.grasp_tact_thr = torch.full((n, p), 0.5, device=env.device)
+        env.grasp_tact_alive = torch.ones(n, p, device=env.device)
+    fresh = env.episode_length_buf == 0
+    if fresh.any():
+        ids = torch.nonzero(fresh).squeeze(-1)
+        env.grasp_tact_thr[ids] = thr_range[0] + torch.rand(len(ids), p, device=env.device) * (
+            thr_range[1] - thr_range[0]
+        )
+        env.grasp_tact_alive[ids] = (torch.rand(len(ids), p, device=env.device) > dropout_p).float()
+    return (f > env.grasp_tact_thr).float() * env.grasp_tact_alive
+
+
+# ---------------------------------------------------------------------------
+# gr3b: residual wrist — 6-DoF pose offset around the spawn pose
+# ---------------------------------------------------------------------------
+class WristPoseAction(ActionTerm):
+    """gr3b: the hand root becomes a slow 6-DoF residual (floating base, gravity
+    off, pose written kinematically every control step, root velocity zeroed).
+    Actions in [-1,1]^6 integrate into a pose OFFSET from the spawn pose:
+    per-step slew pos_step/rot_step, hard box pos_limit/rot_limit — the policy
+    does last-centimetre alignment, it cannot fly away. Deploy analog: the
+    offset adds to the IK-resolved wrist target BEFORE the colleague's resolver
+    runs (ActionModule integration, to be agreed before any hardware use)."""
+
+    cfg: "WristPoseActionCfg"
+
+    def __init__(self, cfg: "WristPoseActionCfg", env: "ManagerBasedRLEnv"):
+        super().__init__(cfg, env)
+        self._asset: Articulation = env.scene[cfg.asset_name]
+        self._raw = torch.zeros(self.num_envs, 6, device=self.device)
+        self._off_pos = torch.zeros(self.num_envs, 3, device=self.device)
+        self._off_rpy = torch.zeros(self.num_envs, 3, device=self.device)
+        d = self._asset.data.default_root_state
+        self._home_pos = d[:, :3] + env.scene.env_origins
+        self._home_quat = d[:, 3:7].clone()
+        # export_deploy_cfg walks _joint_ids on every action term; this term
+        # drives the ROOT, not joints — empty list is the honest contract. Its
+        # deploy path (offset onto the IK wrist target) lives outside the
+        # joint-command pipeline entirely.
+        self._joint_ids = []
+
+    @property
+    def action_dim(self) -> int:
+        return 6
+
+    @property
+    def raw_actions(self) -> torch.Tensor:
+        return self._raw
+
+    @property
+    def processed_actions(self) -> torch.Tensor:
+        return torch.cat([self._off_pos, self._off_rpy], dim=-1)
+
+    def process_actions(self, actions: torch.Tensor):
+        self._raw = actions.clamp(-1.0, 1.0)
+        self._off_pos = (self._off_pos + self._raw[:, :3] * self.cfg.pos_step).clamp(
+            -self.cfg.pos_limit, self.cfg.pos_limit
+        )
+        self._off_rpy = (self._off_rpy + self._raw[:, 3:] * self.cfg.rot_step).clamp(
+            -self.cfg.rot_limit, self.cfg.rot_limit
+        )
+
+    def apply_actions(self):
+        dq = math_utils.quat_from_euler_xyz(
+            self._off_rpy[:, 0], self._off_rpy[:, 1], self._off_rpy[:, 2]
+        )
+        quat = math_utils.quat_mul(dq, self._home_quat)
+        pose = torch.cat([self._home_pos + self._off_pos, quat], dim=-1)
+        self._asset.write_root_pose_to_sim(pose)
+        self._asset.write_root_velocity_to_sim(
+            torch.zeros(self.num_envs, 6, device=self.device)
+        )
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            self._off_pos.zero_(); self._off_rpy.zero_()
+        else:
+            self._off_pos[env_ids] = 0.0; self._off_rpy[env_ids] = 0.0
+
+
+@configclass
+class WristPoseActionCfg(ActionTermCfg):
+    class_type: type = WristPoseAction
+    asset_name: str = "robot"
+    # export_deploy_cfg introspection contract (same as CoupledFingerActionCfg):
+    # raw actions are [-1,1] deltas; the term itself owns the step/limit mapping
+    scale: float = 1.0
+    clip = None
+    pos_step: float = 0.004    # m per control step at full action (0.2 m/s)
+    rot_step: float = 0.02     # rad per control step (1 rad/s)
+    pos_limit: float = 0.06    # m box around spawn
+    rot_limit: float = 0.30    # rad box around spawn
+
+
+def wrist_pose_offset(env: "ManagerBasedRLEnv") -> torch.Tensor:
+    """gr3b obs: the wrist's pose offset from its spawn pose (pos/limit,
+    rpy/limit -> roughly [-1,1]^6) so the actor knows where its residual sits
+    inside the allowed box. Computed from sim state, not the action buffer."""
+    asset: Articulation = env.scene["robot"]
+    d = asset.data.default_root_state
+    home_pos = d[:, :3] + env.scene.env_origins
+    dp = (asset.data.root_pos_w - home_pos) / 0.06
+    qrel = math_utils.quat_mul(asset.data.root_quat_w, math_utils.quat_conjugate(d[:, 3:7]))
+    r, p, y = math_utils.euler_xyz_from_quat(qrel)
+    drpy = torch.stack([r, p, y], dim=-1) / 0.30
+    return torch.cat([dp, drpy], dim=-1)
