@@ -4,23 +4,29 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_symdr:
+    Balance_wide_micropush:
       id: 4
       type: RLBase
-    Balance_sym_sharp:
+    Balance_flatfoot:
       id: 5
       type: RLBase
-    Balance_sym_latloop:
+    Balance_comdr:
       id: 6
       type: RLBase
-    Balance_sym_fwdleft:
+    Balance_impact600:
       id: 7
       type: RLBase
-    Balance_desk_tilt:
+    Balance_orient:
       id: 8
       type: RLBase
-    Balance_desk_boxing:
+    Balance_wfm:
       id: 9
+      type: RLBase
+    Balance_fric_latloop:
+      id: 10
+      type: RLBase
+    Balance_hiproll:
+      id: 11
       type: RLBase
 
   Passive:
@@ -45,12 +51,14 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_symdr:       RB + Y.on_pressed
-      Balance_sym_sharp:   RB + A.on_pressed
-      Balance_sym_latloop: RB + X.on_pressed
-      Balance_sym_fwdleft: RB + right.on_pressed
-      Balance_desk_tilt:   RB + down.on_pressed
-      Balance_desk_boxing: RB + left.on_pressed
+      Balance_wide_micropush: RB + Y.on_pressed
+      Balance_flatfoot:       RB + A.on_pressed
+      Balance_comdr:          RB + X.on_pressed
+      Balance_impact600:      RB + B.on_pressed
+      Balance_orient:         RB + right.on_pressed
+      Balance_wfm:            RB + down.on_pressed
+      Balance_fric_latloop:   RB + left.on_pressed
+      Balance_hiproll:        RB + up.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -76,65 +84,89 @@ FSM:
       ]
     ]
 
-  # === p12j/p12k EVAL — generals (no-DR SYM batch) + desk line (2026-07-25) ===
-  # ALL SYM-trained. SIM: robot_scene = scene_sym_soft08.xml (SYM body + 0.08
-  # cushion — solref re-ID pending, sweep scenes soft04/05/06/07 ready).
-  # launch_sim2sim.sh --tau; monitor: leanFwd/leanLat + ankP/ankR + hipR.
-  # Reads: (1) sym_sharp vs symdr — does NO-CoM-DR sharpen reaction (the late
-  # backward save)? (2) sym_latloop — squeeze trim (hardware baseline hipR
-  # 47/62). (3) sym_fwdleft — fixed +10mm fwd/+5mm left: overshoot expected
-  # (backward/right lean) = CoM bracket confirmation. (4) desk_tilt — did the
-  # hip-hinge emerge (butt back, knees drop, feet planted)? (5) desk_boxing —
-  # planted absorption vs stepping.
-  Balance_symdr:           # RB+Y  p12i_symdr (SYM+comdr reference, hardware-validated)
+  # === p12g EVAL — comx06 lineage, new-3D-soles era (2026-07-30) ===
+  # ALL comx06-trained (torso x -0.0176, CoM +5.6mm), parent p12f_comx06_snap
+  # (model_7475). SIM: robot_scene = scene_comx06.xml (comx06 body + RIGID
+  # floor = the p12f/p12g training-era setup; new soles made cushion ID
+  # obsolete). launch_sim2sim.sh --all; watch reactions to `push`.
+  # Coverage map (session-log audit 2026-07-30):
+  #   hardware-validated ref: wide_micropush ("best of session", 3D soles)
+  #   NEVER EVALUATED ANYWHERE: flatfoot, comdr, impact600, orient (trained
+  #     07-15/16, staged for the 07-20 grip eval, dropped from the final
+  #     8-state config — zero observations exist)
+  #   sim2sim-only (07-20 grip floor, no hardware): wfm (best stance),
+  #     fric_latloop (anti-squeeze favorite, recovers "really really good"),
+  #     hiproll (tau^2-only, works)
+  # Left out (verdicts already exist): widestance/feetnear/wide_feetnear
+  # (hardware keepers), micropush_1s (rejected), fric/highfric (squeeze),
+  # taucap (rejected), heading25 (deprioritized), micropush_ceiling (diverged).
+  Balance_wide_micropush:  # RB+Y  REFERENCE — hardware-validated best (07-30 soles)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12i_symdr_2026-07-22
+    policy_dir: ../../../logs/milestones/p12g_wide_micropush_2026-07-14
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_sym_sharp:       # RB+A  p12j_sym_sharp (no-DR, cush75, scratch)
+  Balance_flatfoot:        # RB+A  NEVER EVALUATED — feet_flat -5 (loudness axis)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12j_sym_sharp_2026-07-23
+    policy_dir: ../../../logs/milestones/p12g_flatfoot_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_sym_latloop:     # RB+X  p12j_sym_sharp_latloop (+tau^2 anti-squeeze)
+  Balance_comdr:           # RB+X  NEVER EVALUATED — torso CoM-x DR +-2cm
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12j_sym_sharp_latloop_2026-07-23
+    policy_dir: ../../../logs/milestones/p12g_comdr_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_sym_fwdleft:     # RB+right  p12j_sym_fwdleft (fixed CoM +10fwd/+5left — bracket test)
+  Balance_impact600:       # RB+B  NEVER EVALUATED — foot_impact_force cap @600N
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12j_sym_fwdleft_2026-07-23
+    policy_dir: ../../../logs/milestones/p12g_impact600_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_desk_tilt:       # RB+down  p12j_desk_tilt (hip-hinge reach experiment)
+  Balance_orient:          # RB+right  NEVER EVALUATED — orientation_mode arms
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12j_desk_tilt_2026-07-24
+    policy_dir: ../../../logs/milestones/p12g_orient_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_desk_boxing:     # RB+left  p12k_desk_boxing (planted-in-zone bonus)
+  Balance_wfm:             # RB+down  sim2sim-only — behavior triple, best stance
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12k_desk_boxing_2026-07-24
+    policy_dir: ../../../logs/milestones/p12g_wfm_2026-07-16
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_fric_latloop:    # RB+left  sim2sim-only — anti-squeeze favorite
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12g_fric_latloop_2026-07-16
+    arm_kp: 40.0
+    arm_kd: 3.0
+    arm_transition_s: 4.0
+    engage_blend_s: 1.5
+
+  Balance_hiproll:         # RB+up  sim2sim-only — tau^2 hip-roll only, works
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/p12g_hiproll_2026-07-15
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
