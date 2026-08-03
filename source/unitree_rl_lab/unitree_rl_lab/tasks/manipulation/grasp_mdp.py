@@ -234,6 +234,32 @@ def cube_vel_in_palm(env: "ManagerBasedRLEnv") -> torch.Tensor:
     return torch.cat([lin, ang], dim=-1)
 
 
+def cube_pose_vision(
+    env: "ManagerBasedRLEnv", noise_std_pos: float = 0.005, noise_std_axis: float = 0.02
+) -> torch.Tensor:
+    """ACTOR (vision-analog, gr4): cube pose in the palm frame, shaped like the
+    real perception feed. VisualModule publishes the cube as a TF (position +
+    orientation from measured axes: main_axis = 92mm side, table_normal) —
+    deploy re-expresses that into the palm frame, so training consumes the
+    same 9 numbers: position (3) + the cube's X and Z unit axes (6). The 6D
+    axis form matches what vision actually measures and has no quaternion
+    double-cover discontinuity. Bounded: axes are re-normalized unit vectors;
+    position is clipped at the ObsTerm (every obs bounded — the gr3 law).
+    Gaussian noise per step models vision jitter."""
+    cube: RigidObject = env.scene["cube"]
+    p_pos, p_quat = _palm_pose(env)
+    pos = math_utils.quat_apply_inverse(p_quat, cube.data.root_pos_w - p_pos)
+    rel_quat = math_utils.quat_mul(math_utils.quat_inv(p_quat), cube.data.root_quat_w)
+    rot = math_utils.matrix_from_quat(rel_quat)
+    x_axis, z_axis = rot[:, :, 0], rot[:, :, 2]
+    if noise_std_pos > 0:
+        pos = pos + torch.randn_like(pos) * noise_std_pos
+    if noise_std_axis > 0:
+        x_axis = torch.nn.functional.normalize(x_axis + torch.randn_like(x_axis) * noise_std_axis, dim=-1)
+        z_axis = torch.nn.functional.normalize(z_axis + torch.randn_like(z_axis) * noise_std_axis, dim=-1)
+    return torch.cat([pos, x_axis, z_axis], dim=-1)
+
+
 def support_state(env: "ManagerBasedRLEnv") -> torch.Tensor:
     """PRIVILEGED: [retracted?, time-to-retract (clamped)] — lets the critic
     anticipate the value cliff at support removal."""
