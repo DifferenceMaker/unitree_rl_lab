@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -30,7 +31,13 @@ public:
     }
 
     // Call every control tick with the active FSM state name. Throttles internally.
+    // THREAD-SAFE (mutex): called from the FSM thread (State_RLBase::run, every
+    // tick) AND the 1 Hz status_thread in main.cpp. Unsynchronized double-entry
+    // mutated msg_/last_policy_ concurrently (string free+alloc) — heap
+    // corruption that killed both 2026-08-03 limit tests at 26/13 min (see
+    // notes/sessions/incident_2026-08-03, core archived on pc4).
     void publish(const std::string& policy, bool force = false) {
+        std::lock_guard<std::mutex> lk(mtx_);
         const bool changed = (policy != last_policy_);
         if (!force && !changed && (++tick_ % kHeartbeatTicks) != 0) {
             return;
@@ -66,6 +73,7 @@ private:
     static constexpr int kHeartbeatTicks = 10;
 
     std::unique_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> pub_;
+    std::mutex mtx_;   // guards msg_, last_policy_, tick_ and the Write (2026-08-03 fix)
     std_msgs::msg::dds_::String_ msg_;
     std::string last_policy_;
     int tick_ = 0;
