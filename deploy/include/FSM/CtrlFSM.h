@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <unitree/common/thread/recurrent_thread.hpp>
 #include "BaseState.h"
 #include <spdlog/spdlog.h>
@@ -49,6 +50,7 @@ public:
     {
         // Start From State_Passive
         currentState = states[0];
+        current_raw_.store(currentState.get(), std::memory_order_release);
         currentState->enter();
 
         fsm_thread_ = std::make_shared<unitree::common::RecurrentThread>(
@@ -79,7 +81,14 @@ public:
 
     std::string current_state_string()
     {
-        return currentState ? currentState->getStateString() : std::string("?");
+        // THREAD-SAFE snapshot for off-FSM-thread readers (the 1 Hz
+        // status_thread in main.cpp): reading the currentState shared_ptr while
+        // run_() reassigns it is a data race (2026-08-03 heap-corruption
+        // incident). The raw pointer is published atomically on every
+        // transition; the pointee lives in `states` for the process lifetime,
+        // so a stale snapshot is always safe to call.
+        BaseState* s = current_raw_.load(std::memory_order_acquire);
+        return s ? s->getStateString() : std::string("?");
     }
 
 private:
@@ -113,6 +122,7 @@ private:
                     spdlog::info("FSM: Change state from {} to {}", currentState->getStateString(), state->getStateString());
                     currentState->exit();
                     currentState = state;
+                    current_raw_.store(currentState.get(), std::memory_order_release);
                     currentState->enter();
                     break;
                 }
@@ -121,5 +131,6 @@ private:
     }
 
     std::shared_ptr<BaseState> currentState;
+    std::atomic<BaseState*> current_raw_{nullptr};   // cross-thread state-name snapshot (2026-08-03 fix)
     unitree::common::RecurrentThreadPtr fsm_thread_;
 };
