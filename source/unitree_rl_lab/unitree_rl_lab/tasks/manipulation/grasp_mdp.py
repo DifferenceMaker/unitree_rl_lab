@@ -272,6 +272,28 @@ def support_state(env: "ManagerBasedRLEnv") -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
+def reset_hand_default(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Reset the hand to its default state (root pose + open-finger joints).
+    Without this the hand carries the previous episode's grip into the next
+    one — the cube respawns inside a closed fist and the solver punches it out
+    (operator: "I want it gone", 2026-08-03). Declared BEFORE reset_scene so
+    the platform/cube placement reads the restored palm."""
+    robot: Articulation = env.scene[asset_cfg.name]
+    default_root = robot.data.default_root_state[env_ids].clone()
+    default_root[:, :3] += env.scene.env_origins[env_ids]
+    robot.write_root_pose_to_sim(default_root[:, :7], env_ids=env_ids)
+    robot.write_root_velocity_to_sim(default_root[:, 7:], env_ids=env_ids)
+    robot.write_joint_state_to_sim(
+        robot.data.default_joint_pos[env_ids].clone(),
+        robot.data.default_joint_vel[env_ids].clone(),
+        env_ids=env_ids,
+    )
+
+
 def reset_grasp_scene(
     env: "ManagerBasedRLEnv",
     env_ids: torch.Tensor,

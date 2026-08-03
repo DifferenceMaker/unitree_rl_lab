@@ -241,6 +241,10 @@ class EventCfg:
             "num_buckets": 64,
         },
     )
+    # hand back to default FIRST (root + open fingers): without this the cube
+    # respawns inside the previous episode's closed fist (2026-08-03). Order
+    # matters — declared before reset_scene, which reads the palm pose.
+    reset_hand = EventTerm(func=grasp_mdp.reset_hand_default, mode="reset")
     # scene reset: platform height (= palm-to-cube gap), cube pose, retract time
     reset_scene = EventTerm(
         func=grasp_mdp.reset_grasp_scene,
