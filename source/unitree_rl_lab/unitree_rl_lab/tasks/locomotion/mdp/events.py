@@ -205,6 +205,7 @@ def move_anchor(
     env_ids: torch.Tensor,
     radius_range: tuple = (0.2, 0.4),
     yaw_range: tuple = (-0.4, 0.4),
+    half_normal_sigma: float | None = None,
 ):
     """dp4b (operator design 2026-08-05): mid-episode HOME RELOCATION.
 
@@ -223,7 +224,15 @@ def move_anchor(
     if not hasattr(env, "spawn_root_xy"):
         return
     n = len(env_ids)
-    r = radius_range[0] + torch.rand(n, device=env.device) * (radius_range[1] - radius_range[0])
+    if half_normal_sigma is not None:
+        # ANCHOR_WANDER spec, ported verbatim from the MuJoCo eval side
+        # (anchor_pub.h): half-normal step |N(0, sigma)|, clamped at
+        # radius_range[1] — models the real perception pipeline re-publishing
+        # the desk point every 1-2 s with small re-estimates.
+        r = torch.abs(torch.randn(n, device=env.device) * half_normal_sigma
+                      ).clamp(max=radius_range[1])
+    else:
+        r = radius_range[0] + torch.rand(n, device=env.device) * (radius_range[1] - radius_range[0])
     th = torch.rand(n, device=env.device) * (2.0 * math.pi)
     d = torch.stack([r * torch.cos(th), r * torch.sin(th)], dim=-1)
     env.spawn_root_xy[env_ids] += d
