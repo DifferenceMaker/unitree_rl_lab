@@ -494,6 +494,66 @@ def action_rate_clamped(env: "ManagerBasedRLEnv", max_sq: float = 25.0) -> torch
     return torch.sum(torch.square(d), dim=-1).clamp(max=max_sq)
 
 
+def _driver_ids(env: "ManagerBasedRLEnv"):
+    if not hasattr(env, "grasp_driver_ids"):
+        asset: Articulation = env.scene["robot"]
+        ids, _ = asset.find_joints(DRIVER_JOINTS, preserve_order=True)
+        env.grasp_driver_ids = torch.tensor(ids, device=env.device, dtype=torch.long)
+    return env.grasp_driver_ids
+
+
+def finger_vel_reversal(env: "ManagerBasedRLEnv", max_sq: float = 4.0) -> torch.Tensor:
+    """gr4 (operator design, 2026-08-05): penalize DIRECTION REVERSALS of the
+    finger driver joints — pay relu(-dq_t * dq_{t-1}) per joint. Punishes
+    exactly the free-finger dither (flip-flopping velocity) while a fast
+    COMMITTED close (monotone dq) costs nothing — which a plain joint_acc
+    penalty would also tax. Clamped (every term bounded — the gr law); zeroed
+    on the reset step (prev dq belongs to the previous episode)."""
+    ids = _driver_ids(env)
+    dq = env.scene["robot"].data.joint_vel[:, ids]
+    if not hasattr(env, "grasp_prev_dq"):
+        env.grasp_prev_dq = torch.zeros_like(dq)
+    rev = torch.relu(-(dq * env.grasp_prev_dq)).sum(dim=-1).clamp(max=max_sq)
+    env.grasp_prev_dq = dq.clone()
+    rev = torch.where(env.episode_length_buf <= 1, torch.zeros_like(rev), rev)
+    return rev
+
+
+def finger_jacc_clamped(env: "ManagerBasedRLEnv", scale: float = 1e-4,
+                        max_val: float = 10.0) -> torch.Tensor:
+    """gr4: bounded joint-acceleration penalty on the finger drivers — the
+    smoothness bracket's other rung (vs finger_vel_reversal). scale*sum(acc^2),
+    clamped per env per step."""
+    ids = _driver_ids(env)
+    acc = env.scene["robot"].data.joint_acc[:, ids]
+    return (scale * torch.sum(torch.square(acc), dim=-1)).clamp(max=max_val)
+
+
+def finger_contact_count(env: "ManagerBasedRLEnv", force_thr: float = 0.5) -> torch.Tensor:
+    """gr4 (operator design, 2026-08-05): 'each finger touching the cube gives
+    a reward — the more the merrier'. Pays (thumb + 4 opposing fingers in
+    contact)/5 per tick — a DENSE version of the count-closure idea: every
+    additional finger recruited pays immediately, incl. the parked middle
+    finger. Bounded <= 1 by construction."""
+    f = _pad_force_mags(env)
+    thumb_m, _ = _pad_masks(env)
+    loaded = f > force_thr
+    names = env.scene.sensors["pad_sensor"].body_names
+    if not hasattr(env, "grasp_finger_group"):
+        groups = torch.full((len(names),), -1, dtype=torch.long, device=env.device)
+        for gi, key in enumerate(("index", "middle", "ring", "little")):
+            for bi, bn in enumerate(names):
+                if key in bn:
+                    groups[bi] = gi
+        env.grasp_finger_group = groups
+    n = loaded[:, thumb_m].any(dim=-1).float()
+    for gi in range(4):
+        m = env.grasp_finger_group == gi
+        if m.any():
+            n = n + loaded[:, m].any(dim=-1).float()
+    return n / 5.0
+
+
 def approach_support(env: "ManagerBasedRLEnv", env_ids: torch.Tensor):
     """gr3a: MOVING-PALM curriculum, implemented by relativity. The policy is
     blind to world pose (tactile + drivers only), so moving the SUPPORT+CUBE
