@@ -43,10 +43,18 @@ from .balance_env_cfg import RobotEnvCfg, RobotPlayEnvCfg
 
 
 def _resolve_func(name):
-    """Resolve a reward/event function name to the callable on mdp."""
+    """Resolve a reward/event function name: locomotion mdp first, then the
+    manipulation grasp_mdp (gr4 add_reward funcs live there — the gr4 batch
+    failed to boot on this lookup, 2026-08-05)."""
     fn = getattr(mdp, name, None)
     if fn is None:
-        raise ValueError(f"[QUEUE] add_reward func '{name}' not found in mdp")
+        try:
+            from unitree_rl_lab.tasks.manipulation import grasp_mdp as _gm
+            fn = getattr(_gm, name, None)
+        except Exception:
+            fn = None
+    if fn is None:
+        raise ValueError(f"[QUEUE] add_reward func '{name}' not found in mdp/grasp_mdp")
     return fn
 
 
