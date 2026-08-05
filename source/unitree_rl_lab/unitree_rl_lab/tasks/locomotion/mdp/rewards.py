@@ -954,6 +954,7 @@ def feet_gait_recovery(
     sensor_cfg: SceneEntityCfg,
     threshold: float = 0.5,
     gate_speed: float = 0.15,
+    gate_anchor_dist: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """P13: walk's feet_gait adapted for the BALANCE task — same antiphase
@@ -988,4 +989,12 @@ def feet_gait_recovery(
 
     asset = env.scene[asset_cfg.name]
     recovering = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
+    if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
+        # dp4b: ALSO open the gate when far from home (anchor moved / drifted
+        # out) — pays paced antiphase stepping TOWARD the point instead of the
+        # lean-and-shimmy the stepping costs otherwise select for. The policy
+        # sees where to go via the anchor obs; this term says HOW to get there.
+        far = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy,
+                         dim=-1) > gate_anchor_dist
+        recovering = recovering | far
     return reward * recovering.float()

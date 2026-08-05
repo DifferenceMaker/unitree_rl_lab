@@ -198,3 +198,36 @@ def resample_reach_point(
     env.reach_point_w[env_ids, 0] = env.spawn_root_xy[env_ids, 0] + fwd_d * c - lat_d * s
     env.reach_point_w[env_ids, 1] = env.spawn_root_xy[env_ids, 1] + fwd_d * s + lat_d * c
     env.reach_point_w[env_ids, 2] = h
+
+
+def move_anchor(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    radius_range: tuple = (0.2, 0.4),
+    yaw_range: tuple = (-0.4, 0.4),
+):
+    """dp4b (operator design 2026-08-05): mid-episode HOME RELOCATION.
+
+    Shifts the whole spawn-anchored frame — spawn_root_xy, spawn_foot_pos and
+    (optionally) spawn_yaw — by a random planar offset. Because the anchor
+    obs/bonus AND the spawn-geography terms (heading/base_pos/foot_displacement
+    -from-spawn) all reference these buffers, every authority relocates
+    COHERENTLY: the anchor moves, and "home" moves with it — no tug-of-war.
+    The policy must then close a 0.2-0.4 m error it can only fix by STEPPING;
+    the anchor obs shows it exactly where to go. This trains the following
+    behavior the desk line currently improvises out-of-distribution (training
+    anchors never moved; sim2sim "wobbles toward the ball", 2026-08-05).
+
+    Use as an interval event (e.g. every 4-8 s). No-op before the first spawn
+    capture. Bounded by construction (radius_range clamps the jump)."""
+    if not hasattr(env, "spawn_root_xy"):
+        return
+    n = len(env_ids)
+    r = radius_range[0] + torch.rand(n, device=env.device) * (radius_range[1] - radius_range[0])
+    th = torch.rand(n, device=env.device) * (2.0 * math.pi)
+    d = torch.stack([r * torch.cos(th), r * torch.sin(th)], dim=-1)
+    env.spawn_root_xy[env_ids] += d
+    env.spawn_foot_pos[env_ids] += d.unsqueeze(1)
+    if yaw_range is not None:
+        env.spawn_yaw[env_ids] += (yaw_range[0] + torch.rand(n, device=env.device)
+                                   * (yaw_range[1] - yaw_range[0]))
