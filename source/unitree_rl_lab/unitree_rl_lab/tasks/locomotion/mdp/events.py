@@ -206,6 +206,7 @@ def move_anchor(
     radius_range: tuple = (0.2, 0.4),
     yaw_range: tuple = (-0.4, 0.4),
     half_normal_sigma: float | None = None,
+    linear_decay: bool = False,
 ):
     """dp4b (operator design 2026-08-05): mid-episode HOME RELOCATION.
 
@@ -224,7 +225,14 @@ def move_anchor(
     if not hasattr(env, "spawn_root_xy"):
         return
     n = len(env_ids)
-    if half_normal_sigma is not None:
+    if linear_decay:
+        # dp4c anchor-wander v2 (operator 2026-08-06): displacement density
+        # decreasing LINEARLY from a peak at 0 to zero at radius_range[1] —
+        # "[0;15] cm where 0 is the most likely outcome and 15 the least, in a
+        # linear way". Inverse-CDF of the triangular(mode=0) distribution:
+        # r = r_max * (1 - sqrt(U)).
+        r = radius_range[1] * (1.0 - torch.sqrt(torch.rand(n, device=env.device)))
+    elif half_normal_sigma is not None:
         # ANCHOR_WANDER spec, ported verbatim from the MuJoCo eval side
         # (anchor_pub.h): half-normal step |N(0, sigma)|, clamped at
         # radius_range[1] — models the real perception pipeline re-publishing
