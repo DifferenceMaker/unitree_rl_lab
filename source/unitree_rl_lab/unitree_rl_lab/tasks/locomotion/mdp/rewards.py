@@ -887,6 +887,7 @@ def anchor_hold_bonus(
     fwd_offset: float = 0.5,
     heading_scale: float = 0.5,
     sigma: float = 0.15,
+    heading_to: str = "bearing",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """ANCHOR ROUND 2: bounded attractor kernel, exp(-(pos_err^2 + hs*yaw_err^2)/sigma^2).
@@ -905,8 +906,16 @@ def anchor_hold_bonus(
     delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
     pos_err2 = torch.sum(delta * delta, dim=-1)
     fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
-    to_anchor = env.spawn_root_xy + fwd_offset * fwd - asset.data.root_pos_w[:, :2]
-    desired_yaw = torch.atan2(to_anchor[:, 1], to_anchor[:, 0])
+    if heading_to == "spawn":
+        # dp4c heading fix (pushfull rotation bug, 2026-08-06): displaced off
+        # home, the BEARING to the anchor disagrees with the table-parallel
+        # spawn yaw by up to ~60 deg — the policy turns while returning. The
+        # desk requirement is TABLE PARALLELISM: hold the anchor's own
+        # orientation (spawn yaw), not the line of sight to it.
+        desired_yaw = env.spawn_yaw
+    else:
+        to_anchor = env.spawn_root_xy + fwd_offset * fwd - asset.data.root_pos_w[:, :2]
+        desired_yaw = torch.atan2(to_anchor[:, 1], to_anchor[:, 0])
     q = asset.data.root_quat_w
     yaw = torch.atan2(
         2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
