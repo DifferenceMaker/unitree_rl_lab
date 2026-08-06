@@ -256,7 +256,9 @@ class EventCfg:
             # (measured dxy 2.6cm at spawn; pad contact ~1% of steps across gr1
             # AND gr2a = two reward configs, same no-contact verdict -> alignment,
             # not reward, was the binding constraint). Widen back as DR later.
-            "xy_jitter": 0.01,
+            # gr5 rename: xy_jitter -> xy_placement_error (operator 2026-08-06:
+            # "jitter" means rapid chaotic finger motion, not spawn displacement).
+            "xy_placement_error": 0.01,
             # gr2: operator measured the hand can close on the cube out to 7cm max
             # (at 7cm it is fingertip-only, not a palm grasp). 8cm was OUT OF REACH,
             # so part of the old distribution was unsolvable by construction.
@@ -324,6 +326,14 @@ class RewardsCfg:
     # NaN std) once rising exploration std fed raw-action jitter into it.
     action_rate = RewTerm(
         func=grasp_mdp.action_rate_clamped, weight=-0.05, params={"max_sq": 25.0}
+    )
+    # gr5: STANDARD (operator 2026-08-06, promoting the gr4_smoothrev verdict —
+    # "smoothrev looks realllyyy smooth... add the smoothrev as a standard
+    # reward from now on"). Penalizes finger velocity REVERSALS (relu(-dq*dq_prev),
+    # clamped, reset-step zeroed) — kills the rapid chaotic finger oscillation
+    # without taxing committed one-direction motion the way action_rate does.
+    finger_smooth = RewTerm(
+        func=grasp_mdp.finger_vel_reversal, weight=-0.25, params={"max_sq": 4.0}
     )
 
 

@@ -298,7 +298,7 @@ def reset_grasp_scene(
     env: "ManagerBasedRLEnv",
     env_ids: torch.Tensor,
     palm_xy: tuple = (0.0, 0.12),
-    xy_jitter: float = 0.03,
+    xy_placement_error: float = 0.03,
     gap_range: tuple = (0.02, 0.08),
     cube_height: float = 0.055,
     platform_thickness: float = 0.02,
@@ -309,7 +309,7 @@ def reset_grasp_scene(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
     """Reset: place the kinematic platform so the palm-to-cube-top gap is
-    U[gap_range]; drop the cube on it with random yaw and xy jitter under the
+    U[gap_range]; drop the cube on it with random yaw and xy placement error under the
     palm; sample the support-retract time."""
     _buffers(env)
     n = len(env_ids)
@@ -357,8 +357,8 @@ def reset_grasp_scene(
     platform.write_root_pose_to_sim(plat_pose, env_ids=env_ids)
 
     cube_pose = torch.zeros(n, 7, device=dev)
-    cube_pose[:, 0] = plat_pose[:, 0] + (torch.rand(n, device=dev) * 2 - 1) * xy_jitter
-    cube_pose[:, 1] = plat_pose[:, 1] + (torch.rand(n, device=dev) * 2 - 1) * xy_jitter
+    cube_pose[:, 0] = plat_pose[:, 0] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
+    cube_pose[:, 1] = plat_pose[:, 1] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
     cube_pose[:, 2] = plat_top + cube_height / 2 + 0.002
     yaw = (torch.rand(n, device=dev) * 2 - 1) * torch.pi
     cube_pose[:, 3] = torch.cos(yaw / 2)
