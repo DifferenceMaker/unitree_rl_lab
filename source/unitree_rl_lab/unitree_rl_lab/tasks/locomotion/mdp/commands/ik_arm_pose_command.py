@@ -210,6 +210,24 @@ class IKArmPoseCommand(CommandTerm):
         """Draw per-arm Cartesian targets (torso frame) for env_ids."""
         n = len(env_ids)
         s = float(self.cfg.workspace_scale)
+        # Desk-level draws (dp4c): a fraction of targets lie ON the desk plane
+        # near the anchor — the body must learn to balance while the arms work
+        # at desk height (the deploy reality the free box under-samples).
+        # desk_level_prob is the UNCONDITIONAL fraction of resamples; only
+        # non-default envs reach here, so convert to a conditional. Falls back
+        # to the free draw silently when spawn buffers don't exist yet.
+        env = self._env
+        desk_p = 0.0
+        if (
+            self.cfg.desk_level_prob > 0.0
+            and hasattr(env, "spawn_root_xy")
+            and hasattr(env, "spawn_yaw")
+        ):
+            desk_p = min(
+                1.0,
+                float(self.cfg.desk_level_prob)
+                / max(1e-6, 1.0 - float(self.cfg.default_pose_prob)),
+            )
         for side in ("left", "right"):
             lo, hi = self.cfg.workspace_offset[0], self.cfg.workspace_offset[1]
             lo = torch.tensor(lo, device=self.device) * s
@@ -218,6 +236,31 @@ class IKArmPoseCommand(CommandTerm):
             if side == "right":
                 offs[:, 1] = -offs[:, 1]  # mirror the outward direction
             self.target_pos_b[side][env_ids] = self.default_ee_pos_b[side][env_ids] + offs
+
+            if desk_p > 0.0:
+                mask = torch.rand(n, device=self.device) < desk_p
+                if mask.any():
+                    ids = env_ids[mask]
+                    m = len(ids)
+                    syaw = env.spawn_yaw[ids]
+                    fwd = torch.stack([torch.cos(syaw), torch.sin(syaw)], dim=-1)
+                    lat = torch.stack([-torch.sin(syaw), torch.cos(syaw)], dim=-1)
+                    anchor_xy = env.spawn_root_xy[ids] + self.cfg.desk_fwd_offset * fwd
+                    x_lo, x_hi = self.cfg.desk_x_range
+                    y_lo, y_hi = self.cfg.desk_y_range
+                    dx = x_lo + torch.rand(m, device=self.device) * (x_hi - x_lo)
+                    dy = y_lo + torch.rand(m, device=self.device) * (y_hi - y_lo)
+                    p_xy = anchor_xy + dx.unsqueeze(-1) * fwd + dy.unsqueeze(-1) * lat
+                    z = self.cfg.desk_height_w + (
+                        torch.rand(m, device=self.device) * 2.0 - 1.0
+                    ) * self.cfg.desk_z_jitter
+                    p_w = torch.cat([p_xy, z.unsqueeze(-1)], dim=-1)
+                    # World -> torso frame at resample time (the frame the
+                    # deploy ActionModule solves in; anchor relocation between
+                    # resamples shifts later draws, same as a fresh vision fix).
+                    tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
+                    pos_b, _ = subtract_frame_transforms(tp[:, 0:3], tp[:, 3:7], p_w)
+                    self.target_pos_b[side][ids] = pos_b
 
             if self.cfg.orientation_mode:
                 # Sample a bounded local rotation delta; identity for the
@@ -462,6 +505,32 @@ class IKArmPoseCommandCfg(CommandTermCfg):
     orientation_prob: float = 0.7
     """Fraction of resamples that constrain orientation (identity delta
     otherwise — those behave like position-only draws)."""
+
+    # --- desk-level draws (dp4c: balance while the arms WORK AT THE DESK) ---
+    desk_level_prob: float = 0.0
+    """UNCONDITIONAL fraction of resamples whose target lies on the desk plane
+    near the anchor (operator 2026-08-06 split: default/desk/random =
+    20/30/50 -> default_pose_prob 0.20, desk_level_prob 0.30). 0 disables —
+    existing tasks unchanged. Needs capture_spawn_state buffers (silently
+    falls back to the free draw until they exist)."""
+
+    desk_fwd_offset: float = 0.5
+    """Anchor forward offset (m) from spawn along the spawn heading — MUST
+    match anchor_point_b / anchor_hold_bonus (0.5 in the desk contract)."""
+
+    desk_height_w: float = 1.0
+    """World z (m) of the desk plane — MUST match anchor_point_b's height_w."""
+
+    desk_x_range: tuple[float, float] = (-0.20, 0.10)
+    """Offset (m) along spawn-forward relative to the ANCHOR (desk centre):
+    -0.20 = near edge, +0.10 = past centre."""
+
+    desk_y_range: tuple[float, float] = (-0.30, 0.30)
+    """Lateral offset (m) relative to the anchor (both arms, same range —
+    cross-body corners freeze at settle_time like any unreachable draw)."""
+
+    desk_z_jitter: float = 0.05
+    """Uniform +- jitter (m) on the desk-plane z (objects sit ON the desk)."""
 
     apply_directly: bool = True
     resampling_time_range: tuple[float, float] = (2.0, 10.0)
