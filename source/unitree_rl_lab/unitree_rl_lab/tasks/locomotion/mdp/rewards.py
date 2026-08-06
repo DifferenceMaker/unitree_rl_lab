@@ -637,6 +637,33 @@ def upright_bonus(
     proj_gravity_xy_sq = torch.sum(asset.data.projected_gravity_b[:, :2] ** 2, dim=-1)
     return torch.exp(-proj_gravity_xy_sq / (std ** 2))
 
+
+def upright_linear(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """LINEAR uprightness (dp4c_armdesk_linear, operator 2026-08-06): reward
+    proportional to how upright the base is — cos(tilt) = -g_z in the base
+    frame, clamped to [0,1]. Unlike upright_bonus's kernel (desk std 0.01 =
+    total forfeiture beyond ~1 deg), there is no cliff: a 20-deg working lean
+    keeps ~94% of the reward — "some uprightness still pays" while leaning
+    costs progressively, never catastrophically. Bounded [0,1]."""
+    asset = env.scene[asset_cfg.name]
+    return torch.clamp(-asset.data.projected_gravity_b[:, 2], min=0.0)
+
+
+def flat_orientation_linear(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """LINEAR anti-lean penalty: |g_xy| = sin(tilt), in [0,1]. The L2 version
+    is quadratic — negligible cost near upright, a WALL at working-lean depth;
+    this one prices each degree of lean about the same, so a deliberate desk
+    lean is affordable while exactly-upright stays cheapest. Use INSTEAD of
+    flat_orientation_l2 (weight it negative). Bounded [0,1]."""
+    asset = env.scene[asset_cfg.name]
+    return torch.norm(asset.data.projected_gravity_b[:, :2], dim=-1)
+
 def foot_impact_velocity(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,
