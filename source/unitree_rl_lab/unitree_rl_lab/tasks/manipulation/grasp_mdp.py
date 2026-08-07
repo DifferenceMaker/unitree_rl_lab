@@ -704,3 +704,102 @@ def wrist_pose_offset(env: "ManagerBasedRLEnv") -> torch.Tensor:
     r, p, y = math_utils.euler_xyz_from_quat(qrel)
     drpy = torch.stack([r, p, y], dim=-1) / 0.30
     return torch.cat([dp, drpy], dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# gr5b: arm-in-the-loop (2026-08-06)
+# ---------------------------------------------------------------------------
+def reset_arm_park_error(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    joint_names: list,
+    noise_rad: float = 0.08,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Deploy-analog PARKING ERROR: after reset_hand_default restores the
+    default pose, add uniform joint noise to the ARM joints — the resolver
+    parked with error, and the policy's arm channel can now CORRECT it
+    (the gr5 aligndr/offsetdr tail becomes solvable). Bounded by noise_rad."""
+    robot: Articulation = env.scene[asset_cfg.name]
+    key = "_gr5b_arm_ids_" + str(len(joint_names))
+    if not hasattr(env, key):
+        ids, _ = robot.find_joints(joint_names)
+        setattr(env, key, torch.tensor(ids, device=env.device, dtype=torch.long))
+    jids = getattr(env, key)
+    n = len(env_ids)
+    noise = (torch.rand(n, len(jids), device=env.device) * 2.0 - 1.0) * noise_rad
+    jp = robot.data.joint_pos[env_ids].clone()
+    jp[:, jids] += noise
+    jv = robot.data.joint_vel[env_ids].clone()
+    jv[:, jids] = 0.0
+    robot.write_joint_state_to_sim(jp, jv, env_ids=env_ids)
+
+
+def table_contact_penalty(
+    env: "ManagerBasedRLEnv",
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("hand_contact"),
+    force_thr: float = 1.0,
+    max_val: float = 10.0,
+) -> torch.Tensor:
+    """Penalize HAND-STRUCTURE contact with the table slab (thumb strikes —
+    the real reason production pitches the wrist -24 deg). Filtered contact
+    forces vs the platform only, hinged above force_thr, CLAMPED (gr law)."""
+    sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    fm = sensor.data.force_matrix_w  # (N, bodies, filters, 3)
+    if fm is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    mag = torch.norm(fm, dim=-1).sum(dim=(-2, -1))
+    return (mag - force_thr).clamp(min=0.0, max=max_val)
+
+
+def joint_vel_reversal(
+    env: "ManagerBasedRLEnv",
+    joint_names: list,
+    max_sq: float = 4.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """finger_vel_reversal generalized to an arbitrary joint set (gr5b arm
+    smoothness): penalize velocity direction flips, clamped, reset-safe."""
+    robot: Articulation = env.scene[asset_cfg.name]
+    key = "_jvr_ids_" + str(hash(tuple(joint_names)) % 100000)
+    if not hasattr(env, key):
+        ids, _ = robot.find_joints(joint_names)
+        setattr(env, key, torch.tensor(ids, device=env.device, dtype=torch.long))
+    jids = getattr(env, key)
+    dq = robot.data.joint_vel[:, jids]
+    pkey = key + "_prev"
+    if not hasattr(env, pkey):
+        setattr(env, pkey, torch.zeros_like(dq))
+    prev = getattr(env, pkey)
+    rev = torch.relu(-(dq * prev)).sum(dim=-1).clamp(max=max_sq)
+    setattr(env, pkey, dq.clone())
+    return rev
+
+
+def wobble_root(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    pos_range: float = 0.02,
+    rot_range: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """gr5b_armwobble: TORSO-MOUNT WOBBLE DR — the balance policy's residual
+    sway, emulated by re-jittering the fixed root pose (reset mode: per-episode
+    mount error; interval mode: slow sway). Small by construction."""
+    robot: Articulation = env.scene[asset_cfg.name]
+    n = len(env_ids)
+    default = robot.data.default_root_state[env_ids].clone()
+    default[:, :3] += env.scene.env_origins[env_ids]
+    default[:, :3] += (torch.rand(n, 3, device=env.device) * 2 - 1) * pos_range
+    dr = (torch.rand(n, 3, device=env.device) * 2 - 1) * rot_range
+    q = default[:, 3:7]
+    half = dr * 0.5
+    dq = torch.cat([torch.ones(n, 1, device=env.device), half], dim=-1)
+    dq = dq / dq.norm(dim=-1, keepdim=True)
+    w1, x1, y1, z1 = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    w2, x2, y2, z2 = dq[:, 0], dq[:, 1], dq[:, 2], dq[:, 3]
+    default[:, 3] = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    default[:, 4] = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    default[:, 5] = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    default[:, 6] = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    robot.write_root_pose_to_sim(default[:, :7], env_ids=env_ids)
