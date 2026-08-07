@@ -1034,3 +1034,29 @@ def feet_gait_recovery(
                          dim=-1) > gate_anchor_dist
         recovering = recovering | far
     return reward * recovering.float()
+
+
+def desk_reach_bonus(
+    env: "ManagerBasedRLEnv",
+    sigma: float = 0.2,
+    command_name: str = "arm_pose_command",
+) -> torch.Tensor:
+    """dp4c LEAN PROGRAM: bounded bonus for each hand approaching its WISH
+    (the pre-resolution world target), gated to DESK-PLANE draws. The arm
+    joints are externally commanded, so the only actuator that reduces the
+    world-frame hand-to-wish gap is the BODY: shoulder forward = lean. This is
+    the tilt2 hand_reach gradient revived on the wish machinery. exp kernel,
+    [0,1] per arm, averaged. Zeros when no desk draw is active."""
+    try:
+        cmd = env.command_manager.get_term(command_name)
+    except Exception:
+        return torch.zeros(env.num_envs, device=env.device)
+    robot = env.scene["robot"]
+    total = torch.zeros(env.num_envs, device=env.device)
+    for side in ("left", "right"):
+        ee = robot.data.body_pos_w[:, cmd.ee_body_idx[side]]
+        err2 = torch.sum((ee - cmd.wish_w[side]) ** 2, dim=-1)
+        bonus = torch.exp(-err2 / (sigma * sigma))
+        active = cmd.desk_wish_mask[side] & ~cmd.default_mode
+        total = total + bonus * active.float()
+    return total * 0.5

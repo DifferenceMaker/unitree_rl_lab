@@ -126,3 +126,32 @@ def reach_point_b(
     if noise_std > 0.0:
         rel_b = rel_b + torch.randn_like(rel_b) * noise_std
     return rel_b
+
+
+def arm_wish_b(
+    env: ManagerBasedRLEnv,
+    command_name: str = "arm_pose_command",
+    noise_std: float = 0.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp4c LEAN PROGRAM: the WISH — the world point each arm is trying to
+    reach, in the BASE frame, both arms (6 floats: left xyz + right xyz).
+    This is the step BEFORE resolution: the policy receives the intent even
+    when the resolver cannot reach it, so leaning to close the world-frame gap
+    is learnable AND expressible on deploy (the vision/ActionModule side
+    publishes the same pre-resolution point). Zeros until the command exists.
+    Deploy tail: additive, the anchor pattern."""
+    asset = env.scene[asset_cfg.name]
+    try:
+        cmd = env.command_manager.get_term(command_name)
+        wish_l, wish_r = cmd.wish_w["left"], cmd.wish_w["right"]
+    except Exception:
+        return torch.zeros(env.num_envs, 6, device=env.device)
+    out = []
+    for w in (wish_l, wish_r):
+        rel = _math_utils.quat_apply_inverse(asset.data.root_quat_w, w - asset.data.root_pos_w)
+        out.append(rel)
+    rel_b = torch.cat(out, dim=-1)
+    if noise_std > 0.0:
+        rel_b = rel_b + torch.randn_like(rel_b) * noise_std
+    return rel_b

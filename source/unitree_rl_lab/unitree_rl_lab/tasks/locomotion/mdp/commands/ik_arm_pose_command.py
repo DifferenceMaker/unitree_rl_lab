@@ -43,6 +43,7 @@ from isaaclab.managers import CommandTerm, CommandTermCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     matrix_from_quat,
+    quat_apply,
     quat_from_euler_xyz,
     quat_inv,
     quat_mul,
@@ -99,6 +100,20 @@ class IKArmPoseCommand(CommandTerm):
                 self.jacobi_joint_cols[side] = [j + 6 for j in self.arm_jids[side]]
 
         self.torso_body_idx = self.robot.find_bodies(cfg.torso_body_name)[0][0]
+
+        # dp4c lean program (2026-08-07): the WISH — the world-frame point each
+        # arm is TRYING to reach, stored pre-resolution. Consumed by the
+        # arm_wish_b obs (the policy sees the wish even when the arm cannot
+        # reach it) and desk_reach_bonus (leaning pays). desk_wish_mask marks
+        # desk-plane draws (the reach reward is gated to them).
+        self.wish_w = {
+            "left": torch.zeros(env.num_envs, 3, device=env.device),
+            "right": torch.zeros(env.num_envs, 3, device=env.device),
+        }
+        self.desk_wish_mask = {
+            "left": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+            "right": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        }
 
         # One batched DLS controller per arm. Position-only by default (the
         # 7-DOF arm resolves the extra DOFs minimally from the seed, like a
@@ -236,6 +251,12 @@ class IKArmPoseCommand(CommandTerm):
             if side == "right":
                 offs[:, 1] = -offs[:, 1]  # mirror the outward direction
             self.target_pos_b[side][env_ids] = self.default_ee_pos_b[side][env_ids] + offs
+            # wish = the target in WORLD frame (free draws), pre-resolution
+            tp_all = self.robot.data.body_pose_w[env_ids, self.torso_body_idx]
+            self.wish_w[side][env_ids] = tp_all[:, 0:3] + quat_apply(
+                tp_all[:, 3:7], self.target_pos_b[side][env_ids]
+            )
+            self.desk_wish_mask[side][env_ids] = False
 
             if desk_p > 0.0:
                 mask = torch.rand(n, device=self.device) < desk_p
@@ -261,6 +282,8 @@ class IKArmPoseCommand(CommandTerm):
                     tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
                     pos_b, _ = subtract_frame_transforms(tp[:, 0:3], tp[:, 3:7], p_w)
                     self.target_pos_b[side][ids] = pos_b
+                    self.wish_w[side][ids] = p_w
+                    self.desk_wish_mask[side][ids] = True
 
             if self.cfg.orientation_mode:
                 # Sample a bounded local rotation delta; identity for the
