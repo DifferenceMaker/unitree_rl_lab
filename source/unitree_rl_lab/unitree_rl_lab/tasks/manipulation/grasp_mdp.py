@@ -790,7 +790,9 @@ def wobble_root(
     n = len(env_ids)
     default = robot.data.default_root_state[env_ids].clone()
     default[:, :3] += env.scene.env_origins[env_ids]
-    default[:, :3] += (torch.rand(n, 3, device=env.device) * 2 - 1) * pos_range
+    pr = torch.tensor(pos_range if isinstance(pos_range, (tuple, list)) else (pos_range,) * 3,
+                      device=env.device, dtype=default.dtype)
+    default[:, :3] += (torch.rand(n, 3, device=env.device) * 2 - 1) * pr
     dr = (torch.rand(n, 3, device=env.device) * 2 - 1) * rot_range
     q = default[:, 3:7]
     half = dr * 0.5

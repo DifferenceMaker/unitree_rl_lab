@@ -50,11 +50,22 @@ ARM7_JOINTS = [
 ]
 
 
-def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaults, action_scale):
+def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaults, action_scale, torso_guard=False):
     # --- asset swap: hand -> hand-on-arm chain, fixed base ---
     cfg.scene.robot.spawn.asset_path = os.path.join(_ASSETS, f"robot/{urdf_name}/{urdf_name}.urdf")
     cfg.scene.robot.init_state.pos = root_pos
     cfg.scene.robot.init_state.rot = root_rot
+    # REAL TABLE HEIGHT (operator 2026-08-07): platform lands at ~1.0 m (the
+    # training/real desk height) because reset derives it from the live palm.
+    # SELF-COLLISIONS ON: the arm must not pass through the torso/itself.
+    cfg.scene.robot.spawn.articulation_props = sim_utils.ArticulationRootPropertiesCfg(
+        enabled_self_collisions=True
+    )
+    # torso-mount height DR +-5 cm (z; xy stays with the park-error DR)
+    cfg.events.mount_height_dr = EventTerm(
+        func=grasp_mdp.wobble_root, mode="reset",
+        params={"pos_range": (0.005, 0.005, 0.05), "rot_range": 0.0},
+    )
     # no overlapping patterns (Isaac forbids '.*' + explicit); exact arm names
     jp = {"left_(index|middle|ring|little|thumb).*": 0.0}
     jp.update({j: arm_defaults.get(j, 0.0) for j in arm_joints})
@@ -107,6 +118,19 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
         func=grasp_mdp.joint_vel_reversal, weight=-0.25,
         params={"joint_names": arm_joints, "max_sq": 4.0},
     )
+    if torso_guard:
+        # arm/hand must not strike the torso (physics blocks it now; the
+        # penalty teaches avoidance instead of grinding against it)
+        cfg.scene.torso_contact = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Hand/torso_link",
+            filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_(shoulder|elbow|wrist).*",
+                                    "{ENV_REGEX_NS}/Hand/left_base_link"],
+            update_period=0.0,
+        )
+        cfg.rewards.torso_hit = RewTerm(
+            func=grasp_mdp.table_contact_penalty, weight=-1.0,
+            params={"sensor_cfg": SceneEntityCfg("torso_contact"), "force_thr": 1.0, "max_val": 10.0},
+        )
     return cfg
 
 
@@ -117,7 +141,7 @@ class RobotEnvCfgWrist3(RobotEnvCfg):
             super().__post_init__()
         _make_arm_variant(
             self, "inspire_hand_wrist3",
-            root_pos=(0.011, -0.2695, 0.5329), root_rot=(0.5, 0.5, 0.5, 0.5),
+            root_pos=(0.011, -0.2695, 1.1129), root_rot=(0.5, 0.5, 0.5, 0.5),
             arm_joints=WRIST3_JOINTS, arm_defaults={}, action_scale=0.2,
         )
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
@@ -130,7 +154,17 @@ class RobotEnvCfgArm7(RobotEnvCfg):
             super().__post_init__()
         _make_arm_variant(
             self, "inspire_hand_arm7",
-            root_pos=(-0.03299, -0.1729, 0.2905), root_rot=(0.694989, 0.694989, 0.130347, 0.130347),
-            arm_joints=ARM7_JOINTS, arm_defaults={"left_elbow_joint": 1.2}, action_scale=0.15,
+            # TORSO UPRIGHT (structure-check fix 2026-08-07: the first root
+            # rotation solved only the palm pose and left the torso sideways —
+            # wrong gravity direction on the shoulder). Root = upright, yaw+90
+            # (torso faces scene +y); palm pose achieved via IK-solved DEFAULT
+            # JOINTS (residual 0.013, absorbed by park-error DR).
+            root_pos=(0.12, -0.38, 1.03), root_rot=(0.7071068, 0.0, 0.0, 0.7071068),
+            arm_joints=ARM7_JOINTS, arm_defaults={
+                "left_shoulder_pitch_joint": -0.4222, "left_shoulder_roll_joint": -0.2482,
+                "left_shoulder_yaw_joint": 0.4557, "left_elbow_joint": 0.6669,
+                "left_wrist_roll_joint": -1.1068, "left_wrist_pitch_joint": 0.2921,
+                "left_wrist_yaw_joint": -0.0587,
+            }, action_scale=0.15, torso_guard=True,
         )
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
