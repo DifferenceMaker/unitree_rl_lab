@@ -1060,3 +1060,21 @@ def desk_reach_bonus(
         active = cmd.desk_wish_mask[side] & ~cmd.default_mode
         total = total + bonus * active.float()
     return total * 0.5
+
+
+def desk_hit_penalty(
+    env: "ManagerBasedRLEnv",
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("desk_contact"),
+    force_thr: float = 1.0,
+    max_val: float = 10.0,
+) -> torch.Tensor:
+    """dp4c_deskcol: HAND-vs-DESK strike penalty (filtered contact matrix on
+    the desk body vs the wrist links), hinged above force_thr, CLAMPED. Legs
+    are deliberately excluded — base_forward_zone owns body-desk spacing; this
+    term owns the hand-strike failure mode."""
+    sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    fm = sensor.data.force_matrix_w
+    if fm is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    mag = torch.norm(fm, dim=-1).sum(dim=(-2, -1))
+    return (mag - force_thr).clamp(min=0.0, max=max_val)

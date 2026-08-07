@@ -248,3 +248,30 @@ def move_anchor(
     if yaw_range is not None:
         env.spawn_yaw[env_ids] += (yaw_range[0] + torch.rand(n, device=env.device)
                                    * (yaw_range[1] - yaw_range[0]))
+
+
+def place_desk(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    fwd_offset: float = 0.5,
+    top_z: float = 1.0,
+    thickness: float = 0.05,
+):
+    """dp4c_deskcol: place the KINEMATIC desk slab in front of the spawn
+    heading at reset (spawn yaw is per-env, so a static prim cannot align).
+    Desk centre = spawn_xy + fwd_offset (the anchor point = desk centre by
+    spec); top at top_z (the real 1.0 m). The balance policy finally FEELS
+    the table — the 'IK resolves onto the desk, hand strikes it, robot
+    stumbles viciously' failure mode becomes trainable."""
+    if not hasattr(env, "spawn_root_xy"):
+        return
+    desk = env.scene["desk"]
+    n = len(env_ids)
+    fwd = torch.stack([torch.cos(env.spawn_yaw[env_ids]), torch.sin(env.spawn_yaw[env_ids])], dim=-1)
+    pose = torch.zeros(n, 7, device=env.device)
+    pose[:, 0:2] = env.spawn_root_xy[env_ids] + fwd_offset * fwd
+    pose[:, 2] = top_z - thickness * 0.5
+    half = env.spawn_yaw[env_ids] * 0.5
+    pose[:, 3] = torch.cos(half)
+    pose[:, 6] = torch.sin(half)
+    desk.write_root_pose_to_sim(pose, env_ids=env_ids)
