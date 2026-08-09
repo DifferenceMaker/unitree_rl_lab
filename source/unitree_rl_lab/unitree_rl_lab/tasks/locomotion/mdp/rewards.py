@@ -1078,3 +1078,27 @@ def desk_hit_penalty(
         return torch.zeros(env.num_envs, device=env.device)
     mag = torch.norm(fm, dim=-1).sum(dim=(-2, -1))
     return (mag - force_thr).clamp(min=0.0, max=max_val)
+
+
+def heading_l1_from_spawn(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """LINEAR heading deviation from spawn yaw (|dyaw|, radians), wrapped.
+
+    dp4c heading program (2026-08-09): the L2 form's gradient VANISHES near
+    zero, so a small residual yaw offset is nearly free and the robot stays
+    slightly crooked; L1 keeps a constant restoring gradient at every error
+    size. Matched to `heading_l2_from_spawn` at 0.3 rad when weighted -1.5
+    against L2's -5.0. Use with a NEGATIVE weight."""
+    if not hasattr(env, "spawn_yaw"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    q = asset.data.root_quat_w
+    yaw = torch.atan2(
+        2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+        1.0 - 2.0 * (q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3]),
+    )
+    d = yaw - env.spawn_yaw
+    d = torch.atan2(torch.sin(d), torch.cos(d))
+    return torch.abs(d)

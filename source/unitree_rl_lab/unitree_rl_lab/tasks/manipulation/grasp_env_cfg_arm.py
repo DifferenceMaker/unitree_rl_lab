@@ -103,10 +103,15 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
     # sensor on the platform, filtered against the hand STRUCTURE links
     # (pads excluded on the non-thumb fingers — they touch the cube by design).
     cfg.scene.platform.spawn.activate_contact_sensors = True
+    # FILTER RULE (2026-08-09): the sensor must be ONE body per env and EACH
+    # filter entry must resolve to exactly ONE prim per env — a regex that
+    # expands to many fails SILENTLY (physx logs "did not match the correct
+    # number of entries", force_matrix_w comes back empty, the penalty pays 0
+    # forever). Enumerate every link explicitly.
     cfg.scene.hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Platform",
-        filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_base_link",
-                                "{ENV_REGEX_NS}/Hand/left_thumb_.*"],
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_base_link"]
+        + [f"{{ENV_REGEX_NS}}/Hand/left_thumb_{i}" for i in (1, 2, 3, 4)],
         update_period=0.0,
     )
     # --- rewards: gr5 ledger + table-hit penalty + arm smoothness (bounded) ---
@@ -123,8 +128,12 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
         # penalty teaches avoidance instead of grinding against it)
         cfg.scene.torso_contact = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Hand/torso_link",
-            filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_(shoulder|elbow|wrist).*",
-                                    "{ENV_REGEX_NS}/Hand/left_base_link"],
+            filter_prim_paths_expr=[
+                f"{{ENV_REGEX_NS}}/Hand/left_{n}"
+                for n in ("shoulder_pitch_link", "shoulder_roll_link", "shoulder_yaw_link",
+                          "elbow_link", "wrist_roll_link", "wrist_pitch_link",
+                          "wrist_yaw_link", "base_link")
+            ],
             update_period=0.0,
         )
         cfg.rewards.torso_hit = RewTerm(
