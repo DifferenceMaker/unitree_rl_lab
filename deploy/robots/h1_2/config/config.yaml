@@ -4,35 +4,23 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Balance_wide_micropush:
+    Balance_clearance:
       id: 4
       type: RLBase
-    Balance_clearance:
+    Balance_orientclear:
       id: 5
       type: RLBase
-    Balance_gait:
+    Balance_hipguard:
       id: 6
       type: RLBase
-    Balance_gaitstep:
+    Balance_airtime:
       id: 7
       type: RLBase
-    Balance_contact500:
+    Balance_all4:
       id: 8
       type: RLBase
-    Balance_gait4x:
+    Balance_tdvel:
       id: 9
-      type: RLBase
-    Balance_nosteppers:
-      id: 10
-      type: RLBase
-    Balance_stepfree:
-      id: 11
-      type: RLBase
-    Balance_orient:
-      id: 12
-      type: RLBase
-    Balance_hiprollcap:
-      id: 13
       type: RLBase
 
   Passive:
@@ -57,16 +45,12 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_wide_micropush: RB + Y.on_pressed
-      Balance_clearance:      RB + A.on_pressed
-      Balance_gait:           RB + X.on_pressed
-      Balance_gaitstep:       RB + B.on_pressed
-      Balance_contact500:     RB + right.on_pressed
-      Balance_gait4x:         RB + down.on_pressed
-      Balance_nosteppers:     RB + left.on_pressed
-      Balance_stepfree:       RB + up.on_pressed
-      Balance_orient:         LB + Y.on_pressed
-      Balance_hiprollcap:     LB + A.on_pressed
+      Balance_clearance:      RB + Y.on_pressed
+      Balance_orientclear:    RB + A.on_pressed
+      Balance_hipguard:       RB + X.on_pressed
+      Balance_airtime:        RB + B.on_pressed
+      Balance_all4:           RB + right.on_pressed
+      Balance_tdvel:          RB + down.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -101,16 +85,7 @@ FSM:
   # and the outward-hip stance seen across tainted p13?
   # hiprollcap still training (2026-08-05) — tested separately later.
 
-  Balance_wide_micropush: # RB+Y  REFERENCE — hardware-validated best (07-30 soles)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p12g_wide_micropush_2026-07-14
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_clearance:     # RB+A  clearance 5.0 only — wave-1 top scorer 1453
+  Balance_clearance:    # RB+Y  PARENT/REF — p13b_clearance, the hardware favorite (08-06)
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/p13b_clearance_2026-08-03
@@ -119,72 +94,46 @@ FSM:
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_gait:          # RB+X  PRIME combo (gait 0.5 + clearance 5 + contact500) — 1328
+  Balance_orientclear:    # RB+A  base combo: orientation_mode + clearance (prospective p14 parent)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_gait_2026-08-04
+    policy_dir: ../../../logs/milestones/p13c_orientclear_2026-08-07
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_gaitstep:      # RB+B  gated gait 0.5 only — 1145
+  Balance_hipguard:    # RB+X  + 80Nm hip-roll guard (orient hip-squeezes; p13b run failed, this retests on a competent base)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_gaitstep_2026-08-04
+    policy_dir: ../../../logs/milestones/p13c_hipguard_2026-08-08
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_contact500:    # RB+right  hinged >500N touchdown only — 1069
+  Balance_airtime:    # RB+B  + feet_air -1 (the stepfree/nosteppers sustained-push gene)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_contact500_2026-08-03
+    policy_dir: ../../../logs/milestones/p13c_airtime_2026-08-07
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_gait4x:        # RB+down  gait 2.0 SALVAGE model_17050 (detonated @17250) — ~1000 plateau
+  Balance_all4:    # RB+right  + feet_air -1 + gait clock, NO contact500 (unconfounded phasing test)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_gait4x_2026-08-03
+    policy_dir: ../../../logs/milestones/p13c_all4_2026-08-07
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
     engage_blend_s: 1.5
 
-  Balance_nosteppers:    # RB+left  base steppers REMOVED (slide/airtime/capture=0) — 937
+  Balance_tdvel:    # RB+down  + foot_impact_velocity -2 (quietness re-test on a calm parent)
     transitions:
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_nosteppers_2026-08-03
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_stepfree:    # RB+up  cheap stepping (feet_air -3->-1, displacement 0, capture kept) — stopped @16950 plateau 1503
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_stepfree_2026-08-05
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-  Balance_orient:    # LB+Y  orientation_mode=True (clean rebuild of the p12g_orient axis) — finished soft ~950, temper expectations
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_orient_2026-08-05
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_hiprollcap:    # LB+A  + joint_torque_over_limit -0.2 {80Nm} on hip rolls (the burnout guard axis)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_hiprollcap_2026-08-04
+    policy_dir: ../../../logs/milestones/p13c_tdvel_2026-08-07
     arm_kp: 40.0
     arm_kd: 3.0
     arm_transition_s: 4.0
