@@ -154,17 +154,21 @@ class RobotEnvCfgArm7(RobotEnvCfg):
             super().__post_init__()
         _make_arm_variant(
             self, "inspire_hand_arm7",
-            # TORSO UPRIGHT (structure-check fix 2026-08-07: the first root
-            # rotation solved only the palm pose and left the torso sideways —
-            # wrong gravity direction on the shoulder). Root = upright, yaw+90
-            # (torso faces scene +y); palm pose achieved via IK-solved DEFAULT
-            # JOINTS (residual 0.013, absorbed by park-error DR).
-            root_pos=(0.12, -0.38, 1.03), root_rot=(0.7071068, 0.0, 0.0, 0.7071068),
+            # PALM-FLIP FIX (operator video review 2026-08-09: "the palm is
+            # facing UPWARD instead of downward"). Cause: the IK orientation
+            # error used the skew-symmetric vector, which is IDENTICALLY ZERO
+            # at a 180-deg rotation error — a flipped-palm solution reported
+            # "converged". Re-solved with a log-map error (180-deg branch
+            # handled) + a posture prior taken from the REAL robot's MoveIt
+            # seed, and VERIFIED numerically: palm normal (0,+1,0)_link maps to
+            # [-0.05, 0.02, -0.999] = DOWN, fingers to [-0.01, 1.0, 0.02] = +y
+            # forward — matching the gr5/wrist3 reference exactly.
+            root_pos=(0.10, -0.30, 1.13), root_rot=(0.7071068, 0.0, 0.0, 0.7071068),
             arm_joints=ARM7_JOINTS, arm_defaults={
-                "left_shoulder_pitch_joint": -0.4222, "left_shoulder_roll_joint": -0.2482,
-                "left_shoulder_yaw_joint": 0.4557, "left_elbow_joint": 0.6669,
-                "left_wrist_roll_joint": -1.1068, "left_wrist_pitch_joint": 0.2921,
-                "left_wrist_yaw_joint": -0.0587,
+                "left_shoulder_pitch_joint": -0.3782, "left_shoulder_roll_joint": -0.1090,
+                "left_shoulder_yaw_joint": -0.2756, "left_elbow_joint": 1.1317,
+                "left_wrist_roll_joint": 1.3104, "left_wrist_pitch_joint": 0.3114,
+                "left_wrist_yaw_joint": 0.8009,
             }, action_scale=0.15, torso_guard=True,
         )
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
