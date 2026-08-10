@@ -115,6 +115,16 @@ class IKArmPoseCommand(CommandTerm):
             "right": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
         }
 
+        # dp5 DEPLOY-MIMICKING ARM CYCLE (operator 2026-08-10): the real stack
+        # does not wave the arms at random — ActionModule returns to its
+        # go_to_start pose, reaches a desk point, reaches another, returns.
+        # cycle_pattern encodes that as a repeating slot sequence per env.
+        self._cycle_i = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        _codes = {"start": 0, "desk": 1, "free": 2}
+        self._cycle_codes = torch.tensor(
+            [_codes[k] for k in cfg.cycle_pattern], dtype=torch.long, device=env.device
+        )
+
         # One batched DLS controller per arm. Position-only by default (the
         # 7-DOF arm resolves the extra DOFs minimally from the seed, like a
         # seeded KDL solve). orientation_mode=True (p12+) switches to 6-DoF
@@ -222,76 +232,116 @@ class IKArmPoseCommand(CommandTerm):
         self._sample_targets(env_ids)
 
     def _sample_targets(self, env_ids: torch.Tensor):
-        """Draw per-arm Cartesian targets (torso frame) for env_ids."""
+        """Draw per-arm Cartesian targets (torso frame) for env_ids.
+
+        Three KINDS of draw:
+          start : the deploy go_to_start pose (ABSOLUTE torso-frame point, the
+                  colleague's raised hands-above-desk pose) — identity
+                  orientation delta so the return is a clean repeatable posture
+          desk  : a point on the desk plane near the anchor (work zone)
+          free  : the old uniform draw inside workspace_offset (robustness)
+
+        cycle_mode=False keeps the historical behaviour exactly: default_pose /
+        desk_level_prob / free, decided per resample. cycle_mode=True walks
+        cycle_pattern per env (e.g. start, desk, desk -> repeat), with
+        cycle_random_prob of any slot being replaced by a free draw so the
+        policy still sees off-script arm poses.
+        """
         n = len(env_ids)
         s = float(self.cfg.workspace_scale)
-        # Desk-level draws (dp4c): a fraction of targets lie ON the desk plane
-        # near the anchor — the body must learn to balance while the arms work
-        # at desk height (the deploy reality the free box under-samples).
-        # desk_level_prob is the UNCONDITIONAL fraction of resamples; only
-        # non-default envs reach here, so convert to a conditional. Falls back
-        # to the free draw silently when spawn buffers don't exist yet.
         env = self._env
-        desk_p = 0.0
-        if (
-            self.cfg.desk_level_prob > 0.0
-            and hasattr(env, "spawn_root_xy")
-            and hasattr(env, "spawn_yaw")
-        ):
-            desk_p = min(
-                1.0,
-                float(self.cfg.desk_level_prob)
-                / max(1e-6, 1.0 - float(self.cfg.default_pose_prob)),
-            )
-        for side in ("left", "right"):
-            lo, hi = self.cfg.workspace_offset[0], self.cfg.workspace_offset[1]
-            lo = torch.tensor(lo, device=self.device) * s
-            hi = torch.tensor(hi, device=self.device) * s
-            offs = lo + torch.rand(n, 3, device=self.device) * (hi - lo)
-            if side == "right":
-                offs[:, 1] = -offs[:, 1]  # mirror the outward direction
-            self.target_pos_b[side][env_ids] = self.default_ee_pos_b[side][env_ids] + offs
-            # wish = the target in WORLD frame (free draws), pre-resolution
-            tp_all = self.robot.data.body_pose_w[env_ids, self.torso_body_idx]
-            self.wish_w[side][env_ids] = tp_all[:, 0:3] + quat_apply(
-                tp_all[:, 3:7], self.target_pos_b[side][env_ids]
-            )
-            self.desk_wish_mask[side][env_ids] = False
 
+        # --- decide the KIND per env ---
+        if self.cfg.cycle_mode:
+            slot = self._cycle_i[env_ids] % len(self._cycle_codes)
+            self._cycle_i[env_ids] += 1
+            kind = self._cycle_codes[slot].clone()
+            # a fraction of scheduled slots become free draws (robustness)
+            if self.cfg.cycle_random_prob > 0.0:
+                roll = torch.rand(n, device=self.device) < self.cfg.cycle_random_prob
+                kind[roll] = 2
+        else:
+            kind = torch.full((n,), 2, dtype=torch.long, device=self.device)  # free
+            desk_p = 0.0
+            if (
+                self.cfg.desk_level_prob > 0.0
+                and hasattr(env, "spawn_root_xy")
+                and hasattr(env, "spawn_yaw")
+            ):
+                desk_p = min(
+                    1.0,
+                    float(self.cfg.desk_level_prob)
+                    / max(1e-6, 1.0 - float(self.cfg.default_pose_prob)),
+                )
             if desk_p > 0.0:
-                mask = torch.rand(n, device=self.device) < desk_p
-                if mask.any():
-                    ids = env_ids[mask]
-                    m = len(ids)
-                    syaw = env.spawn_yaw[ids]
-                    fwd = torch.stack([torch.cos(syaw), torch.sin(syaw)], dim=-1)
-                    lat = torch.stack([-torch.sin(syaw), torch.cos(syaw)], dim=-1)
-                    anchor_xy = env.spawn_root_xy[ids] + self.cfg.desk_fwd_offset * fwd
-                    x_lo, x_hi = self.cfg.desk_x_range
-                    y_lo, y_hi = self.cfg.desk_y_range
-                    dx = x_lo + torch.rand(m, device=self.device) * (x_hi - x_lo)
-                    dy = y_lo + torch.rand(m, device=self.device) * (y_hi - y_lo)
-                    p_xy = anchor_xy + dx.unsqueeze(-1) * fwd + dy.unsqueeze(-1) * lat
-                    z = self.cfg.desk_height_w + (
-                        torch.rand(m, device=self.device) * 2.0 - 1.0
-                    ) * self.cfg.desk_z_jitter
-                    p_w = torch.cat([p_xy, z.unsqueeze(-1)], dim=-1)
-                    # World -> torso frame at resample time (the frame the
-                    # deploy ActionModule solves in; anchor relocation between
-                    # resamples shifts later draws, same as a fresh vision fix).
-                    tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
-                    pos_b, _ = subtract_frame_transforms(tp[:, 0:3], tp[:, 3:7], p_w)
-                    self.target_pos_b[side][ids] = pos_b
-                    self.wish_w[side][ids] = p_w
-                    self.desk_wish_mask[side][ids] = True
+                kind[torch.rand(n, device=self.device) < desk_p] = 1
+        # desk slots need the spawn buffers; fall back to free if absent
+        if not (hasattr(env, "spawn_root_xy") and hasattr(env, "spawn_yaw")):
+            kind[kind == 1] = 2
+
+        for side in ("left", "right"):
+            sign = 1.0 if side == "left" else -1.0
+
+            # ---- FREE draws (uniform inside the offset box) ----
+            m_free = kind == 2
+            if m_free.any():
+                ids = env_ids[m_free]
+                k = len(ids)
+                lo = torch.tensor(self.cfg.workspace_offset[0], device=self.device) * s
+                hi = torch.tensor(self.cfg.workspace_offset[1], device=self.device) * s
+                offs = lo + torch.rand(k, 3, device=self.device) * (hi - lo)
+                if side == "right":
+                    offs[:, 1] = -offs[:, 1]
+                self.target_pos_b[side][ids] = self.default_ee_pos_b[side][ids] + offs
+                tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
+                self.wish_w[side][ids] = tp[:, 0:3] + quat_apply(
+                    tp[:, 3:7], self.target_pos_b[side][ids]
+                )
+                self.desk_wish_mask[side][ids] = False
+
+            # ---- START pose (absolute torso-frame point, deploy analog) ----
+            m_start = kind == 0
+            if m_start.any():
+                ids = env_ids[m_start]
+                k = len(ids)
+                sp = torch.tensor(self.cfg.start_pose_b, device=self.device).repeat(k, 1)
+                sp[:, 1] = sp[:, 1] * sign          # y is OUTWARD, mirrored per side
+                self.target_pos_b[side][ids] = sp
+                tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
+                self.wish_w[side][ids] = tp[:, 0:3] + quat_apply(tp[:, 3:7], sp)
+                self.desk_wish_mask[side][ids] = False
+
+            # ---- DESK plane near the anchor ----
+            m_desk = kind == 1
+            if m_desk.any():
+                ids = env_ids[m_desk]
+                k = len(ids)
+                syaw = env.spawn_yaw[ids]
+                fwd = torch.stack([torch.cos(syaw), torch.sin(syaw)], dim=-1)
+                lat = torch.stack([-torch.sin(syaw), torch.cos(syaw)], dim=-1)
+                anchor_xy = env.spawn_root_xy[ids] + self.cfg.desk_fwd_offset * fwd
+                x_lo, x_hi = self.cfg.desk_x_range
+                y_lo, y_hi = self.cfg.desk_y_range
+                dx = x_lo + torch.rand(k, device=self.device) * (x_hi - x_lo)
+                dy = y_lo + torch.rand(k, device=self.device) * (y_hi - y_lo)
+                p_xy = anchor_xy + dx.unsqueeze(-1) * fwd + dy.unsqueeze(-1) * lat
+                z = self.cfg.desk_height_w + (
+                    torch.rand(k, device=self.device) * 2.0 - 1.0
+                ) * self.cfg.desk_z_jitter
+                p_w = torch.cat([p_xy, z.unsqueeze(-1)], dim=-1)
+                tp = self.robot.data.body_pose_w[ids, self.torso_body_idx]
+                pos_b, _ = subtract_frame_transforms(tp[:, 0:3], tp[:, 3:7], p_w)
+                self.target_pos_b[side][ids] = pos_b
+                self.wish_w[side][ids] = p_w
+                self.desk_wish_mask[side][ids] = True
 
             if self.cfg.orientation_mode:
-                # Sample a bounded local rotation delta; identity for the
-                # (1 - orientation_prob) fraction (position-only-like draws).
-                # Applied to the MEASURED ee orientation on the next update.
                 lim = torch.tensor(self.cfg.orientation_delta_rpy, device=self.device)
                 rpy = (torch.rand(n, 3, device=self.device) * 2.0 - 1.0) * lim
                 constrained = torch.rand(n, device=self.device) < self.cfg.orientation_prob
+                # START slots hold identity: a repeatable return posture, like
+                # the deploy go_to_start which commands a fixed orientation.
+                constrained = constrained & (kind != 0)
                 rpy = rpy * constrained.unsqueeze(1).float()
                 self.orient_delta[side][env_ids] = quat_from_euler_xyz(
                     rpy[:, 0], rpy[:, 1], rpy[:, 2]
@@ -554,6 +604,24 @@ class IKArmPoseCommandCfg(CommandTermCfg):
 
     desk_z_jitter: float = 0.05
     """Uniform +- jitter (m) on the desk-plane z (objects sit ON the desk)."""
+
+    # --- dp5 deploy-mimicking cycle ---
+    cycle_mode: bool = False
+    """Walk `cycle_pattern` per env instead of drawing a kind at random."""
+
+    cycle_pattern: tuple = ("start", "desk", "desk")
+    """Repeating slot sequence. Mirrors the real ActionModule loop: return to
+    go_to_start, reach a desk point, reach another, return."""
+
+    cycle_random_prob: float = 0.2
+    """Probability a scheduled slot is replaced by a FREE draw — keeps
+    off-script arm poses in the distribution for robustness."""
+
+    start_pose_b: tuple = (0.250, 0.490, 0.550)
+    """The deploy go_to_start pose as an ABSOLUTE torso-frame point (y is
+    OUTWARD, mirrored for the right arm). From ActionModule
+    high_level_sdk.go_to_start: left move(0.250, 0.490, 0.550, roll 103.5,
+    pitch -41.5); the same xyz for the right arm with its own orientation."""
 
     apply_directly: bool = True
     resampling_time_range: tuple[float, float] = (2.0, 10.0)
