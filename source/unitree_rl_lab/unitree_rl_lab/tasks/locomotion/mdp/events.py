@@ -258,7 +258,14 @@ def place_desk(
     thickness: float = 0.05,
 ):
     """dp4c_deskcol: place the KINEMATIC desk slab in front of the spawn
-    heading at reset (spawn yaw is per-env, so a static prim cannot align).
+    heading (spawn yaw is per-env, so a static prim cannot align).
+
+    ANCHOR<->TABLE COUPLING (operator 2026-08-10): "the anchor IS the desk's
+    middle/center of the 4 markers... it sort of doesn't make sense that the
+    anchor moves but the table doesn't." Because the desk pose is derived from
+    spawn_root_xy/spawn_yaw — the SAME buffers move_anchor shifts — running
+    this term on the anchor's own schedule (interval 1-2 s) keeps the slab
+    glued to the anchor. Reset-only placement left them decoupled.
     Desk centre = spawn_xy + fwd_offset (the anchor point = desk centre by
     spec); top at top_z (the real 1.0 m). The balance policy finally FEELS
     the table — the 'IK resolves onto the desk, hand strikes it, robot
