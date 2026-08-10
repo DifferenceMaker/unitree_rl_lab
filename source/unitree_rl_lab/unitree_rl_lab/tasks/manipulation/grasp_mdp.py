@@ -805,3 +805,64 @@ def wobble_root(
     default[:, 5] = w1*y2 - x1*z2 + y1*w2 + z1*x2
     default[:, 6] = w1*z2 + x1*y2 - y1*x2 + z1*w2
     robot.write_root_pose_to_sim(default[:, :7], env_ids=env_ids)
+
+
+def capture_cube_ref_pose(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+):
+    """gr5c: snapshot the cube's PALM-FRAME pose at reset — i.e. the pose the
+    VisualModule reported before the grasp. `cube_pose_hold_bonus` pays for
+    still being in that pose later. Declare AFTER reset_scene (it must read the
+    placed cube)."""
+    cube: RigidObject = env.scene["cube"]
+    p_pos, p_quat = _palm_pose(env)
+    pos_b = math_utils.quat_apply_inverse(p_quat, cube.data.root_pos_w - p_pos)
+    quat_b = math_utils.quat_mul(math_utils.quat_inv(p_quat), cube.data.root_quat_w)
+    if not hasattr(env, "cube_ref_pos_b"):
+        env.cube_ref_pos_b = torch.zeros_like(pos_b)
+        env.cube_ref_quat_b = torch.zeros_like(quat_b)
+        env.cube_ref_quat_b[:, 0] = 1.0
+    env.cube_ref_pos_b[env_ids] = pos_b[env_ids]
+    env.cube_ref_quat_b[env_ids] = quat_b[env_ids]
+
+
+def cube_pose_hold_bonus(
+    env: "ManagerBasedRLEnv",
+    sigma_pos: float = 0.04,
+    sigma_rot: float = 0.35,
+    force_thr: float = 0.5,
+) -> torch.Tensor:
+    """gr5c (operator 2026-08-10): keep the cube in the pose it was TAKEN in.
+
+    Rationale: in sim the support platform retracts, so the policy is free to
+    re-orient the cube down into space the REAL TABLE still occupies — it
+    "turns it into a more favourable position that would be under the table".
+    On the robot that is a collision. This term pays for holding the cube at
+    the palm-frame pose the vision stack reported (captured by
+    capture_cube_ref_pose at reset).
+
+    Shape follows the project's design grammar — a bounded kernel-near INCOME
+    (a goal to hold), not a penalty (penalties are for things that must never
+    happen: crush, table strike, limit riding):
+        exp(-|dpos|^2/sigma_pos^2) * exp(-(angle_err/sigma_rot)^2),  in [0, 1]
+    CONTACT-GATED: pays nothing before the fingers are actually loaded, so it
+    cannot reward a policy for hovering next to an untouched cube.
+    NB it biases, never vetoes — at a modest weight it cannot fight the arm/IK
+    authority for the pose the resolver wants (operator's IK-conflict question).
+    """
+    if not hasattr(env, "cube_ref_pos_b"):
+        return torch.zeros(env.num_envs, device=env.device)
+    cube: RigidObject = env.scene["cube"]
+    p_pos, p_quat = _palm_pose(env)
+    pos_b = math_utils.quat_apply_inverse(p_quat, cube.data.root_pos_w - p_pos)
+    quat_b = math_utils.quat_mul(math_utils.quat_inv(p_quat), cube.data.root_quat_w)
+    d2 = torch.sum((pos_b - env.cube_ref_pos_b) ** 2, dim=-1)
+    # geodesic angle between current and reference orientation, sign-safe
+    dot = torch.sum(quat_b * env.cube_ref_quat_b, dim=-1).abs().clamp(max=1.0)
+    ang = 2.0 * torch.acos(dot)
+    bonus = torch.exp(-d2 / (sigma_pos ** 2)) * torch.exp(-(ang / sigma_rot) ** 2)
+    # contact gate: any pad loaded
+    forces = _pad_force_mags(env)
+    holding = (forces.max(dim=-1).values > force_thr).float()
+    return bonus * holding

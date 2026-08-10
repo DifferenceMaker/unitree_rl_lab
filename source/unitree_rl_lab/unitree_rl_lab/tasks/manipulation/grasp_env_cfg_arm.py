@@ -150,8 +150,23 @@ class RobotEnvCfgWrist3(RobotEnvCfg):
             super().__post_init__()
         _make_arm_variant(
             self, "inspire_hand_wrist3",
-            root_pos=(0.011, -0.2695, 1.1129), root_rot=(0.5, 0.5, 0.5, 0.5),
-            arm_joints=WRIST3_JOINTS, arm_defaults={}, action_scale=0.2,
+            # FOREARM ATTITUDE FIX (operator 2026-08-10: "the elbow is too
+            # rotated towards the table... take inspiration from gr5b_arm, it
+            # already has the correct posture"). The old root only solved for a
+            # palm-down HAND; the forearm came in nearly horizontal (z-comp
+            # -0.12) while arm7's operator-approved posture descends at ~40 deg
+            # (z -0.65) — a measured 41.2 deg mismatch. Fixed by making wrist3
+            # an EXACT replica of arm7's default sub-chain: root = arm7's
+            # elbow-link world pose, wrist defaults = arm7's wrist defaults.
+            # Verified: palm position delta 0.0 m, palm normal identical
+            # ([-0.047, 0.015, -0.999] = down), forearm identical by
+            # construction.
+            root_pos=(-0.09641, -0.16734, 1.26191),
+            root_rot=(0.77068, -0.19917, 0.31126, 0.51914),
+            arm_joints=WRIST3_JOINTS, action_scale=0.2,
+            arm_defaults={"left_wrist_roll_joint": 1.3104,
+                          "left_wrist_pitch_joint": 0.3114,
+                          "left_wrist_yaw_joint": 0.8009},
         )
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
 
