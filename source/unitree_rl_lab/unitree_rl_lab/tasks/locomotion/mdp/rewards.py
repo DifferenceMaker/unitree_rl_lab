@@ -1102,3 +1102,31 @@ def heading_l1_from_spawn(
     d = yaw - env.spawn_yaw
     d = torch.atan2(torch.sin(d), torch.cos(d))
     return torch.abs(d)
+
+
+def _desk_draw_active(env, command_name: str = "arm_pose_command"):
+    """True per-env while a DESK-PLANE arm draw is active (either hand)."""
+    try:
+        cmd = env.command_manager.get_term(command_name)
+        act = (cmd.desk_wish_mask["left"] | cmd.desk_wish_mask["right"]) & ~cmd.default_mode
+        return act
+    except Exception:
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+
+def upright_bonus_desk_gated(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.01,
+    command_name: str = "arm_pose_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp5_leangate: upright_bonus that PAUSES while the arms work at the desk.
+
+    "Uprightness is the goal when idle, not while reaching." Same kernel as
+    upright_bonus (exp(-|g_xy|^2/std^2)) but multiplied by (1 - desk_draw
+    active), so peace-time stillness is still paid and a working lean is not
+    punished by forfeiture. Bounded [0,1]."""
+    asset = env.scene[asset_cfg.name]
+    g2 = torch.sum(asset.data.projected_gravity_b[:, :2] ** 2, dim=-1)
+    bonus = torch.exp(-g2 / (std ** 2))
+    return bonus * (~_desk_draw_active(env, command_name)).float()

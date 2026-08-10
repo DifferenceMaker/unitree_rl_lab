@@ -282,3 +282,66 @@ def place_desk(
     pose[:, 3] = torch.cos(half)
     pose[:, 6] = torch.sin(half)
     desk.write_root_pose_to_sim(pose, env_ids=env_ids)
+
+
+def reset_leaned_posture(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    prob: float = 0.25,
+    pitch_range: tuple = (0.17, 0.35),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """dp5 LEAN SEEDING: start a fraction of episodes ALREADY LEANED.
+
+    Three reward/obs formulations (armdesk distribution, desk_reach reward,
+    wish architecture) all failed to produce a lean, and the training logs say
+    why: desk_reach collected 0.10-0.15/s against alive 30.0, while
+    flat_orientation_l2 cost only -0.009/s. The taxes were never the binding
+    constraint — the leaned STATE was simply never visited, so the critic never
+    learned it has value. Rather than shape the reward harder, SEED the state:
+    the critic then experiences the payoff directly and the policy only has to
+    learn to enter and hold a state it already values.
+
+    Mechanism (hip-hinge, feet stay planted and flat): pitch the ROOT forward by
+    theta and rotate both hip pitches by -theta, so the thighs keep their world
+    orientation while the pelvis/torso tips forward. Pure joint+root edit, no
+    contact surgery. Small angles (10-20 deg) keep it inside PhysX's comfort.
+
+    Pair with a raised desk_reach weight and a high desk_level_prob so the
+    seeded episodes usually ALSO have a desk target to reach for.
+    """
+    if prob <= 0.0:
+        return
+    robot: Articulation = env.scene[asset_cfg.name]
+    n = len(env_ids)
+    pick = torch.rand(n, device=env.device) < prob
+    if not pick.any():
+        return
+    ids = env_ids[pick]
+    m = len(ids)
+    th = pitch_range[0] + torch.rand(m, device=env.device) * (pitch_range[1] - pitch_range[0])
+
+    # root: apply a pitch rotation about the body y-axis (quat_mul on the right)
+    root = robot.data.root_state_w[ids].clone()
+    q = root[:, 3:7]
+    half = th * 0.5
+    dq = torch.zeros(m, 4, device=env.device)
+    dq[:, 0] = torch.cos(half)
+    dq[:, 2] = torch.sin(half)          # +y axis = pitch
+    w1, x1, y1, z1 = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    w2, x2, y2, z2 = dq[:, 0], dq[:, 1], dq[:, 2], dq[:, 3]
+    root[:, 3] = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    root[:, 4] = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    root[:, 5] = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    root[:, 6] = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    robot.write_root_pose_to_sim(root[:, :7], env_ids=ids)
+
+    # hips: -theta so the thighs keep their world orientation (feet stay put)
+    if not hasattr(env, "_lean_hip_ids"):
+        hid, _ = robot.find_joints([".*_hip_pitch_joint"])
+        env._lean_hip_ids = torch.tensor(hid, device=env.device, dtype=torch.long)
+    jp = robot.data.joint_pos[ids].clone()
+    jv = robot.data.joint_vel[ids].clone()
+    jp[:, env._lean_hip_ids] -= th.unsqueeze(1)
+    jv[:, env._lean_hip_ids] = 0.0
+    robot.write_joint_state_to_sim(jp, jv, env_ids=ids)

@@ -500,3 +500,28 @@ def ik_workspace_scale_curriculum(
     command_term.cfg.workspace_scale = scale
 
     return torch.tensor(scale, device=env.device)
+
+
+def desk_draw_reach_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    command_term_name: str = "arm_pose_command",
+    warmup_steps: int = 3000,
+    hold_steps: int = 6000,
+    far_levels: tuple = (0.15, 0.22, 0.30, 0.35),
+) -> "torch.Tensor":
+    """dp5_leancurric: grow the FAR edge of the desk-draw zone over training.
+
+    A target 30 cm past the work zone from iteration 0 gives no gradient to
+    climb — the lean has to be discovered in one jump. Ramping the far edge
+    lets the body learn a small lean first and extend it. Only the forward
+    (+x) edge moves; the near edge and the lateral range stay put.
+    """
+    step = env.common_step_counter
+    idx = 0 if step < warmup_steps else min(int((step - warmup_steps) // hold_steps),
+                                            len(far_levels) - 1)
+    far = float(far_levels[idx])
+    cmd = env.command_manager.get_term(command_term_name)
+    lo = cmd.cfg.desk_x_range[0]
+    cmd.cfg.desk_x_range = (lo, far)
+    return torch.tensor(far, device=env.device)
