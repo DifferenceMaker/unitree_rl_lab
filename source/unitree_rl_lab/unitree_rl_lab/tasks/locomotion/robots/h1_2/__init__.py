@@ -130,3 +130,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LieDownPPORunnerCfg",
     },
 )
+
+# dp5: the desk trunk AS A TASK (every settled dp4 conclusion baked in, so a
+# dp5 job carries only its own axis). A new id, not a change to Balance-Desk —
+# the historical desk policies replay their previews against that task.
+gym.register(
+    id="Unitree-H1_2-Balance-Desk5",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk5:RobotEnvCfgDesk5",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk5:RobotPlayEnvCfgDesk5",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)
