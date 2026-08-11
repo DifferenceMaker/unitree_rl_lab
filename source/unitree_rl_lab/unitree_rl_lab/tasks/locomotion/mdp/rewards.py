@@ -1077,6 +1077,12 @@ def desk_hit_penalty(
     if fm is None:
         return torch.zeros(env.num_envs, device=env.device)
     mag = torch.norm(fm, dim=-1).sum(dim=(-2, -1))
+    # NaN/Inf guard (dp5b). clamp() does NOT sanitize NaN — every comparison
+    # against NaN is False, so torch.clamp passes it straight through and a
+    # single bad contact sample lands in the reward, then the return, then the
+    # critic. Same guard the sustained-push sampler has carried since 9142dcd,
+    # applied to the READ side of the contact pipe.
+    mag = torch.nan_to_num(mag, nan=0.0, posinf=max_val + force_thr, neginf=0.0)
     return (mag - force_thr).clamp(min=0.0, max=max_val)
 
 

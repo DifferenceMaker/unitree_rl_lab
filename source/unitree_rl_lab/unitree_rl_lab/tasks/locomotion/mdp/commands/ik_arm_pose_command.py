@@ -335,6 +335,36 @@ class IKArmPoseCommand(CommandTerm):
                 self.wish_w[side][ids] = p_w
                 self.desk_wish_mask[side][ids] = True
 
+            # ---- dp5b slab clip: nothing may be commanded inside the table ----
+            # An unreachable target under a kinematic slab is not a hard task,
+            # it is an illegal order: the IK reports a residual the arm can
+            # only answer by pressing, so desk_hit is paid every step for the
+            # whole hold. Applied to ALL kinds (free/start/desk) after the fact
+            # so one rule covers every draw path.
+            if (
+                self.cfg.desk_slab_clip
+                and hasattr(env, "spawn_root_xy")
+                and hasattr(env, "spawn_yaw")
+            ):
+                p_w = self.wish_w[side][env_ids]
+                syaw = env.spawn_yaw[env_ids]
+                fwd = torch.stack([torch.cos(syaw), torch.sin(syaw)], dim=-1)
+                lat = torch.stack([-torch.sin(syaw), torch.cos(syaw)], dim=-1)
+                anchor_xy = env.spawn_root_xy[env_ids] + self.cfg.desk_fwd_offset * fwd
+                d = p_w[:, :2] - anchor_xy
+                sx, sy = self.cfg.desk_slab_size
+                over = ((d * fwd).sum(-1).abs() <= 0.5 * sx) & (
+                    (d * lat).sum(-1).abs() <= 0.5 * sy
+                )
+                z_min = self.cfg.desk_slab_top + self.cfg.desk_clear_z
+                bad = over & (p_w[:, 2] < z_min)
+                if bad.any():
+                    p_w[bad, 2] = z_min
+                    self.wish_w[side][env_ids] = p_w
+                    tp = self.robot.data.body_pose_w[env_ids, self.torso_body_idx]
+                    pos_b, _ = subtract_frame_transforms(tp[:, 0:3], tp[:, 3:7], p_w)
+                    self.target_pos_b[side][env_ids] = pos_b
+
             if self.cfg.orientation_mode:
                 lim = torch.tensor(self.cfg.orientation_delta_rpy, device=self.device)
                 rpy = (torch.rand(n, 3, device=self.device) * 2.0 - 1.0) * lim
@@ -603,7 +633,27 @@ class IKArmPoseCommandCfg(CommandTermCfg):
     cross-body corners freeze at settle_time like any unreachable draw)."""
 
     desk_z_jitter: float = 0.05
-    """Uniform +- jitter (m) on the desk-plane z (objects sit ON the desk)."""
+    """Uniform +- jitter (m) on the desk-plane z (objects sit ON the desk).
+    dp5b: keep `desk_height_w - desk_z_jitter` STRICTLY ABOVE `desk_slab_top`.
+    dp5 shipped 1.00 +- 0.05 against a slab topping out at 1.00, so half of
+    every desk draw was a point INSIDE the table (visible in the previews as
+    arms pressing up from underneath) and the wrists paid desk_hit forever."""
+
+    # --- dp5b: no target may be inside or under the slab ---
+    desk_slab_clip: bool = False
+    """Raise any target whose xy falls over the desk footprint to at least
+    `desk_slab_top + desk_clear_z`. Covers FREE and START draws too, which is
+    where dp4c_deskcol2's -0.587 desk_hit came from at desk_level_prob=0."""
+
+    desk_slab_top: float = 1.0
+    """World z (m) of the physical slab's TOP face. Distinct from
+    `desk_height_w` (the draw plane), which dp5b lifts above it."""
+
+    desk_slab_size: tuple[float, float] = (0.5, 2.0)
+    """Slab footprint (x, y) in the SPAWN frame — must match scene.desk."""
+
+    desk_clear_z: float = 0.04
+    """Clearance (m) held above the slab top when clipping."""
 
     # --- dp5 deploy-mimicking cycle ---
     cycle_mode: bool = False

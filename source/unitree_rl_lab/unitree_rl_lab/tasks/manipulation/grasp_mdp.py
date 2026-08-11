@@ -749,6 +749,8 @@ def table_contact_penalty(
     if fm is None:
         return torch.zeros(env.num_envs, device=env.device)
     mag = torch.norm(fm, dim=-1).sum(dim=(-2, -1))
+    # NaN/Inf guard (dp5b) — clamp() passes NaN through untouched.
+    mag = torch.nan_to_num(mag, nan=0.0, posinf=max_val + force_thr, neginf=0.0)
     return (mag - force_thr).clamp(min=0.0, max=max_val)
 
 

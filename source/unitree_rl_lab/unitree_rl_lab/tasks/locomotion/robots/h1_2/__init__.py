@@ -144,3 +144,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# dp5b: dp5 with the moving desk/anchor removed and the arm targets lifted out
+# of the slab. Again a new id, not a mutation of Desk5 — the seven dp5 previews
+# replay against Desk5 and must keep showing the world those policies trained
+# in (teleporting slab, targets inside the table).
+gym.register(
+    id="Unitree-H1_2-Balance-Desk5b",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk5b:RobotEnvCfgDesk5b",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk5b:RobotPlayEnvCfgDesk5b",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)
