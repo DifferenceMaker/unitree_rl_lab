@@ -31,6 +31,19 @@ from isaaclab.utils import configclass
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+# The gr5b arm-in-the-loop chain (Arm7 variant), shoulder -> wrist. Default for
+# the gr5c arm-shaping terms; the Wrist3 variant passes its own 3-joint list.
+ARM7_JOINTS = [
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+]
+WRIST3_JOINTS = ARM7_JOINTS[4:]
+
 # Real Inspire SDK motor order: angle_set[0..5]. Drivers in the URDF.
 DRIVER_JOINTS = [
     "left_little_1_joint",   # 0
@@ -868,3 +881,80 @@ def cube_pose_hold_bonus(
     forces = _pad_force_mags(env)
     holding = (forces.max(dim=-1).values > force_thr).float()
     return bonus * holding
+
+
+def quiet_hold_bonus(
+    env: "ManagerBasedRLEnv",
+    joint_names: list | None = None,
+    sigma: float = 3.0,
+    force_thr: float = 0.5,
+) -> torch.Tensor:
+    """gr5c: INCOME for a CALM arm while actually holding the cube.
+
+    The gr5b verdict was "too chaotic — brash and quick" (operator 2026-08-11).
+    Measured on gr5b_arm's deterministic policy over 7 arm joints:
+        sum(qdot^2): median 0.041, p75 0.489, p90 38.6, MAX 2408 (~18 rad/s/joint)
+    i.e. the mean is 247x the median — the arm is calm most of the time and
+    violently bursty in the tail.
+
+    WHY THIS SHAPE, and not a velocity penalty:
+      * a per-step velocity cost is a COST — a robot doing the job must move, so
+        it can never pay ~zero (the project's constraint-vs-cost test).
+      * `arm_smooth` (joint_vel_reversal) structurally CANNOT catch this: a
+        single fast sweep is not a reversal, which is why it only ever paid
+        -0.03 while the arm was reaching 18 rad/s.
+      * L1 on the velocity NORM, not L2 on the sum of squares: with
+        exp(-sum(qdot^2)/sigma^2) the p90 burst reads exp(-38.6/9) ~ 0 and has
+        NO gradient, so violent states would be un-improvable ("pay for the
+        journey"). On the norm with sigma 3.0 the measured quantiles read
+        median 0.94 / p75 0.79 / p90 0.13 — graded everywhere.
+      * CONTACT-GATED, so it cannot pay a policy for holding still next to an
+        untouched cube. The gate is already reachable (hold_cube collects ~38%
+        of max today), which is what `cube_hold` at sigma_pos 0.04 was not — it
+        collected 4% and taught us nothing.
+    """
+    asset: Articulation = env.scene["robot"]
+    if joint_names is None:
+        joint_names = ARM7_JOINTS
+    idx = [asset.data.joint_names.index(n) for n in joint_names]
+    speed = torch.linalg.norm(asset.data.joint_vel[:, idx], dim=-1)
+    speed = torch.nan_to_num(speed, nan=0.0, posinf=1e3, neginf=0.0)
+    bonus = torch.exp(-speed / sigma)
+    forces = _pad_force_mags(env)
+    holding = (forces.max(dim=-1).values > force_thr).float()
+    return bonus * holding
+
+
+def park_keep_bonus(
+    env: "ManagerBasedRLEnv",
+    joint_names: list | None = None,
+    sigma: float = 1.7,
+) -> torch.Tensor:
+    """gr5c: INCOME for keeping the arm near its PARK pose (the IK-solved
+    production grasp pose that is `default_joint_pos` for these joints).
+
+    The gr5b verdict was "it flings its arm towards the robot's back instead of
+    leaving the hand/arm in front" (operator 2026-08-11). Nothing in the gr5b
+    ledger rewarded arm POSE at all — `reset_arm_park_error` is only a reset
+    event — so a pose behind the robot was free as long as the cube stayed in
+    the palm.
+
+    This is the POSITIVE form of "don't fling it behind you": an attractor at
+    the pose the resolver wants, rather than a tax on being elsewhere. It
+    mirrors deploy, where ERNEST owns the journey and the policy owns the last
+    five centimetres.
+
+    sigma 1.7 from measurement, NOT guessed: |q - q_park|^2 over the 7 arm
+    joints reads median 2.95 (|dq| = 1.72 rad) on gr5b_arm today, so the kernel
+    collects exp(-1) = 37% at the CURRENT pose — reachable, with gradient in
+    both directions. NOT contact-gated: the arm should stay home whether or not
+    it is holding anything.
+    """
+    asset: Articulation = env.scene["robot"]
+    if joint_names is None:
+        joint_names = ARM7_JOINTS
+    idx = [asset.data.joint_names.index(n) for n in joint_names]
+    dev = asset.data.joint_pos[:, idx] - asset.data.default_joint_pos[:, idx]
+    d2 = torch.sum(dev * dev, dim=-1)
+    d2 = torch.nan_to_num(d2, nan=0.0, posinf=1e3, neginf=0.0)
+    return torch.exp(-d2 / (sigma ** 2))

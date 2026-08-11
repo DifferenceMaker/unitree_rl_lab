@@ -100,3 +100,56 @@ class GraspPPORunnerCfg(BasePPORunnerCfg):
         critic_hidden_dims=[256, 128, 64],
         activation="elu",
     )
+
+
+@configclass
+class GraspNoEntropyPPORunnerCfg(GraspPPORunnerCfg):
+    """gr5c: GraspPPORunnerCfg with the entropy bonus OFF (entropy_coef 0.0).
+
+    Every gr5b run had a RUNAWAY policy sigma (measured 2026-08-11): mean_std
+    1.0 -> 479 (gr5b_arm), 239 (armwobble), 479 (wrist2), 508 (cubehold),
+    monotone over 6000 iterations, entropy 18.5 -> 98.7.
+
+    MECHANISM. Two forces act on `std_param`. The surrogate pushes sigma DOWN,
+    but only in proportion to the CORRELATION between "how far did I deviate
+    from mu" and "did it turn out better" — and for this task that correlation
+    is ~0, because the finger action is coupled and clipped, so a large sampled
+    action just means "fully closed", and fully closed holds the cube. The
+    entropy bonus pushes sigma UP at dH/dsigma = 1/sigma, which decays — but
+    ADAM IS SCALE-INVARIANT: for a consistently-signed gradient the update is
+    ~lr regardless of magnitude, so the decay brakes nothing. 20 updates/iter x
+    6000 iters = 120,000 updates at mean lr 3.886e-3 predicts a drift of 466;
+    the observed sigma was 478.8.
+
+    Two loops made it terminal: past the action clip the executed action is
+    sign(noise), which decorrelates A from mu FURTHER; and KL ~ dmu^2/2sigma^2,
+    so a growing sigma shrinks KL, the adaptive scheduler sees KL << desired_kl
+    and RAISES lr (grasp ran at 3.9e-3 mean vs balance 3.8e-4, hitting the 1e-2
+    clamp). The trust-region controller was flooring the throttle because the
+    policy had become too noisy to change.
+
+    WHY 0.0 AND NOT A SMALLER COEFFICIENT: under Adam the drift RATE is set by
+    lr, not by the coefficient. What the coefficient changes is whether entropy
+    still dominates the SIGN of std_param's gradient. Halving it barely helps;
+    0.0 removes the upward force outright and leaves sigma to the surrogate.
+
+    Exploration still exists: init_noise_std 1.0 (action clip is +-1), and sigma
+    is free to move — it is simply no longer PAID to grow. If sigma now FALLS,
+    the reward discriminates between actions; if it wanders, it does not, and
+    the reward is the thing to fix. Either outcome is the diagnostic.
+    """
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.0,          # <- the axis
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )

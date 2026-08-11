@@ -60,3 +60,20 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspPPORunnerCfg",
     },
 )
+
+# gr5c: the SAME Arm7 environment, with the entropy bonus off. A separate id,
+# not a hydra override, because the queue hardcodes `-- --seed N` and has no
+# extras hook — an override passed there would be SILENTLY IGNORED and the run
+# would train at entropy_coef 0.01 while claiming otherwise. As a task id it is
+# verifiable after the fact in the harvested params/agent.yaml, which is this
+# project's ground truth. See GraspNoEntropyPPORunnerCfg for the autopsy.
+gym.register(
+    id="Unitree-H1_2-Grasp-Arm7-QS",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyPPORunnerCfg",
+    },
+)
