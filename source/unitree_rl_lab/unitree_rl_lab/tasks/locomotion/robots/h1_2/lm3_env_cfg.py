@@ -126,7 +126,11 @@ def _make_lm3(cfg):
     # ---- events: re-anchor the hold at every stop ----
     cfg.events.reanchor_on_stop = EventTerm(
         func=mdp.reanchor_on_stop, mode="interval", interval_range_s=(0.02, 0.02),
-        params={"command_name": "base_velocity", "threshold": 0.1},
+        # asset_cfg passed EXPLICITLY: defaults in the function signature never
+        # go through the manager's SceneEntityCfg resolution (body_ids stayed
+        # slice-all -> 52-body shape mismatch, first smoke).
+        params={"command_name": "base_velocity", "threshold": 0.1,
+                "asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"])},
     )
 
 
