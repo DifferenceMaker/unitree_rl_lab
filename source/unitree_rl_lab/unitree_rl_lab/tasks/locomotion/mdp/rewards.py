@@ -1198,3 +1198,28 @@ def joint_target_deviation_l1(
     cmd = env.command_manager.get_command(command_name)
     q = env.scene[asset_cfg.name].data.joint_pos[:, asset_cfg.joint_ids]
     return torch.sum(torch.abs(q - cmd), dim=-1)
+
+
+def foot_clearance_reward_cmd(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg,
+    target_height: float,
+    std: float,
+    tanh_mult: float,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """lm3 FLAG-1 fix (Bible audit, 2026-08-12): foot_clearance_reward GATED on
+    a nonzero velocity command.
+
+    The ungated form pays its MAXIMUM at standstill (foot velocity ~0 ->
+    tanh ~0 -> exp(0) = 1), while walking WELL scores ~0.74 — measured live on
+    lm3_scratch at 10.8/s of 12 while mostly standing. Rule-22 arithmetic: an
+    env commanded to walk earned ~the same by disobediently standing
+    (clearance 12 + tracking 0) as by walking perfectly (clearance ~9 +
+    tracking 3) — an anti-walking subsidy. Correct in the stillness line it
+    came from (p13b_clearance); wrong in a walking task. Gate = the in-house
+    rewards.py:115 pattern.
+    """
+    base = foot_clearance_reward(env, asset_cfg, target_height, std, tanh_mult)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return base * (cmd > 0.1).float()
