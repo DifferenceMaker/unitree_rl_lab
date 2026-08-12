@@ -412,7 +412,7 @@ class IKArmPoseCommand(CommandTerm):
 
         step_limit = self.cfg.max_joint_speed * self.dt
 
-        # --- dp5c: WORLD-FRAME HOLD for desk-kind targets ---
+        # --- dp5b_worldcycle: WORLD-FRAME HOLD for desk-kind targets ---
         # Without this, target_pos_b is frozen in the TORSO frame at draw time,
         # so the world point it implies rides every subsequent lean: a pitch
         # forward drags a draw-time-legal target below the table top and the
@@ -659,7 +659,7 @@ class IKArmPoseCommandCfg(CommandTermCfg):
     every desk draw was a point INSIDE the table (visible in the previews as
     arms pressing up from underneath) and the wrists paid desk_hit forever."""
 
-    # --- dp5c: hold desk targets in the WORLD frame ---
+    # --- dp5b_worldcycle: hold desk targets in the WORLD frame ---
     desk_world_hold: bool = False
     """Re-derive desk-kind `target_pos_b` from the stored world `wish_w` every
     step. Off: the torso-frame target is frozen at draw time and the implied
