@@ -345,3 +345,36 @@ def reset_leaned_posture(
     jp[:, env._lean_hip_ids] -= th.unsqueeze(1)
     jv[:, env._lean_hip_ids] = 0.0
     robot.write_joint_state_to_sim(jp, jv, env_ids=ids)
+
+
+def reanchor_on_stop(
+    env: "ManagerBasedRLEnv",
+    env_ids,
+    command_name: str = "base_velocity",
+    threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+):
+    """lm3: re-capture the spawn buffers at the moment the velocity command
+    drops to ~zero, so the standing-gated hold terms anchor to WHERE THE ROBOT
+    STOPPED instead of its birth position. Runs every step (interval mode);
+    detects the moving->standing edge per env."""
+    import torch as _t
+    cmd = env.command_manager.get_command(command_name)
+    standing = _t.linalg.norm(cmd, dim=1) < threshold
+    if not hasattr(env, "_lm3_was_standing"):
+        env._lm3_was_standing = standing.clone()
+        return
+    stopped = standing & ~env._lm3_was_standing
+    env._lm3_was_standing = standing.clone()
+    if not stopped.any() or not hasattr(env, "spawn_root_xy"):
+        return
+    ids = _t.nonzero(stopped).flatten()
+    asset = env.scene[asset_cfg.name]
+    env.spawn_root_xy[ids] = asset.data.root_pos_w[ids, :2]
+    q = asset.data.root_quat_w[ids]
+    env.spawn_yaw[ids] = _t.atan2(
+        2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+        1.0 - 2.0 * (q[:, 2] ** 2 + q[:, 3] ** 2),
+    )
+    if hasattr(env, "spawn_foot_pos") and asset_cfg.body_ids is not None:
+        env.spawn_foot_pos[ids] = asset.data.body_pos_w[ids][:, asset_cfg.body_ids, :2]

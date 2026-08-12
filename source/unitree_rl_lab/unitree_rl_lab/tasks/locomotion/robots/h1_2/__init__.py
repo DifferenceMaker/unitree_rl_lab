@@ -66,6 +66,19 @@ gym.register(
     },
 )
 
+# lm3: commanded-velocity walking on the p13c economy, 27 actions, from
+# scratch (see lm3_env_cfg.py). WalkPPORunnerCfg -> logs under unitree_h1_2_walk.
+gym.register(
+    id="Unitree-H1_2-LM3-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm3_env_cfg:RobotEnvCfgLM3",
+        "play_env_cfg_entry_point": f"{__name__}.lm3_env_cfg:RobotPlayEnvCfgLM3",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:WalkPPORunnerCfg",
+    },
+)
+
 gym.register(
     id="Unitree-H1_2-Balance-QIK",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",

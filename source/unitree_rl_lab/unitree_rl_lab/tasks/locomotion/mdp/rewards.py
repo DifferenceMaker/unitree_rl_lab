@@ -1136,3 +1136,65 @@ def upright_bonus_desk_gated(
     g2 = torch.sum(asset.data.projected_gravity_b[:, :2] ** 2, dim=-1)
     bonus = torch.exp(-g2 / (std ** 2))
     return bonus * (~_desk_draw_active(env, command_name)).float()
+
+
+# ---------------------------------------------------------------------------
+# lm3 (2026-08-12): p13c economy + commanded velocity. The stay-at-spawn and
+# torso-stillness terms are correct AT REST and wrong IN MOTION, so they gate
+# on the velocity command being ~zero. Pair with events.reanchor_on_stop so
+# "spawn" means "where the command last dropped to zero", not birth position.
+def _standing_gate(env: "ManagerBasedRLEnv", command_name: str, thr: float = 0.1) -> torch.Tensor:
+    cmd = env.command_manager.get_command(command_name)
+    return (torch.linalg.norm(cmd, dim=1) < thr).float()
+
+
+def base_pos_xy_hold_standing(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """base_pos_xy_l2_from_spawn, active ONLY while commanded to stand.
+    With reanchor_on_stop this is station-keeping at the stop point: walk,
+    stop, and the p13c hold re-engages wherever the robot is."""
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
+    return torch.sum(delta * delta, dim=-1) * _standing_gate(env, command_name)
+
+
+def body_lin_vel_xy_l2_standing(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["torso_link"]),
+) -> torch.Tensor:
+    """torso_lin_vel_xy gated on standing — body_lin_vel_xy_l2 is WORLD-frame
+    (verified 2026-08-12), so ungated it taxes commanded walking at -w*v^2."""
+    asset = env.scene[asset_cfg.name]
+    v = asset.data.body_lin_vel_w[:, asset_cfg.body_ids[0], :2]
+    return torch.sum(v * v, dim=-1) * _standing_gate(env, command_name)
+
+
+def body_ang_vel_l2_standing(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["torso_link"]),
+) -> torch.Tensor:
+    """torso_ang_vel gated on standing (commanded turning would pay it)."""
+    asset = env.scene[asset_cfg.name]
+    w = asset.data.body_ang_vel_w[:, asset_cfg.body_ids[0], :]
+    return torch.sum(w * w, dim=-1) * _standing_gate(env, command_name)
+
+
+def joint_target_deviation_l1(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "arm_pose_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm3 arm discipline: L1 between the arm joints and the arm_pose_command
+    TARGETS (not the default pose). In Option II the command drove the arms
+    directly; with 27 actions the policy owns them, and this is the attractor
+    that keeps the arms on the commanded pose while the legs walk."""
+    cmd = env.command_manager.get_command(command_name)
+    q = env.scene[asset_cfg.name].data.joint_pos[:, asset_cfg.joint_ids]
+    return torch.sum(torch.abs(q - cmd), dim=-1)
