@@ -412,6 +412,26 @@ class IKArmPoseCommand(CommandTerm):
 
         step_limit = self.cfg.max_joint_speed * self.dt
 
+        # --- dp5c: WORLD-FRAME HOLD for desk-kind targets ---
+        # Without this, target_pos_b is frozen in the TORSO frame at draw time,
+        # so the world point it implies rides every subsequent lean: a pitch
+        # forward drags a draw-time-legal target below the table top and the
+        # arm presses into the slab (operator diagnosis on the dp5b previews,
+        # 2026-08-12 — the "holding itself up against the table" lean). Desk
+        # points are TABLE-frame facts; re-derive the torso-frame target from
+        # the stored world wish every step so the hand is asked for WHERE ON
+        # THE TABLE, not where-relative-to-my-chest. Start/free draws stay
+        # torso-frame on purpose (go_to_start is a body-relative rest pose).
+        if self.cfg.desk_world_hold:
+            for side in ("left", "right"):
+                m = self.desk_wish_mask[side]
+                if m.any():
+                    tp = self.robot.data.body_pose_w[m, self.torso_body_idx]
+                    pos_b, _ = subtract_frame_transforms(
+                        tp[:, 0:3], tp[:, 3:7], self.wish_w[side][m]
+                    )
+                    self.target_pos_b[side][m] = pos_b
+
         for side in ("left", "right"):
             cols = self.arm_cols[side]
             jids = self.arm_jids[side]
@@ -638,6 +658,16 @@ class IKArmPoseCommandCfg(CommandTermCfg):
     dp5 shipped 1.00 +- 0.05 against a slab topping out at 1.00, so half of
     every desk draw was a point INSIDE the table (visible in the previews as
     arms pressing up from underneath) and the wrists paid desk_hit forever."""
+
+    # --- dp5c: hold desk targets in the WORLD frame ---
+    desk_world_hold: bool = False
+    """Re-derive desk-kind `target_pos_b` from the stored world `wish_w` every
+    step. Off: the torso-frame target is frozen at draw time and the implied
+    world point rides every lean — a pitch forward drags a legal draw below the
+    table top mid-hold (dp5b previews, 2026-08-12). On: the hand is commanded
+    to a fixed point ON THE TABLE regardless of body motion, which is also what
+    the real stack does (the wish is a table-frame fact; ERNEST re-resolves).
+    Start/free draws are unaffected (body-relative by design)."""
 
     # --- dp5b: no target may be inside or under the slab ---
     desk_slab_clip: bool = False
