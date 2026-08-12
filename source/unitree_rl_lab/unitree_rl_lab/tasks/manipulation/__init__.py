@@ -77,3 +77,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyPPORunnerCfg",
     },
 )
+
+# gr5d: Arm7 with entropy 0.0 AND a fixed lr. QS's adaptive scheduler cut lr to
+# the 1e-5 floor once sigma got small (KL ~ dmu^2/2sigma^2) and froze learning
+# at ~iter 1500 — the runaway loop running backwards. See
+# GraspNoEntropyFixedLRPPORunnerCfg for the measured trajectory.
+gym.register(
+    id="Unitree-H1_2-Grasp-Arm7-QF",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
+    },
+)

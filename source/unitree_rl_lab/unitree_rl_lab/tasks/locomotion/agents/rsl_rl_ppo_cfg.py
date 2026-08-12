@@ -153,3 +153,38 @@ class GraspNoEntropyPPORunnerCfg(GraspPPORunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class GraspNoEntropyFixedLRPPORunnerCfg(GraspNoEntropyPPORunnerCfg):
+    """gr5d: entropy_coef 0.0 AND a FIXED learning rate (3e-4).
+
+    gr5c proved the adaptive-KL scheduler and sigma form a feedback loop with no
+    stable operating point at EITHER end:
+      * sigma large (gr5b): KL ~ dmu^2/2sigma^2 shrinks -> scheduler sees
+        KL << desired_kl -> RAISES lr toward the 1e-2 clamp -> sigma drifts
+        faster (Adam moves std_param ~lr per update). The runaway.
+      * sigma small (gr5c_sigfix): same formula grows KL -> scheduler CUTS lr
+        to the 1e-5 floor by ~iter 1500 -> learning freezes for the remaining
+        70% of the budget (sigma 0.075 -> 0.056 and reward flat 119 -> 119
+        from iter 1500 to 4999).
+    A fixed lr severs the loop instead of hunting a magic entropy_coef between
+    0.0 and 0.01. 3e-4 = the band healthy balance runs settle into under the
+    adaptive scheduler (measured mean 3.795e-4), and the band this task itself
+    passed through while it was still learning (iter 400-700: 5.9e-4 -> 2.6e-4).
+    """
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.0,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3.0e-4,      # <- fixed, no schedule
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,           # unused under schedule="fixed"
+        max_grad_norm=1.0,
+    )
