@@ -78,7 +78,17 @@ REGISTER_OBSERVATION(joint_pos_rel)
             data = tmp_data;
         }
     } catch(const std::exception& e) {
-    
+
+    }
+
+    // pad_to (walk sim2sim, 2026-08-12): the lm2 walk policy trained with the
+    // 51-joint asset (27 body + 24 Inspire finger joints) and its obs contract
+    // is 51-dim, but this articulation exposes 27. Zero-pad the tail: rel-pos
+    // of a finger parked at default IS 0, exactly (and the MuJoCo model has no
+    // fingers at all). Additive — absent pad_to leaves behavior unchanged.
+    if (params["pad_to"]) {
+        size_t pad = params["pad_to"].as<size_t>();
+        if (pad > data.size()) data.resize(pad, 0.0f);
     }
 
     return data;
@@ -100,7 +110,13 @@ REGISTER_OBSERVATION(joint_vel_rel)
         }
     } catch(const std::exception& e) {
     }
-    return std::vector<float>(data.data(), data.data() + data.size());
+    std::vector<float> out(data.data(), data.data() + data.size());
+    // pad_to: see joint_pos_rel. Zero joint-vel for parked fingers is exact.
+    if (params["pad_to"]) {
+        size_t pad = params["pad_to"].as<size_t>();
+        if (pad > out.size()) out.resize(pad, 0.0f);
+    }
+    return out;
 }
 
 REGISTER_OBSERVATION(last_action)

@@ -8,6 +8,7 @@
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
 #include "FSM/State_RLBase.h"
+#include "FSM/State_Walk.h"
 #include "ArmPosePublisher.h"
 #include "ArmCmdSubscriber.h"
 #include "FsmCmdSubscriber.h"
