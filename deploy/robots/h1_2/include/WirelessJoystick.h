@@ -29,7 +29,11 @@ public:
                   RB(k & 0x0001); LB(k & 0x0002); start(k & 0x0004); back(k & 0x0008);
                   A(k & 0x0100); B(k & 0x0200); X(k & 0x0400); Y(k & 0x0800);
                   up(k & 0x1000); right(k & 0x2000); down(k & 0x4000); left(k & 0x8000);
-              })) {}
+              })) {
+        // REQUIRED: without InitChannel() the subscriber never receives
+        // (FsmCmdSubscriber pattern; cost a silent zero-command walk, 2026-08-12)
+        sub_->InitChannel();
+    }
 
 private:
     unitree::robot::ChannelSubscriberPtr<unitree_go::msg::dds_::WirelessController_> sub_;
