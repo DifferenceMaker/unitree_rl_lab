@@ -82,6 +82,31 @@ gym.register(
 # the 1e-5 floor once sigma got small (KL ~ dmu^2/2sigma^2) and froze learning
 # at ~iter 1500 — the runaway loop running backwards. See
 # GraspNoEntropyFixedLRPPORunnerCfg for the measured trajectory.
+# gr6: the permanent-table task (hold the cube at the hand's spawn point;
+# retract removed). Two interfaces: Table = joint-space arm (isolates the task
+# change), TS = task-space d(pose) through the DLS IK action (isolates the
+# interface change; colleague-convergent).
+gym.register(
+    id="Unitree-H1_2-Grasp-Arm7Table-QF",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7Table",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7Table",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
+    },
+)
+gym.register(
+    id="Unitree-H1_2-Grasp-Arm7TS-QF",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TaskSpace",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TaskSpace",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
+    },
+)
+
 gym.register(
     id="Unitree-H1_2-Grasp-Arm7-QF",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",

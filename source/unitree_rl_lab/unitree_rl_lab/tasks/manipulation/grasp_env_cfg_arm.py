@@ -196,3 +196,81 @@ class RobotEnvCfgArm7(RobotEnvCfg):
             }, action_scale=0.15, torso_guard=True,
         )
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+# ===========================================================================
+# gr6 (operator redesign 2026-08-13): the PERMANENT TABLE.
+# All three observed drop modes (park: table vanished pre-pickup; sigfix:
+# dropped pre-retract; quiet: cube mushed around the tabletop) were artifacts
+# of the retract race — the policy had to beat a random timer or fail by
+# design. Reality has no vanishing tables. gr6: the support never retracts;
+# THE DISH is holding the cube at the HAND'S SPAWN POINT (above the table), so
+# lifting is the only way to earn and tabletop-dragging pays nothing.
+# park_keep graduates into the trunk (gr5d verdict: position discipline (park)
+# beat velocity discipline (quiet) — "even better at parking the cube").
+# cube_dropped termination KEPT AS-IS (operator: wait on redefining it — the
+# z<0.08 floor threshold can only fire if the cube leaves the table anyway).
+# ===========================================================================
+def _make_gr6_table(cfg):
+    # the full gr5b/gr5d obs contract BAKED IN (trunk-is-task — the gr5c
+    # dropped-delta accident came from these living in job files):
+    cfg.rewards.pad_arrangement.params["closure_mode"] = "count"
+    cfg.observations.policy.cube_pose = ObsTerm(
+        func=grasp_mdp.cube_pose_vision,
+        params={"noise_std_pos": 0.005, "noise_std_axis": 0.02},
+        clip=(-1.0, 1.0),
+    )
+    # the table never leaves
+    cfg.events.retract = None
+    # hold target = palm spawn point, captured per-env at reset
+    from isaaclab.managers import EventTermCfg as _ET
+    cfg.events.hand_start = _ET(func=grasp_mdp.capture_hand_start, mode="reset")
+    cfg.rewards.cube_at_start = RewTerm(
+        func=grasp_mdp.cube_at_start_bonus, weight=15.0,
+        params={"sigma": 0.05, "force_thr": 0.5},
+    )
+    # gr5d verdict: park discipline in the trunk
+    cfg.rewards.park_keep = RewTerm(
+        func=grasp_mdp.park_keep_bonus, weight=2.0, params={"sigma": 1.7},
+    )
+
+
+@configclass
+class RobotEnvCfgArm7Table(RobotEnvCfgArm7):
+    """gr6_table: the task change ONLY (permanent table + hold-at-start),
+    joint-space arm as gr5d — isolates what the new task does."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr6_table(self)
+
+
+@configclass
+class RobotEnvCfgArm7TaskSpace(RobotEnvCfgArm7):
+    """gr6_taskspace: gr6_table + the TASK-SPACE hand interface (colleague
+    convergence design, 2026-08-13): the policy commands d(x,y,z) AND
+    d(orientation) of the hand — 6 relative-pose actions through Isaac Lab's
+    stock DLS IK action — plus the 6 fingers. The joint-count debate (3 vs 7)
+    dissolves: the policy speaks task space, the resolver owns kinematics,
+    and deploy-side the same deltas go to the real IK resolver (ERNEST).
+    Orientation freedom included per operator ("otherwise the thumb will hit
+    the table" — the -24deg wrist-pitch lesson, now learnable in task space).
+    """
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr6_table(self)
+        from isaaclab.envs.mdp.actions.actions_cfg import (
+            DifferentialInverseKinematicsActionCfg as _IKAct,
+        )
+        from isaaclab.controllers import DifferentialIKControllerCfg as _IKCtl
+        self.actions.arm = _IKAct(
+            asset_name="robot",
+            joint_names=ARM7_JOINTS,
+            body_name="left_base_link",          # the hand base = end-effector
+            controller=_IKCtl(command_type="pose", use_relative_mode=True,
+                              ik_method="dls"),
+            # action in [-1,1]^6 -> per-step delta: 3 cm translation,
+            # 0.05 rad rotation. Small steps = the "last five centimeters"
+            # contract; workspace legality is the resolver's job (rule 4/21:
+            # an unreachable wish shows up as IK residual, not a crash).
+            scale=(0.03, 0.03, 0.03, 0.05, 0.05, 0.05),
+        )

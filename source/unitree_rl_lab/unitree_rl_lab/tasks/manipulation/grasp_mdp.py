@@ -958,3 +958,37 @@ def park_keep_bonus(
     d2 = torch.sum(dev * dev, dim=-1)
     d2 = torch.nan_to_num(d2, nan=0.0, posinf=1e3, neginf=0.0)
     return torch.exp(-d2 / (sigma ** 2))
+
+
+def capture_hand_start(env: "ManagerBasedRLEnv", env_ids):
+    """gr6: store each env's PALM spawn position (world). The task's hold
+    target: 'where the hand started is where the cube must be held' —
+    operator redesign 2026-08-13, replacing the disappearing-table race."""
+    import torch as _t
+    p_pos, _ = _palm_pose(env)
+    if not hasattr(env, "hand_start_pos_w"):
+        env.hand_start_pos_w = p_pos.clone()
+    env.hand_start_pos_w[env_ids] = p_pos[env_ids]
+
+
+def cube_at_start_bonus(
+    env: "ManagerBasedRLEnv",
+    sigma: float = 0.05,
+    force_thr: float = 0.5,
+) -> torch.Tensor:
+    """gr6 THE DISH: bounded kernel for holding the CUBE at the hand's spawn
+    point, CONTACT-GATED (fingers loaded). The target sits ABOVE the permanent
+    table, so lifting is the only way to collect and 'mushing' the cube around
+    the tabletop pays nothing (operator: 'no table disappears in real life;
+    it should be picked up, not dragged'). Speed is priced implicitly: every
+    second not holding is income lost forever — no explicit speed bonus (the
+    Bible: don't double-pay)."""
+    if not hasattr(env, "hand_start_pos_w"):
+        return torch.zeros(env.num_envs, device=env.device)
+    cube: RigidObject = env.scene["cube"]
+    d2 = torch.sum((cube.data.root_pos_w - env.hand_start_pos_w) ** 2, dim=-1)
+    d2 = torch.nan_to_num(d2, nan=1e3, posinf=1e3, neginf=1e3)
+    bonus = torch.exp(-d2 / (sigma ** 2))
+    forces = _pad_force_mags(env)
+    holding = (forces.max(dim=-1).values > force_thr).float()
+    return bonus * holding
