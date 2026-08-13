@@ -79,6 +79,31 @@ gym.register(
     },
 )
 
+# lm4: lm3 minus the arm command channel (obs 104 -> 90, SCRATCH only),
+# + mirror loss (paper #226) + command-magnitude curriculum. The -LCP variant
+# swaps in LCPPPO (paper #14 gradient penalty) and deletes action_rate.
+gym.register(
+    id="Unitree-H1_2-LM4-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm4_env_cfg:RobotEnvCfgLM4",
+        "play_env_cfg_entry_point": f"{__name__}.lm4_env_cfg:RobotPlayEnvCfgLM4",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-H1_2-LM4-LCP-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm4_env_cfg:RobotEnvCfgLM4LCP",
+        "play_env_cfg_entry_point": f"{__name__}.lm4_env_cfg:RobotPlayEnvCfgLM4",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4LcpPPORunnerCfg",
+    },
+)
+
 gym.register(
     id="Unitree-H1_2-Balance-QIK",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",

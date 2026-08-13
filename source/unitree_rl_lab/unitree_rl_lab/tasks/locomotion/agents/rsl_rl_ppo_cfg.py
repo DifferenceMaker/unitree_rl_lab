@@ -4,7 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlPpoActorCriticCfg,
+    RslRlPpoAlgorithmCfg,
+    RslRlSymmetryCfg,
+)
 
 
 @configclass
@@ -187,4 +192,78 @@ class GraspNoEntropyFixedLRPPORunnerCfg(GraspNoEntropyPPORunnerCfg):
         lam=0.95,
         desired_kl=0.01,           # unused under schedule="fixed"
         max_grad_norm=1.0,
+    )
+
+
+@configclass
+class RslRlLcpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO + Lipschitz gradient penalty (paper #14) — see agents/lcp_ppo.py.
+    Extra fields ride into LCPPPO.__init__ as kwargs (construct_algorithm
+    passes the whole algorithm cfg dict through)."""
+
+    class_name: str = "unitree_rl_lab.tasks.locomotion.agents.lcp_ppo:LCPPPO"
+    lcp_coef: float = 0.05
+    lcp_num_steps: int = 4
+    lcp_batch_size: int = 4096
+
+
+@configclass
+class LM4PPORunnerCfg(WalkPPORunnerCfg):
+    """lm4: WalkPPORunnerCfg + left-right mirror loss (paper #226).
+
+    Mirror loss only, NO data augmentation: augmented (obs, action) pairs were
+    never sampled from the current policy, which strains PPO's importance
+    ratios; the soft mirror-consistency loss on the actor mean has no such
+    off-policy cost. The mirror map is built from the LIVE env at first use
+    (mdp/symmetry.py) and hard-fails on any obs contract it does not know.
+    """
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=False,
+            use_mirror_loss=True,
+            mirror_loss_coeff=1.0,
+            data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
+        ),
+    )
+
+
+@configclass
+class LM4LcpPPORunnerCfg(LM4PPORunnerCfg):
+    """lm4_lcp: the same symmetry-enabled runner with LCPPPO — action_rate is
+    deleted in the env cfg (RobotEnvCfgLM4LCP) and replaced by the gradient
+    penalty in the loss. Verifiable post-hoc in the harvested agent.yaml
+    (class_name + lcp_* fields), the project's ground truth."""
+
+    algorithm = RslRlLcpPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=False,
+            use_mirror_loss=True,
+            mirror_loss_coeff=1.0,
+            data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
+        ),
     )
