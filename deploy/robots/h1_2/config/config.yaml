@@ -1,32 +1,19 @@
 FSM:
-  _: # enabled fsms
+  _: # enabled fsms — WALK-ONLY BOARD (2026-08-14): balance slots removed per
+     # operator (rig lists only the current walking policies; balance boards
+     # live in git history — branch p13c has the last 6-slot eval board).
     Passive:
       id: 1
     FixStand:
       id: 2
-    Balance_clearance:
-      id: 4
-      type: RLBase
-    Balance_orientclear:
-      id: 5
-      type: RLBase
-    Balance_hipguard:
-      id: 6
-      type: RLBase
-    Balance_airtime:
-      id: 7
-      type: RLBase
-    Balance_all4:
-      id: 8
-      type: RLBase
-    Balance_tdvel:
-      id: 9
-      type: RLBase
     Walk:
       id: 10
       type: Walk
     Walk_lm3:
       id: 11
+      type: Walk
+    Walk_lm4:
+      id: 12
       type: Walk
 
   Passive:
@@ -51,14 +38,9 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Balance_clearance:      RB + Y.on_pressed
-      Balance_orientclear:    RB + A.on_pressed
-      Balance_hipguard:       RB + X.on_pressed
-      Balance_airtime:        RB + B.on_pressed
-      Balance_all4:           RB + right.on_pressed
-      Balance_tdvel:          RB + down.on_pressed
-      Walk:                   RB + left.on_pressed
-      Walk_lm3:               RB + up.on_pressed
+      Walk:     RB + left.on_pressed
+      Walk_lm3: RB + up.on_pressed
+      Walk_lm4: RB + right.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -84,92 +66,40 @@ FSM:
       ]
     ]
 
-  # === p13b EVAL — walk stepping-quality genes RERUN on the CORRECT task ===
-  # The p13 batch was Balance-Q by accident (retired UniformArmPoseCommand);
-  # p13b = identical deltas on Balance-QIK (IKArmPoseCommand + ik_workspace,
-  # boot-verified in the spawned env 2026-08-03). Parent/ref: wide_micropush.
-  # ALL comx06 + 3D-soles era. SIM: robot_scene = scene_comx06.xml (rigid).
-  # The question of the batch: does the clean IK task remove the torso wobble
-  # and the outward-hip stance seen across tainted p13?
-  # hiprollcap still training (2026-08-05) — tested separately later.
-
-  Balance_clearance:    # RB+Y  PARENT/REF — p13b_clearance, the hardware favorite (08-06)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13b_clearance_2026-08-03
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_orientclear:    # RB+A  base combo: orientation_mode + clearance (prospective p14 parent)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13c_orientclear_2026-08-07
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_hipguard:    # RB+X  + 80Nm hip-roll guard (orient hip-squeezes; p13b run failed, this retests on a competent base)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13c_hipguard_2026-08-08
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_airtime:    # RB+B  + feet_air -1 (the stepfree/nosteppers sustained-push gene)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13c_airtime_2026-08-07
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_all4:    # RB+right  + feet_air -1 + gait clock, NO contact500 (unconfounded phasing test)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13c_all4_2026-08-07
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
-  Balance_tdvel:    # RB+down  + foot_impact_velocity -2 (quietness re-test on a calm parent)
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/p13c_tdvel_2026-08-07
-    arm_kp: 40.0
-    arm_kd: 3.0
-    arm_transition_s: 4.0
-    engage_blend_s: 1.5
-
   # === WALK (lm line) — whole-body 27-action velocity walking ===
+  # Velocity source: rt/wirelesscontroller (tools/walk_teleop.py in sim2sim,
+  # the real remote on hardware). SIM: run via tools/launch_walk_sim2sim.sh
+  # (scene_comx06.xml — no desk).
+
   # lm2_walk_contacts_2026-07-29 (obs [1,140] -> 27; the 51-dim joint obs is
   # zero-padded past 27 via deploy.yaml pad_to — the training asset carried 24
-  # Inspire finger joints the deploy articulation does not expose).
-  # Velocity source: rt/wirelesscontroller (tools/walk_teleop.py in sim2sim,
-  # the real remote on hardware). Deploy contract clamps: vx [-0.3,1.0],
-  # vy +-0.3, wz +-0.5. SIM: run via tools/launch_walk_sim2sim.sh
-  # (scene_comx06.xml — no desk).
-  Walk:    # RB+left  lm2_walk_contacts, first walking board slot
+  # Inspire finger joints the deploy articulation does not expose). Earns by
+  # MOVING; cannot stand still. Known deficits: rightward vy bias + slow CW
+  # yaw at zero wz (2026-08-12 HUD flight). Kept as the tracking reference.
+  Walk:    # RB+left  lm2_walk_contacts
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/lm2_walk_contacts_2026-07-29
 
-  # lm3_cleargate (obs 104: + arm_pose_command 14 + velocity_commands 3, 27
-  # actions, NO gait clock, NO pad_to — real 27-joint contract). THE TEST
-  # (2026-08-13): the fwd10 recording showed zero forward motion under a
-  # sustained 1.0 m/s command — is that a recording-harness artifact or the
-  # policy declining commands it never mastered (standing = safe local optimum)?
-  # The teleop bars + white ticks answer it live: ramp vx slowly and find where
-  # tracking stops. CAVEAT: the arm_pose_command obs is whatever the C++ term
-  # returns without an arm publisher (a constant default pose) — arm oddities
-  # in this test are suspect on that obs, not necessarily the policy.
-  Walk_lm3:    # RB+up  lm3_cleargate — p13c-economy walker, audit fixes
+  # lm3_cleargate (obs 104: + arm_pose_command 14 + velocity_commands 3).
+  # OBSOLETE CONTRACT (2026-08-13 rig autopsy): the arm_pose_command obs is a
+  # constant without an arm publisher -> deep OOD (asymmetric raised arm, arm
+  # dips on velocity commands, tracking verdict confounded). Kept on the board
+  # only as the lm4 comparison point; the walk line dropped the arm channel.
+  Walk_lm3:    # RB+up  lm3_cleargate
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/lm3_cleargate_2026-08-12
+
+  # lm4_2026-08-13 (model_15999, obs [1,90] -> 27: ang_vel 3 + gravity 3 +
+  # q 27 + dq 27 + last_action 27 + velocity_commands 3 — NO arm channel, NO
+  # gait clock, NO pad_to). Mirror-loss trained (symmetric gait expected).
+  # OPERATIONAL CAVEAT: the command curriculum never fired — vx trained only
+  # in [-0.2, 0.4] (vy +-0.2, wz +-0.3); anything above vx 0.4 is OOD by
+  # construction. Ramp slowly and find where tracking dies. Training tell:
+  # 96% of episodes ended by base_height at ~24 s — expect possible sagging /
+  # collapse on long stands.
+  Walk_lm4:    # RB+right  lm4 — arm-command-free contract
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/lm4_2026-08-13
