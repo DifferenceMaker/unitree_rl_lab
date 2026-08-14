@@ -267,3 +267,36 @@ class LM4LcpPPORunnerCfg(LM4PPORunnerCfg):
             data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
         ),
     )
+
+
+@configclass
+class LM4BMirror01PPORunnerCfg(LM4PPORunnerCfg):
+    """lm4b_mirror01: the lm4 runner with mirror_loss_coeff 1.0 -> 0.1.
+
+    lm4's measured pathology: mirror loss ~0.008 x coeff 1.0 vs surrogate
+    ~0.003 — the symmetry constraint outweighed the task gradient 3-4x, sigma
+    never annealed (0.96-0.99 for 16k iters vs cleargate 0.99->0.77), survival
+    plateaued at ~24 s. 0.1 keeps the symmetry prior (paper #226) at a dose
+    that cannot dominate. A task-id-bound cfg, verifiable post-hoc in the
+    harvested agent.yaml (the gr5c silent-override lesson)."""
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=False,
+            use_mirror_loss=True,
+            mirror_loss_coeff=0.1,
+            data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
+        ),
+    )

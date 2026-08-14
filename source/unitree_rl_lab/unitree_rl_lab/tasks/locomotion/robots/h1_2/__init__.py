@@ -93,6 +93,31 @@ gym.register(
     },
 )
 
+# lm4b: lm4 trunk + curriculum gate_frac 0.5 (the survival-coupled 0.8 gate
+# never fires below ~80% survival x quality). Two single-delta runs: track
+# weights via job set_weight (LM4B-Q), mirror 0.1 via runner cfg (LM4B-M01-Q).
+gym.register(
+    id="Unitree-H1_2-LM4B-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotEnvCfgLM4B",
+        "play_env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotPlayEnvCfgLM4B",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-H1_2-LM4B-M01-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotEnvCfgLM4B",
+        "play_env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotPlayEnvCfgLM4B",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
+
 gym.register(
     id="Unitree-H1_2-LM4-LCP-Q",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
