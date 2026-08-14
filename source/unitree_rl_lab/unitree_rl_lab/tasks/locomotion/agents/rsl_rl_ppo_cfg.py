@@ -26,6 +26,10 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         activation="elu",
     )
     algorithm = RslRlPpoAlgorithmCfg(
+        # GuardedPPO = PPO + skip-update-on-nonfinite-gradients (dp5 autopsy
+        # guard, applied 2026-08-14 after dp5c_anchor died the inf->nan death).
+        # Behavior-identical while losses are finite; logs nonfinite_skips.
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

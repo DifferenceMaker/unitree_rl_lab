@@ -47,6 +47,8 @@ is us ordering it there.
 """
 from isaaclab.utils import configclass
 
+from unitree_rl_lab.tasks.locomotion import mdp
+
 from .balance_env_cfg import RobotEnvCfg, RobotPlayEnvCfg
 from .balance_env_cfg_desk import _make_desk
 from .balance_env_cfg_desk5 import _make_desk5, DESK_TOP_Z
@@ -82,6 +84,35 @@ def _make_desk5b(cfg):
     cfg.events.move_anchor = None
     cfg.events.anchor_repoint = None
     cfg.events.place_desk_follow = None
+
+    # --- 3. NaN guards (dp5 autopsy input-path items, APPLIED 2026-08-14 after
+    # dp5c_anchor collected the open item: value loss inf -> nan -> dead run).
+    # (a) per-term obs CLIP in raw units (clip runs BEFORE scale in the
+    # ObservationManager): generous physical bounds — pure armor against
+    # inf/absurd magnitudes, zero effect on normal data. NB torch clamp does
+    # NOT sanitize NaN — that is what (b) the root-state termination and
+    # (c) GuardedPPO (optimizer-side skip, see agents/guarded_ppo.py) are for.
+    _OBS_CLIPS = {
+        "base_lin_vel": (-10.0, 10.0),
+        "base_ang_vel": (-15.0, 15.0),
+        "projected_gravity": (-1.5, 1.5),
+        "joint_pos_rel": (-6.3, 6.3),
+        "joint_vel_rel": (-60.0, 60.0),
+        "joint_effort": (-600.0, 600.0),
+        "last_action": (-20.0, 20.0),
+    }
+    for grp in (cfg.observations.policy, cfg.observations.critic):
+        for name, bounds in _OBS_CLIPS.items():
+            term = getattr(grp, name, None)
+            if term is not None:
+                term.clip = bounds
+    # (b) terminate envs whose root state goes non-finite or physically absurd
+    # (solver spike / interpenetration impulse) before the rollout sees them
+    from isaaclab.managers import TerminationTermCfg as DoneTerm
+    cfg.terminations.root_out_of_bounds = DoneTerm(
+        func=mdp.root_state_out_of_bounds,
+        params={"max_lin_vel": 15.0, "max_ang_vel": 25.0},
+    )
 
 
 @configclass
