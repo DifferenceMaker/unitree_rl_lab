@@ -300,3 +300,43 @@ class LM4BMirror01PPORunnerCfg(LM4PPORunnerCfg):
             data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
         ),
     )
+
+
+@configclass
+class LM4BLcpMirror01PPORunnerCfg(LM4PPORunnerCfg):
+    """lm4b_lcp: LCP retest with the sigma anchor KEPT (operator, 2026-08-14).
+
+    lm4_lcp (attempt 1) NaN'd at iter 641: deleting action_rate removed the
+    only term where a sampled deviation reliably costs reward — the
+    deviation-outcome correlation collapsed, entropy 0.01 ground sigma up
+    (1.0 -> 1.67) under Adam scale-invariance, the KL-adaptive lr amplified,
+    std went NaN. The LCP penalty regularizes mu w.r.t. obs and has NO
+    gradient path to std_param — it cannot inherit the anchor job.
+
+    This retest keeps a SMALL action_rate (-0.1, job-side set_weight: anchor
+    intact, bribe mostly gone) and runs the gradient penalty on top of
+    mirror 0.1 — at mirror 1.0 the run would inherit lm4's suspected
+    mirror-dominance stall and the LCP question would be unanswerable.
+    Sibling axis vs lm4b_mirror01: {action_rate -0.6 -> -0.1 + LCPPPO}.
+    Sigma trajectory is the first read: bounded = anchor dose sufficient."""
+
+    algorithm = RslRlLcpPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=False,
+            use_mirror_loss=True,
+            mirror_loss_coeff=0.1,
+            data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
+        ),
+    )

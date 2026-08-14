@@ -119,6 +119,17 @@ gym.register(
 )
 
 gym.register(
+    id="Unitree-H1_2-LM4B-LCP-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotEnvCfgLM4B",
+        "play_env_cfg_entry_point": f"{__name__}.lm4b_env_cfg:RobotPlayEnvCfgLM4B",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BLcpMirror01PPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Unitree-H1_2-LM4-LCP-Q",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
