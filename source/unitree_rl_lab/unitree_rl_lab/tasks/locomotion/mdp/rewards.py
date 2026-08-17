@@ -1223,3 +1223,38 @@ def foot_clearance_reward_cmd(
     base = foot_clearance_reward(env, asset_cfg, target_height, std, tanh_mult)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
     return base * (cmd > 0.1).float()
+
+
+def arm_gait_swing(
+    env: "ManagerBasedRLEnv",
+    period: float,
+    offset: list[float],
+    amplitude: float,
+    std: float,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4c: gait-phase counter-swing income for the shoulder_pitch pair.
+
+    lm4/lm4b left shoulder_pitch deliberately UNTAXED (the counter-swing DOF)
+    and the policies used that freedom to park the arms BEHIND the torso as a
+    static CoM trim (operator, lm4b previews). This term gives the free DOF a
+    JOB instead of a hole: income for tracking default + A*sin(2*pi*phase),
+    phase from THE SAME clock as feet_gait_recovery (episode time % period),
+    with per-arm offsets — left arm rides the RIGHT leg's phase (offset 0.5),
+    right arm the left leg's (0.0): human counter-swing.
+
+    Command-gated exactly like foot_clearance_reward_cmd: pays ONLY when a
+    velocity command is active; at standstill the (separate, raised)
+    joint_deviation_arms owns the arms. Bounded exp kernel, NaN-safe.
+    """
+    asset = env.scene[asset_cfg.name]
+    global_phase = ((env.episode_length_buf * env.step_dt) % period) / period
+    ph = torch.stack([(global_phase + o) % 1.0 for o in offset], dim=-1)
+    q = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    q0 = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    target = q0 + amplitude * torch.sin(2.0 * torch.pi * ph)
+    err = torch.sum(torch.square(q - target), dim=-1)
+    base = torch.exp(-err / std**2)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return base * (cmd > 0.1).float()
