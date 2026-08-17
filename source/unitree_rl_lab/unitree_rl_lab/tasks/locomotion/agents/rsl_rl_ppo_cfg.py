@@ -344,3 +344,37 @@ class LM4BLcpMirror01PPORunnerCfg(LM4PPORunnerCfg):
             data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
         ),
     )
+
+
+@configclass
+class LM4BLcpRetrofitPPORunnerCfg(LM4BLcpMirror01PPORunnerCfg):
+    """lm4c_lcp_retrofit: LCP onto a TRAINED walker at 1 penalty step/iter.
+
+    The regime flip (smoke, 2026-08-17): a warmstarted mirror01 network reads
+    lcp_grad_penalty ~800 vs ~0.02 at scratch init — a trained walker is a
+    sharp function. Penalty steps are separate Adam steps (scale-invariant:
+    each moves ~lr toward smoothness regardless of violation size); 4/iter vs
+    5 PPO epochs sands the policy away faster than PPO defends it. 1/iter
+    shifts the ratio 4x toward PPO: smooth gradually, repair continuously."""
+
+    algorithm = RslRlLcpPpoAlgorithmCfg(
+        lcp_num_steps=1,
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=False,
+            use_mirror_loss=True,
+            mirror_loss_coeff=0.1,
+            data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
+        ),
+    )
