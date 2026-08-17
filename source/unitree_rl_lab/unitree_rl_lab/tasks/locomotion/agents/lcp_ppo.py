@@ -1,4 +1,9 @@
-"""LCP: Lipschitz-Constrained Policy for the lm4_lcp run (paper #14,
+"""LCP: Lipschitz-Constrained Policy (paper #14). CHAINED to GuardedPPO
+2026-08-17: lm4b_lcp died of the exact value-explosion the optimizer guard
+breaks (12.9 -> 2.7e14 -> NaN std), unguarded. Now every LCP run inherits
+the nonfinite-grad skip.
+
+Original notes (lm4_lcp run,
 "Learning Smooth Humanoid Locomotion through Lipschitz-Constrained Policies").
 
 The paper's claim: replace output-space smoothing REWARDS (action_rate) with a
@@ -31,10 +36,12 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from rsl_rl.algorithms.ppo import PPO
+from rsl_rl.algorithms.ppo import PPO  # noqa: F401  (base of the guard)
+
+from .guarded_ppo import GuardedPPO
 
 
-class LCPPPO(PPO):
+class LCPPPO(GuardedPPO):
     def __init__(self, *args, lcp_coef: float = 0.05, lcp_num_steps: int = 4,
                  lcp_batch_size: int = 4096, **kwargs):
         super().__init__(*args, **kwargs)
