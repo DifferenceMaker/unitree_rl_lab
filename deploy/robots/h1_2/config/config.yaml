@@ -15,6 +15,9 @@ FSM:
     Walk_lm4:
       id: 12
       type: Walk
+    Walk_lm4b:
+      id: 13
+      type: Walk
 
   Passive:
     transitions:
@@ -41,6 +44,7 @@ FSM:
       Walk:     RB + left.on_pressed
       Walk_lm3: RB + up.on_pressed
       Walk_lm4: RB + right.on_pressed
+      Walk_lm4b: RB + down.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -103,3 +107,15 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
     policy_dir: ../../../logs/milestones/lm4_2026-08-13
+
+  # lm4b_mirror01_2026-08-14 (model_7999, obs [1,90] -> 27, same contract as
+  # lm4). THE MIRROR-DOMINANCE FIX: mirror_loss_coeff 1.0 -> 0.1 — deaths 96%
+  # -> 2.95%, sigma annealed to 0.83, curriculum reached vx 1.0 (ang stayed
+  # 0.3 — yaw gate never fired; expect weaker wz tracking). Trained vx up to
+  # 1.0 IN-distribution. Known quirks from previews: arms parked BEHIND the
+  # torso via the untaxed shoulder_pitch (deviation term is -0.25 and pitch is
+  # deliberately free); lm4c arms package addresses it.
+  Walk_lm4b:    # RB+down  lm4b_mirror01 — first real walker of the line
+    transitions:
+      Passive: LT + B.on_pressed
+    policy_dir: ../../../logs/milestones/lm4b_mirror01_2026-08-14
