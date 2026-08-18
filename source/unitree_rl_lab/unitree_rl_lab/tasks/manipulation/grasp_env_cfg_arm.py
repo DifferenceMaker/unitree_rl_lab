@@ -168,7 +168,15 @@ class RobotEnvCfgWrist3(RobotEnvCfg):
                           "left_wrist_pitch_joint": 0.3114,
                           "left_wrist_yaw_joint": 0.8009},
         )
-        _apply_overrides(self, _load_overrides())  # jobs win, applied last
+        # jobs win, applied last — but ONLY when this class IS the leaf task
+        # cfg. Subclasses (Arm7Table/TaskSpace) add trunk terms AFTER this
+        # post_init runs; applying overrides here would run them BEFORE the
+        # trunk exists (caught 2026-08-18: gr6b set_param on retry_seed hit
+        # 'not found' — and the latent half is worse: trunk terms would
+        # silently OVERWRITE job deltas, violating jobs-win, for every
+        # subclassed cfg). Subclasses apply overrides at their own end.
+        if type(self).__name__ in ("RobotEnvCfgArm7", "RobotEnvCfgWrist3"):
+            _apply_overrides(self, _load_overrides())
 
 
 @configclass
@@ -195,7 +203,15 @@ class RobotEnvCfgArm7(RobotEnvCfg):
                 "left_wrist_yaw_joint": 0.8009,
             }, action_scale=0.15, torso_guard=True,
         )
-        _apply_overrides(self, _load_overrides())  # jobs win, applied last
+        # jobs win, applied last — but ONLY when this class IS the leaf task
+        # cfg. Subclasses (Arm7Table/TaskSpace) add trunk terms AFTER this
+        # post_init runs; applying overrides here would run them BEFORE the
+        # trunk exists (caught 2026-08-18: gr6b set_param on retry_seed hit
+        # 'not found' — and the latent half is worse: trunk terms would
+        # silently OVERWRITE job deltas, violating jobs-win, for every
+        # subclassed cfg). Subclasses apply overrides at their own end.
+        if type(self).__name__ in ("RobotEnvCfgArm7", "RobotEnvCfgWrist3"):
+            _apply_overrides(self, _load_overrides())
 
 
 # ===========================================================================
@@ -225,9 +241,20 @@ def _make_gr6_table(cfg):
     # hold target = palm spawn point, captured per-env at reset
     from isaaclab.managers import EventTermCfg as _ET
     cfg.events.hand_start = _ET(func=grasp_mdp.capture_hand_start, mode="reset")
-    cfg.rewards.cube_at_start = RewTerm(
-        func=grasp_mdp.cube_at_start_bonus, weight=15.0,
-        params={"sigma": 0.05, "force_thr": 0.5},
+    cfg.rewards.cube_hold_above = RewTerm(
+        func=grasp_mdp.cube_hold_above_bonus, weight=25.0,
+        params={"height": 0.15, "sigma": 0.06},
+    )
+    # gr6b no-op-by-default events; jobs enable via set_param:
+    #   retry_seed.prob 0.2       (retry seeding — dp5 lean-seeding lesson)
+    #   mount_orbit.amp_range ... (transport DR, randomized phase)
+    cfg.events.retry_seed = _ET(
+        func=grasp_mdp.reset_cube_retry, mode="reset",
+        params={"prob": 0.0, "dist_range": (0.10, 0.20)},
+    )
+    cfg.events.mount_orbit = _ET(
+        func=grasp_mdp.mount_orbit, mode="interval", interval_range_s=(0.02, 0.02),
+        params={"amp_range": (0.0, 0.0), "freq_range": (0.1, 0.4)},
     )
     # gr5d verdict: park discipline in the trunk
     cfg.rewards.park_keep = RewTerm(
@@ -242,6 +269,7 @@ class RobotEnvCfgArm7Table(RobotEnvCfgArm7):
     def __post_init__(self):
         super().__post_init__()
         _make_gr6_table(self)
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last
 
 
 @configclass
@@ -274,3 +302,4 @@ class RobotEnvCfgArm7TaskSpace(RobotEnvCfgArm7):
             # an unreachable wish shows up as IK residual, not a crash).
             scale=(0.03, 0.03, 0.03, 0.05, 0.05, 0.05),
         )
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last

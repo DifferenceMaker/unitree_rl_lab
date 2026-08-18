@@ -184,6 +184,9 @@ class GraspNoEntropyFixedLRPPORunnerCfg(GraspNoEntropyPPORunnerCfg):
     """
 
     algorithm = RslRlPpoAlgorithmCfg(
+        # GuardedPPO chain (2026-08-18): the grasp line's guard debt paid while
+        # touching it for gr6b — nonfinite-grad minibatches dropped + counted.
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

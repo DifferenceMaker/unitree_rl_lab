@@ -248,7 +248,10 @@ def cube_vel_in_palm(env: "ManagerBasedRLEnv") -> torch.Tensor:
 
 
 def cube_pose_vision(
-    env: "ManagerBasedRLEnv", noise_std_pos: float = 0.005, noise_std_axis: float = 0.02
+    env: "ManagerBasedRLEnv",
+    noise_std_pos: float = 0.005,
+    noise_std_axis: float = 0.02,
+    update_period: float = 0.0,
 ) -> torch.Tensor:
     """ACTOR (vision-analog, gr4): cube pose in the palm frame, shaped like the
     real perception feed. VisualModule publishes the cube as a TF (position +
@@ -270,7 +273,18 @@ def cube_pose_vision(
     if noise_std_axis > 0:
         x_axis = torch.nn.functional.normalize(x_axis + torch.randn_like(x_axis) * noise_std_axis, dim=-1)
         z_axis = torch.nn.functional.normalize(z_axis + torch.randn_like(z_axis) * noise_std_axis, dim=-1)
-    return torch.cat([pos, x_axis, z_axis], dim=-1)
+    fresh = torch.cat([pos, x_axis, z_axis], dim=-1)
+    if update_period <= 0.0:
+        return fresh
+    # gr6b_pose1hz: LATCHED vision (operator realism spec) — the real
+    # perception chain publishes ~1 Hz, not per-step. Hold the last sample
+    # between updates; episode step 0 always refreshes (post-reset).
+    if not hasattr(env, "_cube_pose_latch"):
+        env._cube_pose_latch = fresh.clone()
+    steps = max(int(round(update_period / env.step_dt)), 1)
+    refresh = (env.episode_length_buf % steps) == 0
+    env._cube_pose_latch[refresh] = fresh[refresh]
+    return env._cube_pose_latch
 
 
 def support_state(env: "ManagerBasedRLEnv") -> torch.Tensor:
@@ -420,7 +434,16 @@ def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tens
     # is small AND requires actual pad contact, so proximity alone pays ~nothing
     # and the prize lives where it belongs: after the support is gone.
     touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
-    gate = 0.05 * touching + 0.95 * env.grasp_retracted.float()
+    # gr6b GATE FIX (Bible rule 25 corollary — port the SEMANTICS, not the
+    # code): "the prize lives after the support is gone" meant grasp_retracted
+    # in gr5; on the PERMANENT table the retract event no longer exists, the
+    # flag never fired, and the +40 dish sat capped at 5% for the whole gr6
+    # generation (measured 0.2-0.5/s — the operator's wandb read caught it).
+    # The permanent-table translation: the hand supports the cube = the cube
+    # is OFF the table. RAMPED, not stepped ("a promise is not a gradient"):
+    # the 95% share scales 0 -> 1 over cube height [+1 cm, +5 cm] above the
+    # platform top, so lifting pays from the first centimeter.
+    gate = 0.05 * touching + 0.95 * touching * _lift_ramp(env)
     return torch.exp(-((d / sigma) ** 2)) * gate
 
 
@@ -969,6 +992,12 @@ def capture_hand_start(env: "ManagerBasedRLEnv", env_ids):
     if not hasattr(env, "hand_start_pos_w"):
         env.hand_start_pos_w = p_pos.clone()
     env.hand_start_pos_w[env_ids] = p_pos[env_ids]
+    # gr6b: also capture the CUBE start (the hold target xy anchor);
+    # reset_cube_retry updates it again for seeded envs it moves.
+    cube_pos = env.scene["cube"].data.root_pos_w
+    if not hasattr(env, "cube_start_pos_w"):
+        env.cube_start_pos_w = cube_pos.clone()
+    env.cube_start_pos_w[env_ids] = cube_pos[env_ids]
 
 
 def cube_at_start_bonus(
@@ -992,3 +1021,127 @@ def cube_at_start_bonus(
     forces = _pad_force_mags(env)
     holding = (forces.max(dim=-1).values > force_thr).float()
     return bonus * holding
+
+
+# ---------------------------------------------------------------------------
+# gr6b: the corrected permanent-table economy (2026-08-18)
+# ---------------------------------------------------------------------------
+
+def _table_top_w(env: "ManagerBasedRLEnv") -> torch.Tensor:
+    """Per-env platform top z (world). Platform slab is 0.02 thick."""
+    return env.scene["platform"].data.root_pos_w[:, 2] + 0.01
+
+
+def _lift_ramp(env: "ManagerBasedRLEnv", lo: float = 0.01, hi: float = 0.05) -> torch.Tensor:
+    """0 -> 1 as the cube rises from lo to hi above the platform top.
+    The gradient bridge between resting and held-aloft; NaN-safe (clamp of
+    finite physics values; the cube cannot be NaN without root_out_of_bounds
+    class guards tripping upstream in the balance line — grasp scenes have no
+    push events, but the clamp itself is benign either way)."""
+    cube: RigidObject = env.scene["cube"]
+    h = cube.data.root_pos_w[:, 2] - _table_top_w(env)
+    return ((h - lo) / (hi - lo)).clamp(0.0, 1.0)
+
+
+def cube_hold_above_bonus(
+    env: "ManagerBasedRLEnv",
+    height: float = 0.15,
+    sigma: float = 0.06,
+) -> torch.Tensor:
+    """gr6b: hold the cube at a FIXED HEIGHT above the table (operator design:
+    'It shouldn't be start_pose height we are targeting but a fixed distance
+    from table'). Target = the cube's own start xy at platform_top + height.
+    Replaces cube_at_start, whose target (the IK hand-spawn point, measured
+    z 1.086 vs cube 1.035) sat ~5 cm above the resting cube — resting
+    collected ~30% riskless. Income = kernel x touching x lift ramp: resting
+    pays ZERO from this term."""
+    _buffers(env)
+    cube: RigidObject = env.scene["cube"]
+    touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    target = env.cube_start_pos_w.clone()
+    target[:, 2] = _table_top_w(env) + height
+    d = (cube.data.root_pos_w - target).norm(dim=-1)
+    return torch.exp(-((d / sigma) ** 2)) * touching * _lift_ramp(env)
+
+
+def approach_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.3) -> torch.Tensor:
+    """gr6b_retry: the reach-back gradient. hold_cube's sigma 0.06 kernel is
+    flat-zero at 30 cm, so after a slide the rational move was dangling at
+    park (+2/s) — nothing paid for closing the distance. Wide kernel, small
+    weight, and x(1 - touching) so it never double-pays while gripping."""
+    cube: RigidObject = env.scene["cube"]
+    p_pos, _ = _palm_pose(env)
+    touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    d = (cube.data.root_pos_w - p_pos).norm(dim=-1)
+    return torch.exp(-((d / sigma) ** 2)) * (1.0 - touching)
+
+
+def reset_cube_retry(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    prob: float = 0.0,
+    dist_range: tuple[float, float] = (0.10, 0.20),
+) -> None:
+    """gr6b_retry seeding (the dp5 lean-seeding lesson): with `prob`, start
+    the episode with the cube ON THE TABLE 10-20 cm away from the hand — the
+    retry state the policy otherwise never visits (episodes begin with the
+    hand above the cube per the production handoff, which the other 80% keep).
+    Updates cube_start_pos_w for moved envs so the hold target sits above
+    where the cube ACTUALLY is."""
+    if prob <= 0.0 or len(env_ids) == 0:
+        return
+    cube: RigidObject = env.scene["cube"]
+    platform = env.scene["platform"]
+    picked = env_ids[torch.rand(len(env_ids), device=env.device) < prob]
+    if len(picked) == 0:
+        return
+    d = dist_range[0] + torch.rand(len(picked), device=env.device) * (dist_range[1] - dist_range[0])
+    ang = torch.rand(len(picked), device=env.device) * 2.0 * torch.pi
+    root = cube.data.root_state_w[picked].clone()
+    root[:, 0] += d * torch.cos(ang)
+    root[:, 1] += d * torch.sin(ang)
+    # clamp onto the platform footprint (0.45 x 0.45, 2 cm margin)
+    pxy = platform.data.root_pos_w[picked, :2]
+    root[:, 0] = root[:, 0].clamp(pxy[:, 0] - 0.205, pxy[:, 0] + 0.205)
+    root[:, 1] = root[:, 1].clamp(pxy[:, 1] - 0.205, pxy[:, 1] + 0.205)
+    root[:, 7:] = 0.0
+    cube.write_root_pose_to_sim(root[:, :7], picked)
+    cube.write_root_velocity_to_sim(root[:, 7:], picked)
+    if hasattr(env, "cube_start_pos_w"):
+        env.cube_start_pos_w[picked] = root[:, :3]
+
+
+def mount_orbit(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    amp_range: tuple[float, float] = (0.0, 0.0),
+    freq_range: tuple[float, float] = (0.1, 0.4),
+) -> None:
+    """gr6b_transport: continuous RANDOMIZED-PHASE mount motion — the arm
+    base rides a slow per-env orbit (xy sinusoids, independent phases), so a
+    held cube must survive being TRANSPORTED. Interval-timed wobble was the
+    gr5b armwobble exploit (time-locked feedforward); random phase+freq per
+    env makes the motion unpredictable from episode time. amp 0 = no-op
+    (trunk default; the transport job turns it on via set_param)."""
+    if amp_range[1] <= 0.0:
+        return
+    robot = env.scene["robot"]
+    if not hasattr(env, "_orbit_amp"):
+        n = env.num_envs
+        env._orbit_amp = torch.zeros(n, device=env.device)
+        env._orbit_freq = torch.zeros(n, 2, device=env.device)
+        env._orbit_phase = torch.zeros(n, 2, device=env.device)
+    fresh = env._orbit_amp[env_ids] == 0.0
+    if fresh.any():
+        ids = env_ids[fresh]
+        env._orbit_amp[ids] = amp_range[0] + torch.rand(len(ids), device=env.device) * (amp_range[1] - amp_range[0])
+        env._orbit_freq[ids] = freq_range[0] + torch.rand(len(ids), 2, device=env.device) * (freq_range[1] - freq_range[0])
+        env._orbit_phase[ids] = torch.rand(len(ids), 2, device=env.device) * 2.0 * torch.pi
+    t = (env.episode_length_buf[env_ids] * env.step_dt).unsqueeze(-1)
+    off = env._orbit_amp[env_ids].unsqueeze(-1) * torch.sin(
+        2.0 * torch.pi * env._orbit_freq[env_ids] * t + env._orbit_phase[env_ids]
+    )
+    root = robot.data.default_root_state[env_ids].clone()
+    root[:, :3] += env.scene.env_origins[env_ids]
+    root[:, :2] += off
+    robot.write_root_pose_to_sim(root[:, :7], env_ids)
