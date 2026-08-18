@@ -1258,3 +1258,94 @@ def arm_gait_swing(
     base = torch.exp(-err / std**2)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
     return base * (cmd > 0.1).float()
+
+
+# ---------------------------------------------------------------------------
+# lm4d: the crisp-tracking wave (probe-backed, 2026-08-18)
+# ---------------------------------------------------------------------------
+
+def track_vel_err_l2(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4d_crisp: the L2-far half of the tracking pair. The narrowed exp
+    kernel (std 0.25) goes flat past ~0.5 m/s error; this keeps a gradient
+    alive everywhere (design grammar: kernel-near income + L2-far penalty).
+    Sums linear-xy and yaw-rate squared errors in the yaw frame."""
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    lin_err = torch.sum(
+        torch.square(cmd[:, :2] - asset.data.root_lin_vel_b[:, :2]), dim=-1
+    )
+    yaw_err = torch.square(cmd[:, 2] - asset.data.root_ang_vel_b[:, 2])
+    return lin_err + yaw_err
+
+
+def standing_pose_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.8,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4d: the firm 'at attention' stance (operator: 'stands like a zombie
+    ... I want the standing to be firm and somewhat default like'). Kernel on
+    whole-body joint deviation from defaults, paid ONLY at zero command —
+    the stance kernels govern foot xy but nothing paid for body posture at
+    rest. Gated standing so it cannot fight the gait."""
+    asset = env.scene[asset_cfg.name]
+    err = torch.sum(
+        torch.square(asset.data.joint_pos - asset.data.default_joint_pos), dim=-1
+    )
+    base = torch.exp(-err / std**2)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return base * (cmd <= 0.1).float()
+
+
+def flat_orientation_split_l2(
+    env: "ManagerBasedRLEnv",
+    pitch_scale_walking: float = 0.0,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4d_unimpede: tilt discipline SPLIT BY AXIS. Walking requires pitch
+    freedom (accel/brake/backward lean) but must never get roll freedom
+    (lateral toppling). Roll (gravity-y) is penalized always; pitch
+    (gravity-x) fully when standing, scaled by pitch_scale_walking when a
+    command is active (0.0 = free lean while walking)."""
+    asset = env.scene[asset_cfg.name]
+    g = asset.data.projected_gravity_b
+    roll_sq = torch.square(g[:, 1])
+    pitch_sq = torch.square(g[:, 0])
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    walking = (cmd > 0.1).float()
+    pitch_w = walking * pitch_scale_walking + (1.0 - walking)
+    return roll_sq + pitch_sq * pitch_w
+
+
+def foot_stance_tracking_standing(
+    env: "ManagerBasedRLEnv",
+    std: float,
+    nominal_foot_pos_b,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4d_unimpede: foot_stance_tracking gated on standing — it is a
+    STANDING reward (the lm3 gating pass missed it; measured cost of the miss:
+    ~2.25/s forfeited the moment feet leave the nominal spots = half the
+    vy/wz refusal arithmetic, probe 2026-08-18)."""
+    base = foot_stance_tracking(env, std=std, nominal_foot_pos_b=nominal_foot_pos_b, asset_cfg=asset_cfg)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return base * (cmd <= 0.1).float()
+
+
+def stance_bonus_standing(
+    env: "ManagerBasedRLEnv",
+    std: float,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """lm4d_unimpede: stance_bonus gated on standing (same rationale)."""
+    base = stance_bonus(env, std=std, asset_cfg=asset_cfg)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return base * (cmd <= 0.1).float()
