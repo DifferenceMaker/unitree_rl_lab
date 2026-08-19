@@ -420,7 +420,27 @@ def retract_support(env: "ManagerBasedRLEnv", env_ids: torch.Tensor):
 # ---------------------------------------------------------------------------
 # Rewards
 # ---------------------------------------------------------------------------
-def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tensor:
+def _closure_touching(env: "ManagerBasedRLEnv", force_thr: float = 0.5) -> torch.Tensor:
+    """gr6c 'multiple fingers' gate: 1.0 only when a THUMB pad AND at least one
+    OPPOSING FINGER pad are both loaded (palm pad ignored entirely). The
+    gr6b palm-press autopsy: `touching = pad_force_sum > 1` counts the palm,
+    so pressing the cube with the palm satisfied every touching gate — the
+    0.3 any-contact tier of pad_arrangement paid while its 0.7 closure tier
+    never fired (HUD-verified, 2026-08-19). This is the closure tier's
+    definition reused as a GATE."""
+    f = _pad_force_mags(env)
+    thumb_m, finger_m = _pad_masks(env)
+    loaded = f > force_thr
+    return (loaded[:, thumb_m].any(dim=-1) & loaded[:, finger_m].any(dim=-1)).float()
+
+
+def hold_cube_bonus(
+    env: "ManagerBasedRLEnv",
+    sigma: float = 0.06,
+    gate_mode: str = "any",
+    ramp_lo: float = 0.01,
+    ramp_hi: float = 0.05,
+) -> torch.Tensor:
     """THE dish. After support removal: exp(-(d/sigma)^2) on cube-to-palm
     distance. Bounded (the anchor2 lesson: bonuses, not unbounded penalties)."""
     _buffers(env)
@@ -433,7 +453,14 @@ def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tens
     # never touching the cube (pad_force_sum = 0.000 N). Now the pre-retract share
     # is small AND requires actual pad contact, so proximity alone pays ~nothing
     # and the prize lives where it belongs: after the support is gone.
-    touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    # gr6c: gate_mode "closure" swaps the palm-inclusive any-pad touching for
+    # thumb+opposing-finger closure (the palm-press loophole); ramp_lo 0.025
+    # kills the palm-TILT variant (edge-tilting a 5 cm cube raises its center
+    # ~1 cm — exactly the old lo=0.01 threshold, so tilts collected ramp).
+    if gate_mode == "closure":
+        touching = _closure_touching(env)
+    else:
+        touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
     # gr6b GATE FIX (Bible rule 25 corollary — port the SEMANTICS, not the
     # code): "the prize lives after the support is gone" meant grasp_retracted
     # in gr5; on the PERMANENT table the retract event no longer exists, the
@@ -441,9 +468,9 @@ def hold_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.06) -> torch.Tens
     # generation (measured 0.2-0.5/s — the operator's wandb read caught it).
     # The permanent-table translation: the hand supports the cube = the cube
     # is OFF the table. RAMPED, not stepped ("a promise is not a gradient"):
-    # the 95% share scales 0 -> 1 over cube height [+1 cm, +5 cm] above the
-    # platform top, so lifting pays from the first centimeter.
-    gate = 0.05 * touching + 0.95 * touching * _lift_ramp(env)
+    # the 95% share scales 0 -> 1 over cube height [ramp_lo, ramp_hi] above
+    # the platform top, so lifting pays from the first centimeter.
+    gate = 0.05 * touching + 0.95 * touching * _lift_ramp(env, ramp_lo, ramp_hi)
     return torch.exp(-((d / sigma) ** 2)) * gate
 
 
@@ -1047,6 +1074,9 @@ def cube_hold_above_bonus(
     env: "ManagerBasedRLEnv",
     height: float = 0.15,
     sigma: float = 0.06,
+    gate_mode: str = "any",
+    ramp_lo: float = 0.01,
+    ramp_hi: float = 0.05,
 ) -> torch.Tensor:
     """gr6b: hold the cube at a FIXED HEIGHT above the table (operator design:
     'It shouldn't be start_pose height we are targeting but a fixed distance
@@ -1057,11 +1087,14 @@ def cube_hold_above_bonus(
     pays ZERO from this term."""
     _buffers(env)
     cube: RigidObject = env.scene["cube"]
-    touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    if gate_mode == "closure":
+        touching = _closure_touching(env)
+    else:
+        touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
     target = env.cube_start_pos_w.clone()
     target[:, 2] = _table_top_w(env) + height
     d = (cube.data.root_pos_w - target).norm(dim=-1)
-    return torch.exp(-((d / sigma) ** 2)) * touching * _lift_ramp(env)
+    return torch.exp(-((d / sigma) ** 2)) * touching * _lift_ramp(env, ramp_lo, ramp_hi)
 
 
 def approach_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.3) -> torch.Tensor:
