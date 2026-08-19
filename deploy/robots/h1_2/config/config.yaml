@@ -7,12 +7,6 @@ FSM:
       id: 1
     FixStand:
       id: 2
-    Walk:
-      id: 10
-      type: Walk
-    Walk_lm4b:
-      id: 13
-      type: Walk
     Walk_lm4d_combo:
       id: 16
       type: Walk
@@ -54,8 +48,6 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Walk:               RB + left.on_pressed
-      Walk_lm4b:          RB + down.on_pressed
       Walk_lm4d_combo:    RB + up.on_pressed
       Walk_lm4d_crisp:    RB + right.on_pressed
       Walk_lm4d_unimpede: RB + B.on_pressed
@@ -94,15 +86,7 @@ FSM:
   # the arbiter of vy/wz capability (probe 2026-08-18 is); use big stick
   # inputs and read bars-vs-ticks.
 
-  Walk:    # RB+left  lm2_walk_contacts (obs [1,140], pad_to) — historical ref
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm2_walk_contacts_2026-07-29
 
-  Walk_lm4b:    # RB+down  lm4b_mirror01 — first real walker, the lm4d grandparent
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4b_mirror01_2026-08-14
 
   # lm4d wave (parent lm4c_track; all: track 10/5 + hips guard -1.0 + arms v2
   # incl. shoulder_pitch + standing_pose 2.0). arm_swing ALIVE (0.34/s, was
