@@ -1186,6 +1186,25 @@ def body_ang_vel_l2_standing(
     return torch.sum(w * w, dim=-1) * _standing_gate(env, command_name)
 
 
+def capture_point_touchdown_standing(
+    env: "ManagerBasedRLEnv",
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    max_dist: float = 0.5,
+    com_offset_b: tuple = (0.0, 0.0),
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """lm4e: capture_point_touchdown gated on standing. The capture point is
+    the STOP placement (cp = com + v*sqrt(h/g), command-blind); a continuing
+    gait must land BEHIND it to keep momentum, so ungated the term is a
+    speed-proportional brake on every walking step (~1-2/s at 1 m/s, prime
+    suspect for the lm4d ~2/3 forward DC gain) and taxes turning steps.
+    Standing keeps its designed anti-push recovery-step job."""
+    return capture_point_touchdown_distance(
+        env, sensor_cfg, asset_cfg, max_dist, com_offset_b
+    ) * _standing_gate(env, command_name)
+
+
 def joint_target_deviation_l1(
     env: "ManagerBasedRLEnv",
     command_name: str = "arm_pose_command",
