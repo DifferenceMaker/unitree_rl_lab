@@ -1123,6 +1123,11 @@ def mount_orbit(
     gr5b armwobble exploit (time-locked feedforward); random phase+freq per
     env makes the motion unpredictable from episode time. amp 0 = no-op
     (trunk default; the transport job turns it on via set_param)."""
+    # harden vs renderer mishaps: a malformed set_param once delivered a STRING
+    # here (unquoted JSON list word-split by bash, 2026-08-19) — fail loudly on
+    # anything non-numeric instead of comparing str to float.
+    amp_range = tuple(float(v) for v in amp_range)
+    freq_range = tuple(float(v) for v in freq_range)
     if amp_range[1] <= 0.0:
         return
     robot = env.scene["robot"]
