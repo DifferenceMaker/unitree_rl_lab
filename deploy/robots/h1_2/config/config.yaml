@@ -1,29 +1,25 @@
 FSM:
-  _: # enabled fsms — WALK BOARD v3 (2026-08-19): the lm4d wave + LCP pair.
-     # References kept: lm2 (RB+left, the original), mirror01 (RB+down, the
-     # first real walker). lm3/lm4/lm4c slots retired (superseded; milestones
-     # remain on disk — board history in git).
+  _: # enabled fsms — WALK BOARD v4 (2026-08-20): the lm4e unpark wave ONLY
+     # (operator individual-test setup). lm4d/LCP slots retired (board
+     # history in git; milestones remain on disk).
     Passive:
       id: 1
     FixStand:
       id: 2
-    Walk_lm4d_combo:
-      id: 16
+    Walk_lm4e_wall:
+      id: 22
       type: Walk
-    Walk_lm4d_crisp:
-      id: 17
+    Walk_lm4e_wall_hips:
+      id: 23
       type: Walk
-    Walk_lm4d_unimpede:
-      id: 18
+    Walk_lm4e_capgate:
+      id: 24
       type: Walk
-    Walk_lm4d_gait4x:
-      id: 19
+    Walk_lm4e_nopose:
+      id: 25
       type: Walk
-    Walk_lcp_scratch:
-      id: 20
-      type: Walk
-    Walk_lcp_retrofit:
-      id: 21
+    Walk_lm4e_unimpede:
+      id: 26
       type: Walk
 
   Passive:
@@ -48,12 +44,11 @@ FSM:
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
-      Walk_lm4d_combo:    RB + up.on_pressed
-      Walk_lm4d_crisp:    RB + right.on_pressed
-      Walk_lm4d_unimpede: RB + B.on_pressed
-      Walk_lm4d_gait4x:   RB + X.on_pressed
-      Walk_lcp_scratch:   RB + Y.on_pressed
-      Walk_lcp_retrofit:  RB + A.on_pressed
+      Walk_lm4e_wall:      RB + up.on_pressed
+      Walk_lm4e_wall_hips: RB + right.on_pressed
+      Walk_lm4e_capgate:   RB + B.on_pressed
+      Walk_lm4e_nopose:    RB + X.on_pressed
+      Walk_lm4e_unimpede:  RB + Y.on_pressed
     kp: [
       250, 250, 250, 400, 80, 40,
       250, 250, 250, 400, 80, 40,
@@ -79,52 +74,41 @@ FSM:
       ]
     ]
 
-  # === WALK BOARD v3 — all obs [1,90] -> 27 except lm2 ===
+  # === WALK BOARD v4 — all obs [1,90] -> 27 ===
   # Velocity source: rt/wirelesscontroller (walk_teleop.py in sim2sim).
   # KNOWN RIG CAVEAT: Axis EMA dilutes received sticks to ~1/3 of published —
   # vy/wz commands can arrive at/below the 0.1 activation gate. The rig is NOT
-  # the arbiter of vy/wz capability (probe 2026-08-18 is); use big stick
-  # inputs and read bars-vs-ticks.
+  # the arbiter of vy/wz capability; use big stick inputs, read bars-vs-ticks.
+  #
+  # lm4e unpark wave (trunk lm4d_crisp, all warmstart its model_22525;
+  # all: wall dof_pos_limits -100). THE QUESTION: left_hip_yaw (probe
+  # 2026-08-19: parked at the -0.43 HARD stop in all lm4d = the whole
+  # dof_pos_limits -0.9 + the zombie left leg). WALL VERDICT SPLIT:
+  # wall_hips UNPARKED (-0.088, the only one); capgate/nopose/unimpede
+  # stayed parked at the SATURATED ceiling (-4.33) with better tracking
+  # (err -0.33 vs -1.05) — crutch vs transition-cost. Watch the LEFT LEG.
 
-
-
-  # lm4d wave (parent lm4c_track; all: track 10/5 + hips guard -1.0 + arms v2
-  # incl. shoulder_pitch + standing_pose 2.0). arm_swing ALIVE (0.34/s, was
-  # 0.4% — expect actual counter-swing). LIMITS STILL BAD in all four
-  # (-0.89..-0.93; the hips guard did NOT transfer from the desk line — the
-  # riding joint is elsewhere, probe pending): ALL FOUR SIM-ONLY.
-  Walk_lm4d_combo:    # RB+up  the base (kernel std 0.5)
-    transitions:
+  Walk_lm4e_wall:    # RB+up  wall -100 only (hips guard still -1.0); wandb hid its
+    transitions:      # dof_pos_limits under a name collision — the rig + probe decide
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4d_combo_2026-08-18
+    policy_dir: ../../../logs/milestones/lm4e_wall_2026-08-20
 
-  Walk_lm4d_crisp:    # RB+right  + std 0.25 + err L2 — tracking err 0.26 -> 0.17 m/s
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4d_crisp_2026-08-19
+  Walk_lm4e_wall_hips:    # RB+right  THE UNPARKED ONE (-0.088). hips -2.0. Operator
+    transitions:           # Ctrl+C'd at 97% (model_30225, converged). Expect rougher
+      Passive: LT + B.on_pressed   # tracking, straighter left leg. TEST FIRST.
+    policy_dir: ../../../logs/milestones/lm4e_wall_hips_2026-08-20
 
-  Walk_lm4d_unimpede:    # RB+B  crisp + stance gated + flat split + angvel -0.1
-    transitions:          # THE vy/wz/backward candidate — test sideways+rotation+backward FIRST
+  Walk_lm4e_capgate:    # RB+B  wall_hips + capture_point standing-gated — the
+    transitions:         # speed-brake removal: judge fwd gain/stride. PARKED (-4.33).
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4d_unimpede_2026-08-18
+    policy_dir: ../../../logs/milestones/lm4e_wall_hips_capgate_2026-08-19
 
-  Walk_lm4d_gait4x:    # RB+X  crisp + gait 6.0 — cadence experiment (ang gate stuck 0.4)
-    transitions:
+  Walk_lm4e_nopose:    # RB+X  capgate + standing_pose DELETED — judge standing
+    transitions:        # posture quality. PARKED (-4.33).
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4d_gait4x_2026-08-19
+    policy_dir: ../../../logs/milestones/lm4e_wall_hips_nopose_2026-08-19
 
-  # LCP pair (mirror01-economy, track 3/1.5 — compare against RB+down, NOT lm4d):
-  # scratch = grew up Lipschitz-bounded (penalty 0.18) but PARITY FAILED
-  # (deaths 15.2% vs 2.95%, track 1.24 vs 1.64) — rejected for training use.
-  # retrofit = penalty 800 -> 0.86 (~1000x) with behavior RETAINED (deaths
-  # 2.89%, eplen 2985, track 1.69) — the post-hoc smoothness pass works; its
-  # value is the hardware noise-amplification ceiling, invisible in sim.
-  Walk_lcp_scratch:    # RB+Y
-    transitions:
+  Walk_lm4e_unimpede:    # RB+Y  wall_hips + unimpede genes (stance gated, flat
+    transitions:          # split, angvel -0.1) — vy/wz/backward feel. PARKED (-4.33).
       Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4c_lcp_scratch_2026-08-17
-
-  Walk_lcp_retrofit:    # RB+A  — feel-test vs RB+down: same behavior, 1000x lower input sensitivity
-    transitions:
-      Passive: LT + B.on_pressed
-    policy_dir: ../../../logs/milestones/lm4c_lcp_retrofit_2026-08-17
+    policy_dir: ../../../logs/milestones/lm4e_wall_hips_unimpede_2026-08-19
