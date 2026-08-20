@@ -244,3 +244,30 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# lm5: the lm4e_wall_hips recipe trunked (operator 2026-08-20, trunk-is-task) —
+# the unparked parent. Mirror 0.1 runner (wall_hips ran LM4B-M01-Q).
+gym.register(
+    id="Unitree-H1_2-LM5-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotEnvCfgLM5",
+        "play_env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotPlayEnvCfgLM5",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
+
+# lm5 LCP retrofit: LM5 env + the reduced-dose retrofit runner (lcp_num_steps=1,
+# action_rate KEPT = sigma anchor) — the operator's clean A/B: wall_hips vs
+# wall_hips+retrofit, same genes, retrofit the only difference.
+gym.register(
+    id="Unitree-H1_2-LM5-LCPR-Q",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotEnvCfgLM5",
+        "play_env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotPlayEnvCfgLM5",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BLcpRetrofitPPORunnerCfg",
+    },
+)
