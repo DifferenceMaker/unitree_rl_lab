@@ -381,3 +381,28 @@ class LM4BLcpRetrofitPPORunnerCfg(LM4BLcpMirror01PPORunnerCfg):
             data_augmentation_func="unitree_rl_lab.tasks.locomotion.mdp.symmetry:mirror_h1_2_walk",
         ),
     )
+
+
+@configclass
+class DeskLcpRetrofitPPORunnerCfg(QueuePPORunnerCfg):
+    """dp5e_lcpr (operator 2026-08-20, "purely experimental"): the lm4c/lm5
+    retrofit regime ported to the DESK line — LCP onto a trained desk policy
+    at 1 penalty step/iter. NO symmetry_cfg: the mirror map is the WALK obs
+    contract (mirror_h1_2_walk, 90-obs) and would be nonsense on desk obs.
+    action_rate kept (the sigma anchor); GuardedPPO chained via LCPPPO."""
+
+    algorithm = RslRlLcpPpoAlgorithmCfg(
+        lcp_num_steps=1,
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
