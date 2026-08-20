@@ -117,3 +117,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
     },
 )
+
+# gr6d_lcpr: the gr6 table trunk + the grasp LCP-retrofit runner (entropy 0,
+# fixed lr, 1 penalty step/iter — see GraspLcpRetrofitPPORunnerCfg).
+gym.register(
+    id="Unitree-H1_2-Grasp-Arm7Table-LCPR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7Table",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7Table",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspLcpRetrofitPPORunnerCfg",
+    },
+)
