@@ -235,6 +235,10 @@ class Metrics:
                 '{"lean_fwd":%.1f,"lean_lat":%.1f,"steps_l":%d,"steps_r":%d,'
                 '"touchdown_rate":%.2f,"torso_ang_vel_rms":%.3f}'
             ) % (lean_fwd, lean_lat, td_l, td_r, rate, rms)
+            # cache the fields so the 5 Hz ledger publisher can carry them —
+            # a ledger-only payload would blank the METRICS lines in the sim
+            # overlay (set_metrics_from_json rebuilds from present fields).
+            self.last_payload_fields = payload[1:-1]
             try:
                 self.publisher.Write(String_(data=payload))
             except Exception:
@@ -282,6 +286,11 @@ def main():
     ap.add_argument("--window", type=int, default=250, help="samples per [METRICS] print")
     ap.add_argument("--mode", default="(unset — use stdin: mode <label>)",
                     help="disturbance-mode label for the run summary")
+    ap.add_argument("--ledger", default=None, metavar="ENV_YAML",
+                    help="LIVE reward ledger: path to the policy's params/env.yaml "
+                         "(weights parsed from it). Requires the sim's "
+                         "rt/sim_base_pose publisher (2026-08-21+ build). Rows are "
+                         "overlaid in the sim HUD and a tape JSON is saved on exit.")
     args = ap.parse_args()
 
     xml = args.xml or find_default_xml()
@@ -379,6 +388,12 @@ def main():
 
     threading.Thread(target=stdin_thread, daemon=True).start()
 
+    ledger = None
+    ledger_pub_t = 0.0
+    if args.ledger:
+        from reward_ledger import RewardLedger
+        ledger = RewardLedger(args.ledger)
+
     dt = 1.0 / args.hz
     warned_stale = False
     started = False
@@ -432,6 +447,26 @@ def main():
 
         metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt, g_b, rpy)
 
+        # --- LIVE reward ledger (5 Hz publish; walk_hud flicker lesson) ---
+        if ledger is not None and now - ledger_pub_t >= 0.2:
+            ledger_pub_t = now
+            items = ledger.tick(float(g_b[0] ** 2 + g_b[1] ** 2))
+            if metrics.publisher is not None and items:
+                base_fields = getattr(metrics, "last_payload_fields", "")
+                sep = "," if base_fields else ""
+                try:
+                    metrics.publisher.Write(String_(data=(
+                        '{%s%s"ledger":"%s"}' % (base_fields, sep,
+                                                 ledger.hud_field(items)))))
+                except Exception:
+                    pass
+
+    if ledger is not None:
+        tape_dir = os.environ.get("LEDGER_TAPE_DIR", ".")
+        tape = ledger.save_tape(os.path.join(
+            tape_dir, f"reward_tape_mujoco_{time.strftime('%Y%m%d_%H%M%S')}.json"))
+        if tape:
+            print(f"[LEDGER] tape saved: {tape}", flush=True)
     metrics.summary()
 
 
