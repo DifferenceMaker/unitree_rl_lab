@@ -108,10 +108,17 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
     # expands to many fails SILENTLY (physx logs "did not match the correct
     # number of entries", force_matrix_w comes back empty, the penalty pays 0
     # forever). Enumerate every link explicitly.
+    # gr6e FIX (operator HUD catch 2026-08-21: "the table_hit penalty doesn't
+    # hit, even though the finger is clearly dragging against the table"):
+    # the filter enumerated ONLY base + the four THUMB links — the gr5-era
+    # thumb-strike concern — so index/middle/ring/little drags were invisible
+    # to table_hit for the entire gr5/gr6 history. All finger phalanges added.
     cfg.scene.hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Platform",
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_base_link"]
-        + [f"{{ENV_REGEX_NS}}/Hand/left_thumb_{i}" for i in (1, 2, 3, 4)],
+        + [f"{{ENV_REGEX_NS}}/Hand/left_thumb_{i}" for i in (1, 2, 3, 4)]
+        + [f"{{ENV_REGEX_NS}}/Hand/left_{f}_{i}"
+           for f in ("index", "middle", "ring", "little") for i in (1, 2)],
         update_period=0.0,
     )
     # --- rewards: gr5 ledger + table-hit penalty + arm smoothness (bounded) ---
