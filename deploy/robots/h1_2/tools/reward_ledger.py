@@ -29,6 +29,7 @@ without any replay machinery.
 """
 import json
 import math
+import os
 import re
 import time
 
@@ -45,7 +46,7 @@ def _yaml_num(text, pattern, default=None):
 
 
 class RewardLedger:
-    def __init__(self, env_yaml_path: str):
+    def __init__(self, env_yaml_path: str, joint_names=None):
         txt = open(env_yaml_path).read()
 
         def term_weight(name):
@@ -57,12 +58,48 @@ class RewardLedger:
             "alive", "anchor_hold", "upright_bonus", "flat_orientation_l2",
             "base_height", "torso_stability_bonus", "torso_lin_vel_xy",
             "torso_ang_vel", "track_lin_vel_xy", "track_ang_vel_z", "action_rate",
+            "joint_deviation_hips", "joint_deviation_torso", "joint_deviation_knees",
+            "desk_reach", "undesired_contacts", "desk_hit",
+            "feet_slide", "feet_too_near",
+            "base_linear_velocity", "base_angular_velocity",
         )}
+        # drop zero-weight terms (e.g. desk_hit 0 in the dp5 line)
+        for k, v in list(self.w.items()):
+            if v == 0.0:
+                self.w[k] = None
+
+        # ---- joint deviations (v3): SDK-order joint names from the sidecar's
+        # FK model + Isaac-order defaults mapped via deploy.yaml joint_ids_map
+        self._dev_groups = {}
+        self._q_default_sdk = None
+        dep_path = os.path.join(os.path.dirname(env_yaml_path), "deploy.yaml")
+        if joint_names and os.path.isfile(dep_path):
+            dep = open(dep_path).read()
+
+            def _num_list(key):
+                m = re.search(rf"^{key}: \[([^\]]+)\]", dep, re.M | re.S)
+                return [float(x) for x in m.group(1).replace("\n", " ").split(",")] if m else None
+
+            ids_map = _num_list("joint_ids_map")
+            q_def_isaac = _num_list("default_joint_pos")
+            if ids_map and q_def_isaac and len(joint_names) == len(q_def_isaac):
+                self._q_default_sdk = np.zeros(len(joint_names))
+                for i, sdk in enumerate(ids_map):
+                    self._q_default_sdk[int(sdk)] = q_def_isaac[i]
+                for gname, pat in (
+                        ("joint_deviation_hips", r"hip_(roll|yaw)"),
+                        ("joint_deviation_torso", r"torso"),
+                        ("joint_deviation_knees", r"knee")):
+                    idx = [j for j, n in enumerate(joint_names) if re.search(pat, n)]
+                    if idx:
+                        self._dev_groups[gname] = np.array(idx, dtype=int)
         self.p = {
             "anchor_sigma": _yaml_num(txt, r"anchor_hold:\n(?:    .*\n)*?      sigma: ([0-9.]+)", 0.15),
             "anchor_fwd": _yaml_num(txt, r"anchor_hold:\n(?:    .*\n)*?      fwd_offset: ([0-9.]+)", 0.5),
             "upright_std": _yaml_num(txt, r"upright_bonus:\n(?:    .*\n)*?      std: ([0-9.]+)", 0.05),
             "height_target": _yaml_num(txt, r"base_height:\n(?:    .*\n)*?      target_height: ([0-9.]+)", 0.87),
+            "reach_sigma": _yaml_num(txt, r"desk_reach:\n(?:    .*\n)*?      sigma: ([0-9.]+)", 0.25),
+            "near_thresh": _yaml_num(txt, r"feet_too_near:\n(?:    .*\n)*?      threshold: ([0-9.]+)", 0.18),
             "track_std2": 0.25,   # std = sqrt(0.25) in the trunk
             "stab_sl": 0.15, "stab_sa": 0.30,
         }
@@ -72,6 +109,8 @@ class RewardLedger:
         self._anchor = None        # [x,y,z] base frame
         self._prev_cmd = None
         self._dq_cmd2 = 0.0
+        self._prev_feet = None
+        self._prev_feet_t = 0.0
         self.rows = []
         self.t0 = time.monotonic()
         self._t_last = self.t0
@@ -122,7 +161,7 @@ class RewardLedger:
         ])
         return R @ np.asarray(v)
 
-    def tick(self, proj_grav_xy2: float):
+    def tick(self, proj_grav_xy2: float, q=None):
         """Compute all terms. proj_grav_xy2 = |projected_gravity_b xy|^2 from
         the sidecar's IMU path (already computed there). Returns [(name, v)]."""
         vals = {}
@@ -162,6 +201,55 @@ class RewardLedger:
                     -(w_world[2]**2) / p["track_std2"])
         if w.get("action_rate") is not None and self._prev_cmd is not None:
             vals["action_rate"] = w["action_rate"] * self._dq_cmd2
+
+        # ---- v3 terms ----
+        if q is not None and self._q_default_sdk is not None:
+            dq = np.abs(np.asarray(q) - self._q_default_sdk)
+            for gname, idx in self._dev_groups.items():
+                if w.get(gname) is not None:
+                    vals[gname] = w[gname] * float(dq[idx].sum())
+        if self._pose is not None:
+            ps = self._pose
+            if w.get("base_linear_velocity") is not None:
+                vals["base_linear_velocity"] = w["base_linear_velocity"] * ps["v"][2] ** 2
+            if w.get("base_angular_velocity") is not None:
+                ww = self._quat_rot(ps["q"], ps["w"])
+                vals["base_angular_velocity"] = w["base_angular_velocity"] * float(
+                    ww[0] ** 2 + ww[1] ** 2)
+            # desk_reach: per-hand kernel on |wrist - target ball|, active when
+            # the ball is visible (hidden balls park at z < 0)
+            if w.get("desk_reach") is not None and "tl" in ps and "lw" in ps:
+                tot = 0.0
+                for wk, tk in (("lw", "tl"), ("rw", "tr")):
+                    t = ps.get(tk)
+                    if t and t[2] > 0.0:
+                        e2 = sum((ps[wk][i] - t[i]) ** 2 for i in range(3))
+                        tot += math.exp(-e2 / (self.p["reach_sigma"] ** 2))
+                vals["desk_reach~"] = w["desk_reach"] * tot
+            # undesired_contacts: COUNT of scoped bodies (pelvis/torso/hips/
+            # knees) in >1N contact with the DESK (Isaac form = count)
+            if w.get("undesired_contacts") is not None and "ucnt" in ps:
+                vals["undesired_contact~"] = w["undesired_contacts"] * float(ps["ucnt"])
+            # feet_slide: foot xy speed while in contact (positions differenced
+            # at the publish rate)
+            if w.get("feet_slide") is not None and "fl" in ps and "fc" in ps:
+                slide = 0.0
+                nowp = (ps["fl"], ps["fr"])
+                if self._prev_feet is not None:
+                    dt = max(1e-3, time.monotonic() - self._prev_feet_t)
+                    for k in range(2):
+                        vxy = math.hypot(nowp[k][0] - self._prev_feet[k][0],
+                                         nowp[k][1] - self._prev_feet[k][1]) / dt
+                        if ps["fc"][k] > 1.0:
+                            slide += vxy
+                self._prev_feet = (list(nowp[0]), list(nowp[1]))
+                self._prev_feet_t = time.monotonic()
+                vals["feet_slide~"] = w["feet_slide"] * slide
+            # feet_too_near: hinge below the threshold on 3D foot distance
+            if w.get("feet_too_near") is not None and "fl" in ps:
+                dist = math.sqrt(sum((ps["fl"][i] - ps["fr"][i]) ** 2 for i in range(3)))
+                vals["feet_too_near"] = w["feet_too_near"] * max(
+                    0.0, self.p["near_thresh"] - dist)
 
         now = time.monotonic()
         self.rows.append([now - self.t0] + [vals.get(k, 0.0) for k in self._row_keys(vals)])

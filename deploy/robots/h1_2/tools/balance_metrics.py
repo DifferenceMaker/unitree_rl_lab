@@ -392,7 +392,9 @@ def main():
     ledger_pub_t = 0.0
     if args.ledger:
         from reward_ledger import RewardLedger
-        ledger = RewardLedger(args.ledger)
+        jnames = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                  for j in hinge_joints]
+        ledger = RewardLedger(args.ledger, joint_names=jnames)
 
     dt = 1.0 / args.hz
     warned_stale = False
@@ -451,7 +453,7 @@ def main():
         # bars move at policy rate; the sim holds NUMBERS on a 5 Hz snapshot) ---
         if ledger is not None:
             ledger_pub_t = now
-            items = ledger.tick(float(g_b[0] ** 2 + g_b[1] ** 2))
+            items = ledger.tick(float(g_b[0] ** 2 + g_b[1] ** 2), q=q)
             if metrics.publisher is not None and items:
                 base_fields = getattr(metrics, "last_payload_fields", "")
                 sep = "," if base_fields else ""
