@@ -1368,3 +1368,85 @@ def stance_bonus_standing(
     base = stance_bonus(env, std=std, asset_cfg=asset_cfg)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
     return base * (cmd <= 0.1).float()
+
+
+def foot_clearance_recovery(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.05,
+    tanh_mult: float = 2.0,
+    target_height: float = 0.12,
+    gate_speed: float = 0.15,
+    gate_anchor_dist: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """dp5f: swing-clearance income on the DESK line's recovery gate (same
+    OR-gate as feet_gait_recovery: moving OR displaced from the anchor). The
+    desk line had ZERO clearance income — recovery/transit steps shuffled
+    (operator gaiting complaint, dp5e_pain sim2sim). Gated so standing still
+    earns nothing (no marching subsidy)."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    err = torch.square(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - target_height)
+    swing = torch.tanh(tanh_mult * torch.norm(
+        asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
+    r = torch.sum(torch.exp(-err / (std * std)) * swing, dim=1)
+    gate = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
+    if hasattr(env, "spawn_root_xy"):
+        far = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) > gate_anchor_dist
+        gate = gate | far
+    return r * gate.float()
+
+
+def capture_point_touchdown_anchor(
+    env: "ManagerBasedRLEnv",
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    max_dist: float = 0.5,
+    com_offset_b: tuple = (0.0, 0.0),
+    gate_dist: float = 0.3,
+) -> torch.Tensor:
+    """dp5f: capture_point gated on ANCHOR PROXIMITY — the desk-shaped port of
+    the walk line's standing-gate (desk has no velocity command). Near the
+    anchor (< gate_dist of spawn) = recovery mode: the cp placement shaper does
+    its designed anti-push job. Far = transit mode (walking to a moved anchor):
+    the speed-proportional brake is OFF. Falls back to ungated when the spawn
+    anchor attr is absent."""
+    base = capture_point_touchdown_distance(env, sensor_cfg, asset_cfg, max_dist, com_offset_b)
+    if not hasattr(env, "spawn_root_xy"):
+        return base
+    asset = env.scene[asset_cfg.name]
+    near = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) < gate_dist
+    return base * near.float()
+
+
+def lean_track_bonus(
+    env: "ManagerBasedRLEnv",
+    std: float = 0.05,
+    command_name: str = "lean_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp6 (colleague's lean command): kernel income for holding the COMMANDED
+    pelvis pitch (rad, forward-positive) with roll level. Replaces
+    upright_bonus in the Desk6 trunk — upright's sigma-0.01 proj-gravity
+    kernel would fight any commanded lean. At cmd=0 this IS an upright bonus
+    (sigma in radians)."""
+    from isaaclab.utils.math import euler_xyz_from_quat
+    asset = env.scene[asset_cfg.name]
+    roll, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
+    cmd = env.command_manager.get_command(command_name)[:, 0]
+    err2 = (pitch - cmd) ** 2 + roll ** 2
+    return torch.exp(-err2 / (std * std))
+
+
+def flat_orientation_lean_l2(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "lean_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp6: the L2-far pair of lean_track_bonus — roll always priced, pitch
+    priced against the COMMAND instead of against zero (the walk line's
+    flat-split pattern ported to the lean command)."""
+    from isaaclab.utils.math import euler_xyz_from_quat
+    asset = env.scene[asset_cfg.name]
+    roll, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
+    cmd = env.command_manager.get_command(command_name)[:, 0]
+    return roll ** 2 + (pitch - cmd) ** 2
