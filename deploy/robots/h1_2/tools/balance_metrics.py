@@ -447,8 +447,9 @@ def main():
 
         metrics.step(dist, rel_h_l, rel_h_r, gyro, tilt, g_b, rpy)
 
-        # --- LIVE reward ledger (5 Hz publish; walk_hud flicker lesson) ---
-        if ledger is not None and now - ledger_pub_t >= 0.2:
+        # --- LIVE reward ledger: publish EVERY tick (50 Hz, operator ask —
+        # bars move at policy rate; the sim holds NUMBERS on a 5 Hz snapshot) ---
+        if ledger is not None:
             ledger_pub_t = now
             items = ledger.tick(float(g_b[0] ** 2 + g_b[1] ** 2))
             if metrics.publisher is not None and items:
