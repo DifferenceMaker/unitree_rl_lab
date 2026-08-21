@@ -152,7 +152,7 @@ class RewardLedger:
             if w.get("torso_ang_vel") is not None:
                 vals["torso_ang_vel~"] = w["torso_ang_vel"] * w2
             if w.get("torso_stability_bonus") is not None:
-                vals["torso_stability~"] = w["torso_stability_bonus"] * math.exp(
+                vals["torso_stability_bonus~"] = w["torso_stability_bonus"] * math.exp(
                     -v_xy2 / p["stab_sl"]**2) * math.exp(-w2 / p["stab_sa"]**2)
             if w.get("track_lin_vel_xy") is not None:
                 vals["track_lin_vel_xy"] = w["track_lin_vel_xy"] * math.exp(
@@ -176,17 +176,31 @@ class RewardLedger:
         return self._keys
 
     # ---- outputs ----
-    def hud_field(self, items, top=8):
+    def hud_field(self, items, top=12):
+        """Structured '|'-separated 'name:value:frac' rows in a FIXED order
+        (by |weight| desc, set once — rows never switch places; operator
+        gauges-v2 feedback 2026-08-21). frac = value / |weight| clamped to
+        [-1,1]: kernel incomes read as fill-fraction of their max; penalties
+        can exceed and clamp."""
+        if not hasattr(self, "_order"):
+            self._order = sorted((n for n in self.names),
+                                 key=lambda n: -abs(self.w[n] or 0.0))
+        d = dict((n.rstrip("~"), (n, v)) for n, v in items)
         total = sum(v for _, v in items)
-        lines = [f"LEDGER {total:+7.2f}/s"]
-        for n, v in items[:top]:
-            lines.append(f"{n[:18]:<18}{v:+7.2f}")
-        # wrist extension info (desk_reach proxy)
+        rows = [f"TOTAL:{total:+.2f}:{max(-1.0, min(1.0, total / 50.0)):+.3f}"]
+        for base in self._order[:top]:
+            if base not in d:
+                continue
+            disp, v = d[base]
+            scale = abs(self.w.get(base) or 1.0) or 1.0
+            frac = max(-1.0, min(1.0, v / scale))
+            rows.append(f"{disp[:18]}:{v:+.2f}:{frac:+.3f}")
+        # wrist extension info row (desk_reach proxy) — frac 0 = text-ish row
         if self._pose is not None and "lw" in self._pose:
             b = self._pose["p"]
             lw = self._pose["lw"]; rw = self._pose["rw"]
-            lines.append(f"wrist fwd L {lw[0]-b[0]:+.2f} R {rw[0]-b[0]:+.2f} (world dx)")
-        return "|".join(lines)
+            rows.append(f"wristfwd L{lw[0]-b[0]:+.2f} R{rw[0]-b[0]:+.2f}:0.00:0.000")
+        return "|".join(rows)
 
     def save_tape(self, path):
         if not self.rows or self._keys is None:
