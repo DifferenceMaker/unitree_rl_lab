@@ -110,6 +110,16 @@ gym.register(
     },
 )
 gym.register(
+    id="Unitree-H1_2-GraspR-Arm7Table-QE",   # QE = the 0.001 entropy probe runner
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableR",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableR",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspEntropyProbePPORunnerCfg",
+    },
+)
+gym.register(
     id="Unitree-H1_2-Grasp-Arm7TS-QF",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

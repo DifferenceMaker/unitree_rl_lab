@@ -203,6 +203,36 @@ class GraspNoEntropyFixedLRPPORunnerCfg(GraspNoEntropyPPORunnerCfg):
 
 
 @configclass
+class GraspEntropyProbePPORunnerCfg(GraspNoEntropyFixedLRPPORunnerCfg):
+    """gr7 entropy probe (operator 2026-08-24): the QF runner with a SMALL
+    entropy bonus back on (0.001, 10x below the 0.01 that ran away in gr5b).
+    Rationale for testing it AT ALL: the gr5c runaway was powered by the
+    adaptive-KL feedback loop (sigma up -> KL down -> lr up -> sigma faster);
+    the FIXED lr severs that loop, so this measures the entropy term's direct
+    effect on scratch exploration without the amplifier. A/B against
+    gr7_right_combo (identical economy, entropy 0.0): watch Policy/mean_std —
+    combo's sigma should fall as the reward discriminates; if the probe's
+    sigma drifts UP monotonically, the gr5c Adam-sign mechanism still
+    dominates even without the lr loop and 0.0 stays the law."""
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.001,        # <- the probe axis
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3.0e-4,      # fixed, no schedule (the severed loop)
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,           # unused under schedule="fixed"
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
 class RslRlLcpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
     """PPO + Lipschitz gradient penalty (paper #14) — see agents/lcp_ppo.py.
     Extra fields ride into LCPPPO.__init__ as kwargs (construct_algorithm
