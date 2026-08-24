@@ -33,38 +33,54 @@ if TYPE_CHECKING:
 
 # The gr5b arm-in-the-loop chain (Arm7 variant), shoulder -> wrist. Default for
 # the gr5c arm-shaping terms; the Wrist3 variant passes its own 3-joint list.
+# SIDE-AGNOSTIC names (right-hand era, 2026-08-24): every grasp scene carries
+# exactly ONE hand, so "(left|right)_" regexes resolve to that hand's joints —
+# the same code runs the left asset (inspire_hand_arm7) and the right one
+# (inspire_hand_arm7_right) with zero behavioral change for existing left
+# tasks (regex matches the only hand present).
+_SIDE = "(left|right)"
 ARM7_JOINTS = [
-    "left_shoulder_pitch_joint",
-    "left_shoulder_roll_joint",
-    "left_shoulder_yaw_joint",
-    "left_elbow_joint",
-    "left_wrist_roll_joint",
-    "left_wrist_pitch_joint",
-    "left_wrist_yaw_joint",
+    f"{_SIDE}_shoulder_pitch_joint",
+    f"{_SIDE}_shoulder_roll_joint",
+    f"{_SIDE}_shoulder_yaw_joint",
+    f"{_SIDE}_elbow_joint",
+    f"{_SIDE}_wrist_roll_joint",
+    f"{_SIDE}_wrist_pitch_joint",
+    f"{_SIDE}_wrist_yaw_joint",
 ]
 WRIST3_JOINTS = ARM7_JOINTS[4:]
 
 # Real Inspire SDK motor order: angle_set[0..5]. Drivers in the URDF.
 DRIVER_JOINTS = [
-    "left_little_1_joint",   # 0
-    "left_ring_1_joint",     # 1
-    "left_middle_1_joint",   # 2
-    "left_index_1_joint",    # 3
-    "left_thumb_2_joint",    # 4  thumb bend
-    "left_thumb_1_joint",    # 5  thumb rotation/yaw
+    f"{_SIDE}_little_1_joint",   # 0
+    f"{_SIDE}_ring_1_joint",     # 1
+    f"{_SIDE}_middle_1_joint",   # 2
+    f"{_SIDE}_index_1_joint",    # 3
+    f"{_SIDE}_thumb_2_joint",    # 4  thumb bend
+    f"{_SIDE}_thumb_1_joint",    # 5  thumb rotation/yaw
 ]
-# follower -> (driver, multiplier). Thumb chain resolved to the bend driver.
-FOLLOWER_COUPLING = {
-    "left_little_2_joint": ("left_little_1_joint", 1.0843),
-    "left_ring_2_joint": ("left_ring_1_joint", 1.0843),
-    "left_middle_2_joint": ("left_middle_1_joint", 1.0843),
-    "left_index_2_joint": ("left_index_1_joint", 1.0843),
-    "left_thumb_3_joint": ("left_thumb_2_joint", 0.8024),
-    "left_thumb_4_joint": ("left_thumb_2_joint", 0.8024 * 0.9487),
+# follower -> (driver, multiplier), keyed by the SIDE-STRIPPED suffix (the
+# names find_joints returns are RESOLVED, e.g. right_little_2_joint — a
+# regex-keyed dict would KeyError). Thumb chain resolved to the bend driver.
+_COUPLING_BY_SUFFIX = {
+    "little_2_joint": ("little_1_joint", 1.0843),
+    "ring_2_joint": ("ring_1_joint", 1.0843),
+    "middle_2_joint": ("middle_1_joint", 1.0843),
+    "index_2_joint": ("index_1_joint", 1.0843),
+    "thumb_3_joint": ("thumb_2_joint", 0.8024),
+    "thumb_4_joint": ("thumb_2_joint", 0.8024 * 0.9487),
 }
+FOLLOWER_COUPLING = {f"{_SIDE}_{k}": (f"{_SIDE}_{v[0]}", v[1])
+                     for k, v in _COUPLING_BY_SUFFIX.items()}
 
-PALM_BODY = "left_palm_force_sensor"
-THUMB_PAD_PREFIX = "left_thumb_force_sensor"
+
+def _strip_side(name: str) -> str:
+    """left_little_2_joint / right_little_2_joint -> little_2_joint."""
+    return name.split("_", 1)[1]
+
+
+PALM_BODY = f"{_SIDE}_palm_force_sensor"
+THUMB_PAD_SUBSTR = "thumb_force_sensor"
 
 
 # ---------------------------------------------------------------------------
@@ -88,11 +104,15 @@ class CoupledFingerAction(ActionTerm):
         f_ids, f_found = asset.find_joints(f_names, preserve_order=True)
         self._follower_ids = torch.tensor(f_ids, device=self.device)
         # follower i is driven by driver at index _f2d[i] with multiplier _fmul[i]
+        # f_found / d_names are RESOLVED joint names (side-specific); map
+        # follower -> driver via side-stripped suffixes.
+        d_suffix = [_strip_side(n) for n in d_names]
         self._f2d = torch.tensor(
-            [DRIVER_JOINTS.index(FOLLOWER_COUPLING[n][0]) for n in f_found], device=self.device
+            [d_suffix.index(_COUPLING_BY_SUFFIX[_strip_side(n)][0]) for n in f_found],
+            device=self.device,
         )
         self._fmul = torch.tensor(
-            [FOLLOWER_COUPLING[n][1] for n in f_found], device=self.device
+            [_COUPLING_BY_SUFFIX[_strip_side(n)][1] for n in f_found], device=self.device
         )
         limits = asset.data.soft_joint_pos_limits  # (N, J, 2)
         self._d_lo = limits[:, d_ids, 0]
@@ -190,7 +210,7 @@ def _pad_force_mags(env: "ManagerBasedRLEnv", sensor_name: str = "pad_sensor") -
 def _pad_masks(env: "ManagerBasedRLEnv", sensor_name: str = "pad_sensor"):
     if not hasattr(env, "grasp_thumb_mask"):
         names = env.scene.sensors[sensor_name].body_names
-        thumb = torch.tensor([n.startswith(THUMB_PAD_PREFIX) for n in names], device=env.device)
+        thumb = torch.tensor([THUMB_PAD_SUBSTR in n for n in names], device=env.device)
         env.grasp_thumb_mask = thumb
         env.grasp_finger_mask = ~thumb & torch.tensor(
             ["palm_force" not in n for n in names], device=env.device
@@ -966,7 +986,12 @@ def quiet_hold_bonus(
     asset: Articulation = env.scene["robot"]
     if joint_names is None:
         joint_names = ARM7_JOINTS
-    idx = [asset.data.joint_names.index(n) for n in joint_names]
+    # regex-tolerant (side-agnostic names): find_joints, cached per name set
+    key = "_gr_jn_ids_" + str(hash(tuple(joint_names)) % 100000)
+    if not hasattr(env, key):
+        ids, _ = asset.find_joints(joint_names, preserve_order=True)
+        setattr(env, key, ids)
+    idx = getattr(env, key)
     speed = torch.linalg.norm(asset.data.joint_vel[:, idx], dim=-1)
     speed = torch.nan_to_num(speed, nan=0.0, posinf=1e3, neginf=0.0)
     bonus = torch.exp(-speed / sigma)
@@ -1003,7 +1028,12 @@ def park_keep_bonus(
     asset: Articulation = env.scene["robot"]
     if joint_names is None:
         joint_names = ARM7_JOINTS
-    idx = [asset.data.joint_names.index(n) for n in joint_names]
+    # regex-tolerant (side-agnostic names): find_joints, cached per name set
+    key = "_gr_jn_ids_" + str(hash(tuple(joint_names)) % 100000)
+    if not hasattr(env, key):
+        ids, _ = asset.find_joints(joint_names, preserve_order=True)
+        setattr(env, key, ids)
+    idx = getattr(env, key)
     dev = asset.data.joint_pos[:, idx] - asset.data.default_joint_pos[:, idx]
     d2 = torch.sum(dev * dev, dim=-1)
     d2 = torch.nan_to_num(d2, nan=0.0, posinf=1e3, neginf=0.0)

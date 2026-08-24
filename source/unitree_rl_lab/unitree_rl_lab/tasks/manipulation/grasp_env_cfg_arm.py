@@ -48,9 +48,10 @@ ARM7_JOINTS = [
     "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
     "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
 ]
+ARM7_JOINTS_R = [j.replace("left_", "right_") for j in ARM7_JOINTS]
 
 
-def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaults, action_scale, torso_guard=False):
+def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaults, action_scale, torso_guard=False, side="left"):
     # --- asset swap: hand -> hand-on-arm chain, fixed base ---
     cfg.scene.robot.spawn.asset_path = os.path.join(_ASSETS, f"robot/{urdf_name}/{urdf_name}.urdf")
     cfg.scene.robot.init_state.pos = root_pos
@@ -67,12 +68,12 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
         params={"pos_range": (0.005, 0.005, 0.05), "rot_range": 0.0},
     )
     # no overlapping patterns (Isaac forbids '.*' + explicit); exact arm names
-    jp = {"left_(index|middle|ring|little|thumb).*": 0.0}
+    jp = {f"{side}_(index|middle|ring|little|thumb).*": 0.0}
     jp.update({j: arm_defaults.get(j, 0.0) for j in arm_joints})
     cfg.scene.robot.init_state.joint_pos = jp
     # arm actuators (deploy arm gains 40/3; fingers keep their groups)
     cfg.scene.robot.actuators["arm"] = ImplicitActuatorCfg(
-        joint_names_expr=["left_(shoulder|elbow|wrist).*"],
+        joint_names_expr=[f"{side}_(shoulder|elbow|wrist).*"],
         effort_limit_sim=60.0, velocity_limit_sim=6.0,
         stiffness=40.0, damping=3.0, armature=0.01,
     )
@@ -115,9 +116,9 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
     # to table_hit for the entire gr5/gr6 history. All finger phalanges added.
     cfg.scene.hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Platform",
-        filter_prim_paths_expr=["{ENV_REGEX_NS}/Hand/left_base_link"]
-        + [f"{{ENV_REGEX_NS}}/Hand/left_thumb_{i}" for i in (1, 2, 3, 4)]
-        + [f"{{ENV_REGEX_NS}}/Hand/left_{f}_{i}"
+        filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Hand/{side}_base_link"]
+        + [f"{{ENV_REGEX_NS}}/Hand/{side}_thumb_{i}" for i in (1, 2, 3, 4)]
+        + [f"{{ENV_REGEX_NS}}/Hand/{side}_{f}_{i}"
            for f in ("index", "middle", "ring", "little") for i in (1, 2)],
         update_period=0.0,
     )
@@ -136,7 +137,7 @@ def _make_arm_variant(cfg, urdf_name, root_pos, root_rot, arm_joints, arm_defaul
         cfg.scene.torso_contact = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Hand/torso_link",
             filter_prim_paths_expr=[
-                f"{{ENV_REGEX_NS}}/Hand/left_{n}"
+                f"{{ENV_REGEX_NS}}/Hand/{side}_{n}"
                 for n in ("shoulder_pitch_link", "shoulder_roll_link", "shoulder_yaw_link",
                           "elbow_link", "wrist_roll_link", "wrist_pitch_link",
                           "wrist_yaw_link", "base_link")
@@ -309,4 +310,47 @@ class RobotEnvCfgArm7TaskSpace(RobotEnvCfgArm7):
             # an unreachable wish shows up as IK residual, not a crash).
             scale=(0.03, 0.03, 0.03, 0.05, 0.05, 0.05),
         )
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+# ===========================================================================
+# RIGHT-HAND ERA (operator ruling 2026-08-24: the real robot's LEFT hand is
+# not fully working — grasp training moves to the RIGHT side).
+# Asset: inspire_hand_arm7_right (single-source extraction from the vendor
+# FTP full-robot URDF — factory-correct right-arm limits, 17 pads, hand mass
+# fixed to the 790 g datasheet; scripts/tools/build_inspire_arm7_right.py in
+# aspired-isaac-lab). grasp_mdp names are side-agnostic regexes; only the
+# geometry below is handed.
+# Mirror across the XZ plane: root y flips, Rz(+90deg) -> Rz(-90deg); pitch
+# joints (shoulder_pitch/elbow/wrist_pitch) keep their default signs,
+# roll/yaw joints flip. The table/cube move to the -y side via palm_xy.
+# ===========================================================================
+@configclass
+class RobotEnvCfgArm7R(RobotEnvCfg):
+    def __post_init__(self):
+        if hasattr(super(), "__post_init__"):
+            super().__post_init__()
+        _make_arm_variant(
+            self, "inspire_hand_arm7_right",
+            root_pos=(0.10, 0.30, 1.13), root_rot=(0.7071068, 0.0, 0.0, -0.7071068),
+            arm_joints=ARM7_JOINTS_R, arm_defaults={
+                "right_shoulder_pitch_joint": -0.3782, "right_shoulder_roll_joint": 0.1090,
+                "right_shoulder_yaw_joint": 0.2756, "right_elbow_joint": 1.1317,
+                "right_wrist_roll_joint": -1.3104, "right_wrist_pitch_joint": 0.3114,
+                "right_wrist_yaw_joint": -0.8009,
+            }, action_scale=0.15, torso_guard=True, side="right",
+        )
+        if type(self).__name__ == "RobotEnvCfgArm7R":
+            _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotEnvCfgArm7TableR(RobotEnvCfgArm7R):
+    """gr7-era task: the gr6 permanent table, RIGHT hand. Table/cube on the
+    -y side (mirrored palm_xy) so the right palm spawns over them exactly as
+    the left palm did on +y."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr6_table(self)
+        self.events.reset_scene.params["palm_xy"] = (0.0, -0.12)
         _apply_overrides(self, _load_overrides())  # jobs win, applied last

@@ -103,8 +103,8 @@ class GraspSceneCfg(InteractiveSceneCfg):
         actuators={
             # G1_INSPIRE_FTP_CFG values (flexibility-focused for grasping)
             "drivers": ImplicitActuatorCfg(
-                joint_names_expr=["left_(index|middle|ring|little)_1_joint",
-                                  "left_thumb_[12]_joint"],
+                joint_names_expr=["(left|right)_(index|middle|ring|little)_1_joint",
+                                  "(left|right)_thumb_[12]_joint"],
                 effort_limit_sim=30.0,
                 velocity_limit_sim=10.0,
                 stiffness=10.0,
@@ -123,8 +123,8 @@ class GraspSceneCfg(InteractiveSceneCfg):
             # 68deg worst-case to the 10-20deg range (probes 2026-07-30). Implicit solver, so stiff gains stay stable at
             # dt=1/200.
             "followers": ImplicitActuatorCfg(
-                joint_names_expr=["left_(index|middle|ring|little)_2_joint",
-                                  "left_thumb_[34]_joint"],
+                joint_names_expr=["(left|right)_(index|middle|ring|little)_2_joint",
+                                  "(left|right)_thumb_[34]_joint"],
                 effort_limit_sim=30.0,
                 velocity_limit_sim=10.0,
                 stiffness=300.0,

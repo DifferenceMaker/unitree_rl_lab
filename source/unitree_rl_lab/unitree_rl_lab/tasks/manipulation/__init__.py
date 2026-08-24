@@ -96,6 +96,19 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
     },
 )
+# gr7 / RIGHT-HAND ERA (2026-08-24): the same permanent-table task on the
+# RIGHT arm+hand (the real robot's left hand is not fully working). Asset
+# inspire_hand_arm7_right, mirrored geometry — see grasp_env_cfg_arm.py.
+gym.register(
+    id="Unitree-H1_2-GraspR-Arm7Table-QF",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableR",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableR",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
+    },
+)
 gym.register(
     id="Unitree-H1_2-Grasp-Arm7TS-QF",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
