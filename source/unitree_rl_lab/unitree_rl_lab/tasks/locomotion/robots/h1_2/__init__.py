@@ -295,3 +295,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# lm5-fsb: FastSAC Run B — LM5 world, holosoma's 10-term minimalist rewards
+# (g1_29dof_loco_fast_sac preset verbatim). Run A isolates the algorithm;
+# this isolates the reward philosophy. Trained via train_fastsac.py (the
+# rsl_rl entry is only there so a PPO arm on the same rewards stays possible).
+gym.register(
+    id="Unitree-H1_2-LM5-FSB",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm5_fsb_env_cfg:RobotEnvCfgLM5FSB",
+        "play_env_cfg_entry_point": f"{__name__}.lm5_fsb_env_cfg:RobotPlayEnvCfgLM5FSB",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)
