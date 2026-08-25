@@ -171,3 +171,55 @@ def feet_flat_orientation(
         g_foot = quat_apply_inverse(quats[:, f], g)
         out += torch.sum(torch.square(g_foot[:, :2]), dim=1) ** 0.5
     return out
+
+
+# ── penalty curriculum (holosoma PenaltyCurriculum + AverageEpisodeLengthTracker) ──
+
+def penalty_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids,
+    term_names: list[str],
+    initial_scale: float = 0.5,
+    min_scale: float = 0.5,
+    max_scale: float = 1.0,
+    level_down_threshold: float = 150.0,
+    level_up_threshold: float = 750.0,
+    degree: float = 0.001,
+    num_compute_average_epl: int = 1000,
+) -> float:
+    """holosoma's penalty ramp, verbatim semantics: penalty weights start at
+    initial_scale x nominal; a running average of finished-episode length
+    (EMA over ~num_compute_average_epl episodes) moves the scale
+    multiplicatively by `degree` per reset call — down while episodes are
+    short (< level_down), up once they are long (> level_up) — clamped to
+    [min_scale, max_scale]. Returns the current scale (logged as
+    Curriculum/penalty_curriculum)."""
+    st = getattr(env, "_hs_penalty_state", None)
+    if st is None:
+        st = {"scale": float(initial_scale), "avg_len": 0.0,
+              "orig": {n: float(env.reward_manager.get_term_cfg(n).weight) for n in term_names}}
+        for n in term_names:
+            cfg = env.reward_manager.get_term_cfg(n)
+            cfg.weight = st["orig"][n] * st["scale"]
+            env.reward_manager.set_term_cfg(n, cfg)
+        env._hs_penalty_state = st
+        return st["scale"]
+
+    if len(env_ids) > 0:
+        # tracker: EMA over the episodes that just ended (their lengths are the
+        # env clocks at reset time); alpha = n_ended / num_compute_average_epl
+        ended = env.episode_length_buf[env_ids].float().mean().item()
+        alpha = min(1.0, len(env_ids) / max(1, num_compute_average_epl))
+        st["avg_len"] = (1 - alpha) * st["avg_len"] + alpha * ended
+
+    if st["avg_len"] < level_down_threshold:
+        st["scale"] *= 1.0 - degree
+    elif st["avg_len"] > level_up_threshold:
+        st["scale"] *= 1.0 + degree
+    st["scale"] = float(min(max(st["scale"], min_scale), max_scale))
+
+    for n in term_names:
+        cfg = env.reward_manager.get_term_cfg(n)
+        cfg.weight = st["orig"][n] * st["scale"]
+        env.reward_manager.set_term_cfg(n, cfg)
+    return st["scale"]

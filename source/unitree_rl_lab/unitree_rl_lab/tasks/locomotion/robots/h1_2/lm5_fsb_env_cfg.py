@@ -21,8 +21,8 @@ Term mapping (holosoma -> here):
 
 Their G1 pose weights by joint role (their 29-dof list decoded): hip_pitch
 0.01, hip_roll 1.0, hip_yaw 5.0, knee 0.01, ankles 5.0, waist+arms 50.0 —
-mapped to H1-2's 27 dof by name below. NOTE their penalty_curriculum tag
-(penalty ramp-in) is NOT ported in v1 — weights land at full strength.
+mapped to H1-2's 27 dof by name below. Their penalty_curriculum ramp is NOT in
+FSB (weights at full strength from step 0) — FSB2 below adds it verbatim.
 """
 
 import math
@@ -113,3 +113,39 @@ class RobotPlayEnvCfgLM5FSB(RobotPlayEnvCfgLM5):
     def __post_init__(self):
         super().__post_init__()
         _make_fsb_rewards(self)
+
+
+# ── FSB2: + their penalty curriculum (the one recipe piece v1 skipped) ─────────
+# holosoma g1_29dof_curriculum_fast_sac, params verbatim: penalties tagged
+# penalty_curriculum start at 0.5x and ramp to 1.0x as the running average
+# episode length climbs past 750 steps (down toward 0.5x while < 150).
+# Pilot B (FSB, full-strength penalties from step 0) plateaued at ~460-step
+# survival by step 5k while pilot A (our ledger) broke through — the ramp is
+# the first-order suspect, so B2 isolates exactly that.
+PENALTY_TERMS = ["ang_vel_xy", "flat_orientation", "action_rate", "pose", "close_feet", "feet_ori"]
+
+
+def _make_fsb2(cfg):
+    from isaaclab.managers import CurriculumTermCfg as CurrTerm
+
+    cfg.curriculum.penalty_curriculum = CurrTerm(
+        func=mdp.penalty_curriculum,
+        params={"term_names": PENALTY_TERMS, "initial_scale": 0.5, "min_scale": 0.5,
+                "max_scale": 1.0, "level_down_threshold": 150.0,
+                "level_up_threshold": 750.0, "degree": 0.001,
+                "num_compute_average_epl": 1000},
+    )
+
+
+@configclass
+class RobotEnvCfgLM5FSB2(RobotEnvCfgLM5FSB):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_fsb2(self)
+
+
+@configclass
+class RobotPlayEnvCfgLM5FSB2(RobotPlayEnvCfgLM5FSB):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_fsb2(self)

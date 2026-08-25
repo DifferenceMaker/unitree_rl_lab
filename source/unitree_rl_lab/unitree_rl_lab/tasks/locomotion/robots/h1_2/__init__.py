@@ -310,3 +310,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# lm5-fsb2: FSB + holosoma's penalty curriculum (0.5x -> 1.0x ramp on episode
+# length). Isolates the ONE recipe piece pilot B lacked.
+gym.register(
+    id="Unitree-H1_2-LM5-FSB2",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm5_fsb_env_cfg:RobotEnvCfgLM5FSB2",
+        "play_env_cfg_entry_point": f"{__name__}.lm5_fsb_env_cfg:RobotPlayEnvCfgLM5FSB2",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)
