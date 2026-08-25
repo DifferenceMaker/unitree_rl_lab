@@ -112,7 +112,9 @@ def main():
     env = gym.make(args_cli.task, cfg=env_cfg)
     raw_env = env.unwrapped  # ManagerBasedRLEnv — FastSAC drives it directly
 
-    writer = SummaryWriter(log_dir=log_dir)
+    # wandb.init MUST run before SummaryWriter is constructed: sync_tensorboard
+    # only patches writers created AFTER init (pilotA lesson, 2026-08-25 —
+    # writer-first left the run graphless).
     if not args_cli.no_wandb:
         import wandb
 
@@ -125,6 +127,7 @@ def main():
             config={"task": args_cli.task, "num_envs": args_cli.num_envs,
                     **{k: getattr(cfg, k) for k in vars(cfg)}},
         )
+    writer = SummaryWriter(log_dir=log_dir)
 
     runner = FastSACRunner(raw_env, cfg, log_dir=log_dir, writer=writer)
     if args_cli.resume_path:
