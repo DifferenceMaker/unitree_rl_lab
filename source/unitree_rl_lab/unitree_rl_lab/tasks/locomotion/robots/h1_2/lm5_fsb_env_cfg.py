@@ -49,10 +49,16 @@ POSE_WEIGHTS = {
     ".*_shoulder_pitch_joint": 50.0,
     ".*_shoulder_roll_joint": 50.0,
     ".*_shoulder_yaw_joint": 50.0,
-    ".*_elbow_joint": 50.0,
-    ".*_wrist_roll_joint": 50.0,
+    # H1-2 arm naming: elbow_pitch/elbow_roll (roll plays wrist_roll's part),
+    # wrist has only pitch/yaw
+    ".*_elbow_pitch_joint": 50.0,
+    ".*_elbow_roll_joint": 50.0,
     ".*_wrist_pitch_joint": 50.0,
     ".*_wrist_yaw_joint": 50.0,
+    # finger joints exist in the articulation but are not policy-actuated —
+    # zero weight (holosoma's G1 had no hands in the pose vector)
+    "L_.*": 0.0,
+    "R_.*": 0.0,
 }
 
 
@@ -76,7 +82,7 @@ def _make_fsb_rewards(cfg):
     cfg.rewards.feet_phase = RewTerm(
         func=mdp.feet_phase, weight=5.0,
         params={"command_name": "base_velocity", "std": 0.008, "swing_height": 0.09,
-                "period": 1.0, "period_rand_width": 0.2, "foot_rest_z": 0.06,
+                "period": 1.0, "period_rand_width": 0.2, "foot_rest_z": 0.047,  # measured: ankle_roll z at stand (comx06 keyframe)
                 "asset_cfg": SceneEntityCfg("robot", body_names=FOOT)},
     )
     cfg.rewards.pose = RewTerm(
