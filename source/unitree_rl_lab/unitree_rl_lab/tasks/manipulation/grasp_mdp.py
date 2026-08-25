@@ -1107,6 +1107,7 @@ def cube_hold_above_bonus(
     gate_mode: str = "any",
     ramp_lo: float = 0.01,
     ramp_hi: float = 0.05,
+    height_only: bool = False,
 ) -> torch.Tensor:
     """gr6b: hold the cube at a FIXED HEIGHT above the table (operator design:
     'It shouldn't be start_pose height we are targeting but a fixed distance
@@ -1123,7 +1124,14 @@ def cube_hold_above_bonus(
         touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
     target = env.cube_start_pos_w.clone()
     target[:, 2] = _table_top_w(env) + height
-    d = (cube.data.root_pos_w - target).norm(dim=-1)
+    if height_only:
+        # gr6f (2026-08-25): a real grasp drags/rotates the cube 5-10 cm from its
+        # START xy, and the 3-D kernel at sigma 0.06 paid ~10-40% for a hold at
+        # the CORRECT height (HUD: equalhold held at height, term barely fired).
+        # Score the height alone; lateral drift is not this term's business.
+        d = (cube.data.root_pos_w[:, 2] - target[:, 2]).abs()
+    else:
+        d = (cube.data.root_pos_w - target).norm(dim=-1)
     return torch.exp(-((d / sigma) ** 2)) * touching * _lift_ramp(env, ramp_lo, ramp_hi)
 
 
