@@ -298,6 +298,7 @@ class FastSACRunner:
         ep_rew = torch.zeros(self.num_envs, device=device)
         ep_len = torch.zeros(self.num_envs, device=device)
         fin_rew, fin_len, fin_n = 0.0, 0.0, 0
+        ep_log = {}  # Episode_Reward/<term>, Episode_Termination/..., Curriculum/... from extras["log"]
         t_last, step_last = time.monotonic(), 0
 
         while self.global_step <= args.num_learning_iterations:
@@ -305,8 +306,15 @@ class FastSACRunner:
                 norm_obs = normalize_obs(obs, update=False)
                 actions = policy(obs=norm_obs, dones=dones)
 
-            next_obs_dict, rewards, terminated, truncated, _extras = self.env.step(actions.float())
+            next_obs_dict, rewards, terminated, truncated, extras = self.env.step(actions.float())
             next_obs, next_critic_obs = self._split_obs(next_obs_dict)
+
+            # per-term episode stats surface on reset steps; window-average them
+            # like rsl_rl so the wandb charts match the PPO runs' key names
+            log_items = extras.get("log") if isinstance(extras, dict) else None
+            if log_items:
+                for k, v in log_items.items():
+                    ep_log.setdefault(k, []).append(v.item() if torch.is_tensor(v) else float(v))
             dones = (terminated | truncated).to(device)
             truncations = truncated.to(device)
 
@@ -381,6 +389,9 @@ class FastSACRunner:
                         w.add_scalar("Policy/entropy", policy_entropy.item(), self.global_step)
                         w.add_scalar("Policy/alpha", self.log_alpha.exp().item(), self.global_step)
                         w.add_scalar("Perf/steps_per_s", sps, self.global_step)
+                        for k, vals in ep_log.items():
+                            w.add_scalar(k, sum(vals) / len(vals), self.global_step)
+                    ep_log = {}
 
                 if args.save_interval > 0 and self.global_step > 0 and self.global_step % args.save_interval == 0:
                     self.save(os.path.join(self.log_dir, f"model_{self.global_step}.pt"))
