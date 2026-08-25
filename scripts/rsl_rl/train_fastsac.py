@@ -48,6 +48,9 @@ parser.add_argument("--batch_size", type=int, default=None, help="Override globa
 parser.add_argument("--buffer_size", type=int, default=None, help="Override per-env buffer size (default 1024).")
 parser.add_argument("--num_updates", type=int, default=None, help="Override UTD updates per step (default 8).")
 parser.add_argument("--save_interval", type=int, default=None, help="Override checkpoint interval (default 1000).")
+parser.add_argument("--v_min", type=float, default=None, help="Override distributional value support minimum (default -20).")
+parser.add_argument("--v_max", type=float, default=None, help="Override distributional value support maximum (default +20).")
+parser.add_argument("--num_atoms", type=int, default=None, help="Override distributional atom count (default 101).")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 sys.argv = [sys.argv[0]] + hydra_args
@@ -91,6 +94,12 @@ def main():
         cfg.num_updates = args_cli.num_updates
     if args_cli.save_interval is not None:
         cfg.save_interval = args_cli.save_interval
+    if args_cli.v_min is not None:
+        cfg.v_min = args_cli.v_min
+    if args_cli.v_max is not None:
+        cfg.v_max = args_cli.v_max
+    if args_cli.num_atoms is not None:
+        cfg.num_atoms = args_cli.num_atoms
 
     log_root_path = os.path.abspath(os.path.join("logs", "fastsac", args_cli.task.lower()))
     log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
