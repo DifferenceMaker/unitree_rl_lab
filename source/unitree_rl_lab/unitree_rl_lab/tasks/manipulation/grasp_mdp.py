@@ -1135,6 +1135,23 @@ def cube_hold_above_bonus(
     return torch.exp(-((d / sigma) ** 2)) * touching * _lift_ramp(env, ramp_lo, ramp_hi)
 
 
+def cube_slide_penalty(
+    env: "ManagerBasedRLEnv", ramp_lo: float = 0.01, ramp_hi: float = 0.05, max_speed: float = 1.0
+) -> torch.Tensor:
+    """gr7b (2026-08-26): the CLEAN-PICK term. gr6f_combo grasps and holds at the
+    right height, but 'muffles the cube around and only then picks it up'
+    (operator). Nothing paid for a straight pick and nothing punished shoving:
+    cube_hold_above only starts above the lift ramp and the xy anchor was
+    deliberately removed (height_only). Penalize the cube's horizontal speed
+    WHILE IT IS STILL ON THE TABLE — x(1 - lift_ramp) — so lifting straight up
+    costs nothing and a slide/shove costs |v_xy| per step. Clamped (gr law):
+    a flung cube reads at most `max_speed` m/s."""
+    cube: RigidObject = env.scene["cube"]
+    v_xy = cube.data.root_lin_vel_w[:, :2].norm(dim=-1)
+    v_xy = torch.nan_to_num(v_xy, nan=0.0, posinf=max_speed, neginf=0.0).clamp(max=max_speed)
+    return v_xy * (1.0 - _lift_ramp(env, ramp_lo, ramp_hi))
+
+
 def approach_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.3) -> torch.Tensor:
     """gr6b_retry: the reach-back gradient. hold_cube's sigma 0.06 kernel is
     flat-zero at 30 cm, so after a slide the rational move was dangling at
