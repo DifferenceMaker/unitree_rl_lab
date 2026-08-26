@@ -983,6 +983,37 @@ def hand_reach_bonus(
     return torch.exp(-(dmin / sigma) ** 2)
 
 
+
+def _recovery_gate(env, asset, gate_mode: str, gate_speed: float, gate_anchor_dist, push_window_s: float = 2.0) -> torch.Tensor:
+    """dp5g: the WHEN of recovery-gated stepping income (feet_gait_recovery,
+    foot_clearance_recovery).
+      "or"      — legacy: moving (> gate_speed) OR displaced (> gate_anchor_dist).
+                  Policy-controllable: stepping moves the base -> gate opens ->
+                  stepping is paid (dp5f_gaitpack stampede).
+      "transit" — displaced from the anchor only (> gate_anchor_dist): pays the
+                  walk-back, silent near home. Costs anchor_hold to trigger.
+      "pushwin" — a push happened within push_window_s (env.last_push_t, set by
+                  push_by_setting_velocity_stamped) OR a sustained push is active
+                  (_sustained_push_clear_time). Privileged, reward-side only —
+                  the policy feels the shove through proprioception exactly as on
+                  hardware; it just cannot fake the window."""
+    if gate_mode == "pushwin":
+        t = env.episode_length_buf.float() * env.step_dt
+        gate = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        if hasattr(env, "last_push_t"):
+            gate = gate | ((t - env.last_push_t) <= push_window_s)
+        if hasattr(env, "_sustained_push_clear_time"):
+            gate = gate | (env._sustained_push_clear_time > t)
+        return gate
+    far = None
+    if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
+        far = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) > gate_anchor_dist
+    if gate_mode == "transit":
+        return far if far is not None else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    moving = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
+    return moving | far if far is not None else moving
+
+
 def feet_gait_recovery(
     env: "ManagerBasedRLEnv",
     period: float,
@@ -992,6 +1023,8 @@ def feet_gait_recovery(
     gate_speed: float = 0.15,
     gate_anchor_dist: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    gate_mode: str = "or",
+    push_window_s: float = 2.0,
 ) -> torch.Tensor:
     """P13: walk's feet_gait adapted for the BALANCE task — same antiphase
     contact-schedule reward, but gated on RECOVERY-IN-PROGRESS (base speed >
@@ -1024,15 +1057,7 @@ def feet_gait_recovery(
         reward += (~(is_stance ^ is_contact[:, i])).float()
 
     asset = env.scene[asset_cfg.name]
-    recovering = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
-    if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
-        # dp4b: ALSO open the gate when far from home (anchor moved / drifted
-        # out) — pays paced antiphase stepping TOWARD the point instead of the
-        # lean-and-shimmy the stepping costs otherwise select for. The policy
-        # sees where to go via the anchor obs; this term says HOW to get there.
-        far = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy,
-                         dim=-1) > gate_anchor_dist
-        recovering = recovering | far
+    recovering = _recovery_gate(env, asset, gate_mode, gate_speed, gate_anchor_dist, push_window_s)
     return reward * recovering.float()
 
 
@@ -1378,6 +1403,8 @@ def foot_clearance_recovery(
     gate_speed: float = 0.15,
     gate_anchor_dist: float = 0.15,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+    gate_mode: str = "or",
+    push_window_s: float = 2.0,
 ) -> torch.Tensor:
     """dp5f: swing-clearance income on the DESK line's recovery gate (same
     OR-gate as feet_gait_recovery: moving OR displaced from the anchor). The
@@ -1389,10 +1416,7 @@ def foot_clearance_recovery(
     swing = torch.tanh(tanh_mult * torch.norm(
         asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
     r = torch.sum(torch.exp(-err / (std * std)) * swing, dim=1)
-    gate = torch.norm(asset.data.root_lin_vel_w[:, :2], dim=-1) > gate_speed
-    if hasattr(env, "spawn_root_xy"):
-        far = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) > gate_anchor_dist
-        gate = gate | far
+    gate = _recovery_gate(env, asset, gate_mode, gate_speed, gate_anchor_dist, push_window_s)
     return r * gate.float()
 
 

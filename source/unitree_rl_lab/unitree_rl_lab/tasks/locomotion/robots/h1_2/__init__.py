@@ -295,3 +295,15 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# Desk6b: Desk6 + desk_penetration termination (dp6b; same 91-obs contract).
+gym.register(
+    id="Unitree-H1_2-Balance-Desk6b",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk6:RobotEnvCfgDesk6b",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk6:RobotPlayEnvCfgDesk6b",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)

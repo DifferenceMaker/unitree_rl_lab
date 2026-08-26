@@ -92,3 +92,45 @@ class RobotPlayEnvCfgDesk6(RobotPlayEnvCfg):
         self.curriculum.ik_workspace.params["warmup_steps"] = 0
         self.curriculum.ik_workspace.params["scale_levels"] = (1.0,)
         _apply_overrides(self, _load_overrides())
+
+
+# ---------------------------------------------------------------------------
+# Desk6b (dp6b, operator 2026-08-26): Desk6 + the desk_penetration TERMINATION.
+# dp6_leancmd previews: "almost half the robots get pushed inside the table";
+# the -100 undesired_contacts fired only -1.15/ep because a body through the
+# slab collider reports no contact. Weight-free geometric termination (pelvis /
+# torso_link centre inside the slab footprint below the desk top): the
+# impossible state is cut, the unavoidable shove is not punished. Same obs
+# contract as Desk6 (91) -> warmstart from dp6_leancmd_resume. "No need to
+# overengineer beyond that."
+# ---------------------------------------------------------------------------
+def _make_desk6b(cfg):
+    from isaaclab.managers import TerminationTermCfg as DoneTerm
+    cfg.terminations.desk_penetration = DoneTerm(
+        func=mdp.desk_penetration,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=["pelvis", "torso_link"]),
+                "desk_name": "desk", "xy_margin": 0.0, "z_margin": 0.02})
+
+
+@configclass
+class RobotEnvCfgDesk6b(RobotEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_desk(self)
+        _make_desk5(self)
+        _make_desk5b(self)
+        _make_desk6(self)
+        _make_desk6b(self)
+        _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotPlayEnvCfgDesk6b(RobotPlayEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_desk(self)
+        _make_desk5(self)
+        _make_desk5b(self)
+        _make_desk6(self)
+        _make_desk6b(self)
+        _apply_overrides(self, _load_overrides())

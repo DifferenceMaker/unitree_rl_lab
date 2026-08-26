@@ -378,3 +378,65 @@ def reanchor_on_stop(
     )
     if hasattr(env, "spawn_foot_pos") and asset_cfg.body_ids is not None:
         env.spawn_foot_pos[ids] = asset.data.body_pos_w[ids][:, asset_cfg.body_ids, :2]
+
+
+def push_by_setting_velocity_stamped(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    velocity_range: dict,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """dp5g: Isaac's push_by_setting_velocity + a per-env TIMESTAMP of the push
+    (env.last_push_t, episode seconds). The stamp is PRIVILEGED, reward-side only
+    (never an observation): it lets recovery-gated income (gait / clearance) pay
+    only inside a genuine push window — a gate the policy cannot open by moving
+    (the speed/displacement OR-gate was self-triggerable: dp5f_gaitpack's
+    stampede, clearance 7.7/s vs anchor_hold 0.9/s)."""
+    from isaaclab.envs.mdp import push_by_setting_velocity as _push
+    _push(env, env_ids, velocity_range, asset_cfg)
+    if not hasattr(env, "last_push_t"):
+        env.last_push_t = torch.full((env.num_envs,), -1e6, device=env.device)
+    ids = torch.as_tensor(env_ids, device=env.device, dtype=torch.long) if not isinstance(env_ids, torch.Tensor) else env_ids
+    env.last_push_t[ids] = env.episode_length_buf[ids].float() * env.step_dt
+
+
+def offset_spawn_from_anchor(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor,
+    prob: float = 0.3,
+    dist_range: tuple = (0.3, 0.6),
+    rear_half_only: bool = True,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """dp5g_seed (operator 2026-08-26: "i dont think the robot has experienced a
+    moment where it isn't further than 30cm beyond the stand point"): at reset,
+    with `prob`, TELEPORT THE ROBOT 0.3-0.6 m away from its anchor while the
+    anchor (spawn_root_xy, the desk, the anchor obs) stays where it was — the
+    dp5 lean-seeding lesson applied to transit: the walk-back state is visited
+    every third episode instead of only after a hard push. Direction restricted
+    to the rear half-plane (away from the desk in front) so the seed never lands
+    the robot in the slab. Must run AFTER capture_spawn_state and place_desk
+    (an edit_raw-added event is appended last in the reset list)."""
+    if prob <= 0.0 or len(env_ids) == 0 or not hasattr(env, "spawn_root_xy"):
+        return
+    asset = env.scene[asset_cfg.name]
+    ids = torch.as_tensor(env_ids, device=env.device, dtype=torch.long) if not isinstance(env_ids, torch.Tensor) else env_ids
+    pick = ids[torch.rand(len(ids), device=env.device) < prob]
+    if len(pick) == 0:
+        return
+    n = len(pick)
+    r = dist_range[0] + torch.rand(n, device=env.device) * (dist_range[1] - dist_range[0])
+    # angle relative to the spawn heading: rear half = [pi/2, 3pi/2]
+    if rear_half_only:
+        th = math.pi / 2 + torch.rand(n, device=env.device) * math.pi
+    else:
+        th = torch.rand(n, device=env.device) * 2.0 * math.pi
+    yaw = env.spawn_yaw[pick]
+    dx = r * torch.cos(yaw + th)
+    dy = r * torch.sin(yaw + th)
+    root = asset.data.root_state_w[pick].clone()
+    root[:, 0] += dx
+    root[:, 1] += dy
+    root[:, 7:] = 0.0                                     # no velocity carried into the seed
+    asset.write_root_pose_to_sim(root[:, :7], env_ids=pick)
+    asset.write_root_velocity_to_sim(root[:, 7:], env_ids=pick)
