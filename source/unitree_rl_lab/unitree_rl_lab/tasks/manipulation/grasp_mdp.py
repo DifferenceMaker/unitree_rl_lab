@@ -74,6 +74,11 @@ FOLLOWER_COUPLING = {f"{_SIDE}_{k}": (f"{_SIDE}_{v[0]}", v[1])
                      for k, v in _COUPLING_BY_SUFFIX.items()}
 
 
+# re-exported so grasp jobs can attach the geometric in-slab termination by name
+# (gr7c: "the hand teleports inside the table" — same tunneling family as dp6b)
+from unitree_rl_lab.tasks.locomotion.mdp.terminations import desk_penetration  # noqa: F401, E402
+
+
 def _strip_side(name: str) -> str:
     """left_little_2_joint / right_little_2_joint -> little_2_joint."""
     return name.split("_", 1)[1]
