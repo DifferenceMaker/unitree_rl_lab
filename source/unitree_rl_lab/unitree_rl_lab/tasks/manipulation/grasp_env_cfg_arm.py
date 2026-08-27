@@ -354,3 +354,35 @@ class RobotEnvCfgArm7TableR(RobotEnvCfgArm7R):
         _make_gr6_table(self)
         self.events.reset_scene.params["palm_xy"] = (0.0, -0.12)
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+# ---------------------------------------------------------------------------
+# gr7c (operator 2026-08-27): gr7b_clean_smooth PROMOTED TO TRUNK ("stable and
+# robust enough — from that trunk retrofit it"). Bakes the full clean_smooth
+# economy on the RIGHT-hand table task: the gr6f_combo base (height-only
+# cube_hold_above s0.03 @40, binary table wall -10/max2, approach_cube +4) +
+# quiet_hold +5 + cube_slide -2 + arm_smooth -1. Trunk-is-task; jobs win last.
+# ---------------------------------------------------------------------------
+def _make_gr7b_clean_smooth(cfg):
+    from unitree_rl_lab.tasks.manipulation import grasp_mdp as _gm
+    cfg.rewards.cube_hold_above.weight = 40.0
+    cfg.rewards.cube_hold_above.params["height_only"] = True
+    cfg.rewards.cube_hold_above.params["sigma"] = 0.03
+    cfg.rewards.table_hit.weight = -10.0
+    cfg.rewards.table_hit.params["max_val"] = 2.0
+    cfg.rewards.approach_cube = RewTerm(func=_gm.approach_cube_bonus, weight=4.0, params={"sigma": 0.3})
+    cfg.rewards.quiet_hold = RewTerm(func=_gm.quiet_hold_bonus, weight=5.0, params={"sigma": 3.0, "force_thr": 0.5})
+    cfg.rewards.cube_slide = RewTerm(func=_gm.cube_slide_penalty, weight=-2.0,
+                                     params={"ramp_lo": 0.01, "ramp_hi": 0.05, "max_speed": 1.0})
+    cfg.rewards.arm_smooth.weight = -1.0
+
+
+@configclass
+class RobotEnvCfgArm7TableRCS(RobotEnvCfgArm7R):
+    """GraspR-Arm7Table-CS: the clean_smooth trunk (right hand)."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr6_table(self)
+        self.events.reset_scene.params["palm_xy"] = (0.0, -0.12)
+        _make_gr7b_clean_smooth(self)
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last
