@@ -421,3 +421,29 @@ class RobotEnvCfgArm7TableRCSTube(RobotEnvCfgArm7TableRCS):
         super().__post_init__()
         _make_gr8_tube(self)
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+def _make_gr8_ring(cfg):
+    """The ⌀181-191 x 20 mm collar ring (52 g). Trained SEPARATELY from the
+    tube (operator 2026-08-27: no generalizing over both — different weights).
+    Grasp feature = pinching the 5 mm wall / 10 mm roof lip."""
+    ring_urdf = os.path.join(_ASSETS, "objects/ring_d180_h20/ring_d180_h20.urdf")
+    cfg.scene.cube.spawn = sim_utils.UrdfFileCfg(
+        asset_path=ring_urdf,
+        fix_base=False,
+        joint_drive=None,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.052),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+    )
+    cfg.events.reset_scene.params["cube_height"] = 0.02
+    cfg.events.cube_mass.params["mass_distribution_params"] = (0.042, 0.062)
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSRing(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Ring: the CS trunk with the real ring as the object."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8_ring(self)
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last
