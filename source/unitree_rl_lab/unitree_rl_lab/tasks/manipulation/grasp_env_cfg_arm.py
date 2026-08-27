@@ -386,3 +386,38 @@ class RobotEnvCfgArm7TableRCS(RobotEnvCfgArm7R):
         self.events.reset_scene.params["palm_xy"] = (0.0, -0.12)
         _make_gr7b_clean_smooth(self)
         _apply_overrides(self, _load_overrides())  # jobs win, applied last
+
+
+# ---------------------------------------------------------------------------
+# gr8 (operator 2026-08-27): real desk objects — the TUBE replaces the cube.
+# assets/objects/tube_d180_h130: ⌀180 x 130 mm, 5 mm walls, 363 g, generator-
+# built (visual revolve mesh + 16 box-segment collisions so the hole survives
+# Isaac's convex pipeline; collider_type convex_hull hulls each box alone).
+# GEOMETRY WARNING: the hand closes on <=7 cm objects (gr2 measurement) — an
+# 18 cm tube can never be cube-wrapped; the graspable feature is the 5 mm RIM.
+# Iteration 1 = ASSET SWAP ONLY (spawn + height + mass DR); rim-grasp reward
+# design waits until the operator has seen the scale in a preview.
+# ---------------------------------------------------------------------------
+def _make_gr8_tube(cfg):
+    tube_urdf = os.path.join(_ASSETS, "objects/tube_d180_h130/tube_d180_h130.urdf")
+    cfg.scene.cube.spawn = sim_utils.UrdfFileCfg(
+        asset_path=tube_urdf,
+        fix_base=False,
+        joint_drive=None,          # single link, no joints — skip drive validation
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.363),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+    )
+    # reset_scene places by CENTER pose + cube_height/2 (tube origin is centered)
+    cfg.events.reset_scene.params["cube_height"] = 0.13
+    # real tube 363 g; keep the cube's ±~35% DR proportions
+    cfg.events.cube_mass.params["mass_distribution_params"] = (0.30, 0.43)
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSTube(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Tube: the CS trunk with the real tube as the object."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8_tube(self)
+        _apply_overrides(self, _load_overrides())  # jobs win, applied last
