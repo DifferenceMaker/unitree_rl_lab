@@ -1474,3 +1474,40 @@ def flat_orientation_lean_l2(
     roll, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
     cmd = env.command_manager.get_command(command_name)[:, 0]
     return roll ** 2 + (pitch - cmd) ** 2
+
+
+def stride_track(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    period: float = 0.75,
+    std: float = 0.05,
+    min_speed: float = 0.1,
+    max_stride: float = 1.2,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """lm5d (operator 2026-08-27: "the robot should adapt its feet stride to the
+    velocity it is commanded"): at each TOUCHDOWN, kernel on |swing displacement −
+    nominal stride|, where nominal = |v_cmd| · period/2 (antiphase gait: each foot
+    covers half a period per step; period 0.75 s ⇒ 0.375 m per 1 m/s). Liftoff xy
+    is stored per foot when contact 1→0; on 0→1 the planar displacement since
+    liftoff is scored. Gated on |v_cmd| > min_speed so standing pays nothing, and
+    the measured stride is clamped (gr law) so a physics spike cannot mint reward.
+    Sparse by construction (pays only on touchdown steps)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    in_contact = sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0    # (N, 2)
+    foot_xy = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]                     # (N, 2, 2)
+    if not hasattr(env, "_stride_prev_contact"):
+        env._stride_prev_contact = torch.ones_like(in_contact)
+        env._stride_liftoff_xy = foot_xy.clone()
+    liftoff = env._stride_prev_contact & ~in_contact
+    touchdown = ~env._stride_prev_contact & in_contact
+    env._stride_liftoff_xy = torch.where(liftoff.unsqueeze(-1), foot_xy, env._stride_liftoff_xy)
+    stride = torch.norm(foot_xy - env._stride_liftoff_xy, dim=-1).clamp(max=max_stride)  # (N, 2)
+    cmd = env.command_manager.get_command(command_name)
+    v = torch.norm(cmd[:, :2], dim=-1)                                             # (N,)
+    nominal = (v * period * 0.5).unsqueeze(1)
+    r = torch.exp(-torch.square((stride - nominal) / std)) * touchdown.float()
+    env._stride_prev_contact = in_contact.clone()
+    return r.sum(dim=1) * (v > min_speed).float()
