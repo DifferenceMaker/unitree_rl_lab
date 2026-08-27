@@ -232,6 +232,17 @@ def _palm_pose(env: "ManagerBasedRLEnv"):
     return asset.data.body_pos_w[:, bid], asset.data.body_quat_w[:, bid]
 
 
+def _wrist_pose(env: "ManagerBasedRLEnv"):
+    """World pose of the wrist_yaw link — the rigid frame the gr8 object
+    offset is expressed in (see reset_scene_grasp object_offset_wrist_frame)."""
+    asset: Articulation = env.scene["robot"]
+    if not hasattr(env, "grasp_wrist_body_id"):
+        ids, _ = asset.find_bodies([f"{_SIDE}_wrist_yaw_link"])
+        env.grasp_wrist_body_id = ids[0]
+    bid = env.grasp_wrist_body_id
+    return asset.data.body_pos_w[:, bid], asset.data.body_quat_w[:, bid]
+
+
 # ---------------------------------------------------------------------------
 # Observations
 # ---------------------------------------------------------------------------
@@ -354,6 +365,8 @@ def reset_grasp_scene(
     gap_range: tuple = (0.02, 0.08),
     cube_height: float = 0.055,
     object_xy_offset: tuple = (0.0, 0.0),
+    object_offset_wrist_frame: tuple | None = None,
+    palm_track: bool = False,
     platform_thickness: float = 0.02,
     retract_time_range: tuple = (3.0, 5.0),
     approach_drop_range: tuple = (0.0, 0.0),
@@ -377,8 +390,14 @@ def reset_grasp_scene(
     gap = gap_range[0] + torch.rand(n, device=dev) * (gap_range[1] - gap_range[0])
     plat_top = (palm_z - gap - cube_height).clamp(min=0.05)  # first-reset stale-pose guard
     plat_pose = torch.zeros(n, 7, device=dev)
-    plat_pose[:, 0] = origins[:, 0] + palm_xy[0]
-    plat_pose[:, 1] = origins[:, 1] + palm_xy[1]
+    if palm_track:
+        # gr8: arm_park_error swings the real palm +-5 cm; a fixed palm_xy left
+        # wide rim objects clipping the fingers at spawn. Follow the LIVE palm.
+        plat_pose[:, 0] = palm_pos[env_ids, 0]
+        plat_pose[:, 1] = palm_pos[env_ids, 1]
+    else:
+        plat_pose[:, 0] = origins[:, 0] + palm_xy[0]
+        plat_pose[:, 1] = origins[:, 1] + palm_xy[1]
     plat_pose[:, 2] = plat_top - platform_thickness / 2
     plat_pose[:, 3] = 1.0
 
@@ -411,10 +430,21 @@ def reset_grasp_scene(
 
     # object_xy_offset (gr8): displace the OBJECT (not the platform) from the
     # palm point — a wide rim object (⌀18 tube/ring) must present its WALL
-    # under the palm, else the hand spawns over the open mouth
+    # under the palm, else the hand spawns over the open mouth.
+    # object_offset_wrist_frame: same idea but rigid in the WRIST_YAW frame, so
+    # it survives arm_park_error (which both translates AND rotates the hand).
     cube_pose = torch.zeros(n, 7, device=dev)
-    cube_pose[:, 0] = plat_pose[:, 0] + object_xy_offset[0] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
-    cube_pose[:, 1] = plat_pose[:, 1] + object_xy_offset[1] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
+    if object_offset_wrist_frame is not None:
+        w_pos, w_quat = _wrist_pose(env)
+        off_local = torch.tensor(object_offset_wrist_frame, device=dev, dtype=torch.float32)
+        off_w = math_utils.quat_apply(w_quat[env_ids], off_local.expand(n, 3))
+        base_x = w_pos[env_ids, 0] + off_w[:, 0]
+        base_y = w_pos[env_ids, 1] + off_w[:, 1]
+    else:
+        base_x = plat_pose[:, 0] + object_xy_offset[0]
+        base_y = plat_pose[:, 1] + object_xy_offset[1]
+    cube_pose[:, 0] = base_x + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
+    cube_pose[:, 1] = base_y + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
     cube_pose[:, 2] = plat_top + cube_height / 2 + 0.002
     yaw = (torch.rand(n, device=dev) * 2 - 1) * torch.pi
     cube_pose[:, 3] = torch.cos(yaw / 2)
@@ -1159,6 +1189,42 @@ def cube_slide_penalty(
     v_xy = cube.data.root_lin_vel_w[:, :2].norm(dim=-1)
     v_xy = torch.nan_to_num(v_xy, nan=0.0, posinf=max_speed, neginf=0.0).clamp(max=max_speed)
     return v_xy * (1.0 - _lift_ramp(env, ramp_lo, ramp_hi))
+
+
+def object_orientation_deviation(
+    env: "ManagerBasedRLEnv",
+    ramp_lo: float = 0.01,
+    ramp_hi: float = 0.05,
+    capture_at: float = 0.5,
+    max_angle: float = 1.57,
+) -> torch.Tensor:
+    """gr8 (operator 2026-08-27): 'held with intention, placeable later' — the
+    joint_deviation idea applied to the OBJECT. Capture the object's world
+    orientation the first time the lift ramp crosses `capture_at` (= the pickup
+    moment), then charge the geodesic angle from that reference x ramp while it
+    stays aloft. Gated by the ramp so the pre-grasp phase is never punished;
+    penalizes DRIFT WHILE HELD, not an imperfect pickup pose. The reference
+    self-clears when the ramp returns to 0 (object back on the table, or the
+    episode reset re-placed it), so no reset hook is needed. Clamped at
+    `max_angle` (gr law: a tumbling object reads at most ~90deg per step).
+    For the ring this is the difference between hooked-and-dangling and a
+    grasp that could later PLACE the ring — and it prices the edge-standing
+    exploit (a ring stood on its rim reads ~90deg deviation)."""
+    cube: RigidObject = env.scene["cube"]
+    q = cube.data.root_quat_w
+    ramp = _lift_ramp(env, ramp_lo, ramp_hi)
+    if not hasattr(env, "gr8_ref_quat"):
+        env.gr8_ref_quat = torch.zeros(env.num_envs, 4, device=env.device)
+        env.gr8_ref_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    env.gr8_ref_valid &= ramp > 0.0
+    cap = (~env.gr8_ref_valid) & (ramp >= capture_at)
+    if cap.any():
+        env.gr8_ref_quat[cap] = q[cap]
+        env.gr8_ref_valid |= cap
+    dot = (env.gr8_ref_quat * q).sum(dim=-1).abs().clamp(max=1.0)
+    ang = 2.0 * torch.acos(dot)
+    ang = torch.nan_to_num(ang, nan=0.0, posinf=max_angle).clamp(max=max_angle)
+    return ang * ramp * env.gr8_ref_valid.float()
 
 
 def approach_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.3) -> torch.Tensor:
