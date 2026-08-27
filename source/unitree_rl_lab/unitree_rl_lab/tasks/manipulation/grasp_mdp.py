@@ -353,6 +353,7 @@ def reset_grasp_scene(
     xy_placement_error: float = 0.03,
     gap_range: tuple = (0.02, 0.08),
     cube_height: float = 0.055,
+    object_xy_offset: tuple = (0.0, 0.0),
     platform_thickness: float = 0.02,
     retract_time_range: tuple = (3.0, 5.0),
     approach_drop_range: tuple = (0.0, 0.0),
@@ -408,9 +409,12 @@ def reset_grasp_scene(
     plat_top = start[:, 2] + platform_thickness / 2  # cube spawns ON the start pose
     platform.write_root_pose_to_sim(plat_pose, env_ids=env_ids)
 
+    # object_xy_offset (gr8): displace the OBJECT (not the platform) from the
+    # palm point — a wide rim object (⌀18 tube/ring) must present its WALL
+    # under the palm, else the hand spawns over the open mouth
     cube_pose = torch.zeros(n, 7, device=dev)
-    cube_pose[:, 0] = plat_pose[:, 0] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
-    cube_pose[:, 1] = plat_pose[:, 1] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
+    cube_pose[:, 0] = plat_pose[:, 0] + object_xy_offset[0] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
+    cube_pose[:, 1] = plat_pose[:, 1] + object_xy_offset[1] + (torch.rand(n, device=dev) * 2 - 1) * xy_placement_error
     cube_pose[:, 2] = plat_top + cube_height / 2 + 0.002
     yaw = (torch.rand(n, device=dev) * 2 - 1) * torch.pi
     cube_pose[:, 3] = torch.cos(yaw / 2)
