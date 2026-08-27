@@ -410,8 +410,28 @@ def _make_gr8_tube(cfg):
     )
     # reset_scene places by CENTER pose + cube_height/2 (tube origin is centered)
     cfg.events.reset_scene.params["cube_height"] = 0.13
+    # RIM PRESENTATION (measured from the MuJoCo kinematic twin at arm_defaults:
+    # fingers point env -y, thumb on +x): displace the tube center 9 cm (=R)
+    # toward the THUMB side, so the rim WALL lies on the jaw line — fingers
+    # outside, thumb over the mouth — instead of the palm hovering over the
+    # open mouth (operator: hand rendered inside the tube).
+    cfg.events.reset_scene.params["object_xy_offset"] = (0.09, 0.0)
     # real tube 363 g; keep the cube's ±~35% DR proportions
     cfg.events.cube_mass.params["mass_distribution_params"] = (0.30, 0.43)
+    # LIFT-RAMP GEOMETRY (caught 2026-08-27 pre-wave): _lift_ramp measures the
+    # object CENTER above the table, and lo/hi are tuned to the CUBE's resting
+    # center (0.0275+0.002). The tube's center RESTS at 0.065 — past hi=0.05,
+    # i.e. a tube sitting on the table read as fully lifted (cube_slide dead,
+    # hold income mis-gated). Port the SEMANTICS: shift every ramp threshold by
+    # d_half = 0.065 - 0.0275 = +0.0375, and the hold height by the same.
+    # TILTGATE LAW (gr6c, an order worse here: radius 0.09 > half-height
+    # 0.065): a TIPPED tube's center reaches h=0.09 — income must gate ABOVE
+    # anything reachable by tilting, or tipping reads as lifting. lo 0.095 >
+    # 0.09; full ramp at +7 cm of true lift; hold target above full-ramp.
+    for _term in ("hold_cube", "cube_hold_above", "cube_slide"):
+        getattr(cfg.rewards, _term).params["ramp_lo"] = 0.095
+        getattr(cfg.rewards, _term).params["ramp_hi"] = 0.135
+    cfg.rewards.cube_hold_above.params["height"] = 0.20
 
 
 @configclass
@@ -438,6 +458,20 @@ def _make_gr8_ring(cfg):
     )
     cfg.events.reset_scene.params["cube_height"] = 0.02
     cfg.events.cube_mass.params["mass_distribution_params"] = (0.042, 0.062)
+    # rim presentation: same wrist-frame jaw-line displacement as the tube
+    cfg.events.reset_scene.params["object_offset_wrist_frame"] = (0.0, 0.0, 0.10)
+    cfg.events.reset_scene.params["palm_track"] = True
+    # ring is only 2 cm tall: gap floor = the fingertip drop (~0.065) so the
+    # tips spawn AT ring-top height, never through the ring into the platform
+    cfg.events.reset_scene.params["gap_range"] = (0.065, 0.09)
+    # TILTGATE LAW (see _make_gr8_tube): a ring stood on its RIM has center
+    # h~0.0905 — lo must clear it or edge-standing farms the hold income
+    # (rest center is only 0.012, so the ring pays nothing until a real
+    # 10 cm lift; the honest price of a tall-when-tipped object).
+    for _term in ("hold_cube", "cube_hold_above", "cube_slide"):
+        getattr(cfg.rewards, _term).params["ramp_lo"] = 0.10
+        getattr(cfg.rewards, _term).params["ramp_hi"] = 0.14
+    cfg.rewards.cube_hold_above.params["height"] = 0.16
 
 
 @configclass
