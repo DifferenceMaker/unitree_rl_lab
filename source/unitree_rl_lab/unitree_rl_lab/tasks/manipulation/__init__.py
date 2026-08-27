@@ -176,3 +176,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspLcpRetrofitPPORunnerCfg",
     },
 )
+
+# gr8: real desk objects — CS trunk with the ⌀180x130 tube instead of the cube
+# (assets/objects/tube_d180_h130; asset-swap iteration 1, rim-grasp geometry).
+gym.register(
+    id="Unitree-H1_2-GraspR-Arm7Table-CS-Tube",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableRCSTube",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableRCSTube",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
+    },
+)
