@@ -402,6 +402,7 @@ def torso_stability_bonus(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="torso_link"),
     std_lin: float = 0.15,
     std_ang: float = 0.30,
+    command_name: str | None = None,
 ) -> torch.Tensor:
     """Bonus reward for stable torso (head/camera).
 
@@ -421,6 +422,14 @@ def torso_stability_bonus(
     body_ids = asset_cfg.body_ids
     lin_vel = asset.data.body_lin_vel_w[:, body_ids, :2]  # XY only — vertical motion is gravity
     ang_vel = asset.data.body_ang_vel_w[:, body_ids, :]   # All 3 axes
+    if command_name is not None:
+        # lm5e_turn (2026-08-28 yaw audit): the ungated 3-axis kernel forfeits the
+        # WHOLE +6 at a commanded 0.5 rad/s turn (exp(-(0.5/0.15)^2) ~ 0) — the
+        # single largest tax on rotating. Score yaw RELATIVE to the commanded wz
+        # (upright body: world z ~ body z); roll/pitch stay absolute.
+        wz_cmd = env.command_manager.get_command(command_name)[:, 2]
+        ang_vel = ang_vel.clone()
+        ang_vel[:, :, 2] = ang_vel[:, :, 2] - wz_cmd.unsqueeze(1)
 
     # Squared norms per env
     lin_sq = torch.sum(lin_vel ** 2, dim=-1).squeeze(-1)  # (num_envs,)
@@ -1521,3 +1530,23 @@ def stride_track(
     r = torch.exp(-torch.square((stride - nominal) / std)) * touchdown.float()
     env._stride_prev_contact = in_contact.clone()
     return r.sum(dim=1) * (v > min_speed).float()
+
+
+def joint_deviation_l1_turn_gated(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    wz_ref: float = 0.5,
+) -> torch.Tensor:
+    """lm5e_turn (2026-08-28 yaw audit): joint_deviation_l1 whose weight fades with
+    the commanded yaw rate — x(1 - min(|wz_cmd|/wz_ref, 1)). Rationale: the lm4e
+    hip EVICTOR (joint_deviation_hips -2.0 on hip roll+yaw) exists to pull the
+    parked hip yaw off its -0.43 stop when standing/walking straight; during a
+    commanded turn the same term taxes exactly the hip-yaw excursion turning
+    needs (~0.3 rad on both hips = -1.2/step against a 5/step tracking ceiling).
+    Standing and straight walking keep the full evictor; a full-rate turn frees it."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    dev = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    wz = env.command_manager.get_command(command_name)[:, 2].abs()
+    gate = (1.0 - (wz / wz_ref).clamp(max=1.0))
+    return torch.sum(dev.abs(), dim=1) * gate
