@@ -73,6 +73,31 @@ def _make_lm5(cfg):
     cfg.rewards.joint_deviation_hips.weight = -2.0
 
 
+def _make_lm5d_combo(cfg):
+    """lm5d_combo PROMOTED TO TRUNK (operator 2026-08-28: "by far my favourite …
+    hasn't fallen down even once"). Bakes its job deltas verbatim (source:
+    scripts/queue/lm5d/lm5d_combo.job): the lm5c_long command regime (heading
+    stack, 60 s episodes, resample U(10,20) = ~2 command changes per episode —
+    the live variable behind lm5c_long's win) + upright (flat −3) + slide (−0.5)
+    + stride_track + the 1.5 m/s command ceiling. NOTE stride_track here runs the
+    CORRECTED nominal (v·T, stride_frac 1.0): lm5d trained with the v·T/2 target and
+    the term paid 0.01/s — the trunk carries the fix, lm5e_stride15 widens its std."""
+    cfg.commands.base_velocity.heading_command = True
+    cfg.commands.base_velocity.heading_control_stiffness = 1.0
+    cfg.commands.base_velocity.rel_heading_envs = 0.5
+    cfg.commands.base_velocity.ranges.heading = (-3.14159265, 3.14159265)
+    cfg.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
+    cfg.commands.base_velocity.resampling_time_range = (10.0, 20.0)
+    cfg.commands.base_velocity.limit_ranges.lin_vel_x = (-0.5, 1.5)
+    cfg.episode_length_s = 60.0
+    cfg.rewards.flat_orientation_l2.weight = -3.0
+    cfg.rewards.feet_slide.weight = -0.5
+    cfg.rewards.stride_track = RewTerm(
+        func=mdp.stride_track, weight=2.0,
+        params={"period": 0.75, "std": 0.05, "min_speed": 0.1},
+    )
+
+
 @configclass
 class RobotEnvCfgLM5(RobotEnvCfg):
     def __post_init__(self):
@@ -94,3 +119,28 @@ class RobotPlayEnvCfgLM5(RobotPlayEnvCfg):
         _make_lm5(self)
         self.commands.base_velocity.debug_vis = True
         _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotEnvCfgLM5C(RobotEnvCfg):
+    """Unitree-H1_2-LM5-C: the lm5d_combo trunk (LM5 + _make_lm5d_combo)."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_lm3(self)
+        _make_lm4(self)
+        _make_lm4b(self)
+        _make_lm5(self)
+        _make_lm5d_combo(self)
+        _apply_overrides(self, _load_overrides())   # jobs win, applied last
+
+
+@configclass
+class RobotPlayEnvCfgLM5C(RobotPlayEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_lm3(self)
+        _make_lm4(self)
+        _make_lm4b(self)
+        _make_lm5(self)
+        _make_lm5d_combo(self)
+        self.commands.base_velocity.debug_vis = True
