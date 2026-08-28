@@ -1483,13 +1483,19 @@ def stride_track(
     std: float = 0.05,
     min_speed: float = 0.1,
     max_stride: float = 1.2,
+    stride_frac: float = 1.0,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
 ) -> torch.Tensor:
     """lm5d (operator 2026-08-27: "the robot should adapt its feet stride to the
     velocity it is commanded"): at each TOUCHDOWN, kernel on |swing displacement −
-    nominal stride|, where nominal = |v_cmd| · period/2 (antiphase gait: each foot
-    covers half a period per step; period 0.75 s ⇒ 0.375 m per 1 m/s). Liftoff xy
+    nominal stride|, where nominal = |v_cmd| · period · stride_frac.
+    GEOMETRY FIX (2026-08-28, lm5d paid 0.01/s at weight 2 = never in the kernel):
+    the measured quantity is ONE foot's liftoff→touchdown displacement. A foot is
+    planted during stance, so in its swing it must cover the body's whole travel
+    per gait period = v·T (the STRIDE), not v·T/2 (the STEP between opposite
+    feet). lm5d's nominal v·T/2 sat ~0.19 m below real strides at 0.5 m/s with
+    std 0.05 → r≈0. stride_frac=0.5 reproduces the lm5d (buggy) target. Liftoff xy
     is stored per foot when contact 1→0; on 0→1 the planar displacement since
     liftoff is scored. Gated on |v_cmd| > min_speed so standing pays nothing, and
     the measured stride is clamped (gr law) so a physics spike cannot mint reward.
@@ -1501,13 +1507,17 @@ def stride_track(
     if not hasattr(env, "_stride_prev_contact"):
         env._stride_prev_contact = torch.ones_like(in_contact)
         env._stride_liftoff_xy = foot_xy.clone()
+    if hasattr(env, "reset_buf") and env.reset_buf.any():                          # stale liftoff after a teleport
+        rb = env.reset_buf.bool().unsqueeze(-1)
+        env._stride_liftoff_xy = torch.where(rb.unsqueeze(-1), foot_xy, env._stride_liftoff_xy)
+        env._stride_prev_contact = torch.where(rb, torch.ones_like(in_contact), env._stride_prev_contact)
     liftoff = env._stride_prev_contact & ~in_contact
     touchdown = ~env._stride_prev_contact & in_contact
     env._stride_liftoff_xy = torch.where(liftoff.unsqueeze(-1), foot_xy, env._stride_liftoff_xy)
     stride = torch.norm(foot_xy - env._stride_liftoff_xy, dim=-1).clamp(max=max_stride)  # (N, 2)
     cmd = env.command_manager.get_command(command_name)
     v = torch.norm(cmd[:, :2], dim=-1)                                             # (N,)
-    nominal = (v * period * 0.5).unsqueeze(1)
+    nominal = (v * period * stride_frac).unsqueeze(1)
     r = torch.exp(-torch.square((stride - nominal) / std)) * touchdown.float()
     env._stride_prev_contact = in_contact.clone()
     return r.sum(dim=1) * (v > min_speed).float()

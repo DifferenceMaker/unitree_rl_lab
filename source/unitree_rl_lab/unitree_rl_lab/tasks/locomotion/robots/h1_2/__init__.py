@@ -258,6 +258,19 @@ gym.register(
     },
 )
 
+# lm5d_combo TRUNK (2026-08-28): LM5 + _make_lm5d_combo baked; lm5e jobs warmstart
+# milestones/lm5d_combo_2026-08-27 on this task and carry only their deltas.
+gym.register(
+    id="Unitree-H1_2-LM5-C",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotEnvCfgLM5C",
+        "play_env_cfg_entry_point": f"{__name__}.lm5_env_cfg:RobotPlayEnvCfgLM5C",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
+
 # lm5 LCP retrofit: LM5 env + the reduced-dose retrofit runner (lcp_num_steps=1,
 # action_rate KEPT = sigma anchor) — the operator's clean A/B: wall_hips vs
 # wall_hips+retrofit, same genes, retrofit the only difference.
