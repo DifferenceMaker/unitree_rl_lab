@@ -1532,6 +1532,60 @@ def stride_track(
     return r.sum(dim=1) * (v > min_speed).float()
 
 
+def stride_symmetry(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    std: float = 0.1,
+    min_speed: float = 0.1,
+    max_stride: float = 1.2,
+    wz_ref: float = 0.5,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
+) -> torch.Tensor:
+    """lm5f (2026-08-31): left/right stride EQUALITY. stride_track pays each foot
+    against the nominal INDEPENDENTLY — one long stride plus a catch-up step
+    scores like a balanced passing gait, and at low vx (short nominal) the
+    catch-up 'step-to' gait is the cheap solution (lm5e sim2sim: "placing one
+    foot forward and then placing the other next to it"; the FRESH-learned
+    backwards gait, with no lineage habits, came out perfectly symmetric —
+    the asymmetry is a warmstart local optimum, so this term prices it
+    directly). On each touchdown: kernel on |this foot's completed stride −
+    the OTHER foot's last completed stride|. Fades with the commanded yaw rate
+    (turning legitimately strides the outer foot longer, same fade as
+    joint_deviation_l1_turn_gated); gated on |v_cmd| > min_speed; strides
+    clamped (gr law); pays nothing until both feet have one completed stride
+    (post-reset). Sparse by construction, same bookkeeping as stride_track but
+    on its OWN buffers so either term can run alone."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    in_contact = sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0    # (N, 2)
+    foot_xy = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]                     # (N, 2, 2)
+    if not hasattr(env, "_ssym_prev_contact"):
+        env._ssym_prev_contact = torch.ones_like(in_contact)
+        env._ssym_liftoff_xy = foot_xy.clone()
+        env._ssym_last_len = torch.zeros_like(foot_xy[..., 0])                     # (N, 2)
+        env._ssym_valid = torch.zeros_like(in_contact)                             # completed a stride yet?
+    if hasattr(env, "reset_buf") and env.reset_buf.any():
+        rb = env.reset_buf.bool().unsqueeze(-1)
+        env._ssym_liftoff_xy = torch.where(rb.unsqueeze(-1), foot_xy, env._ssym_liftoff_xy)
+        env._ssym_prev_contact = torch.where(rb, torch.ones_like(in_contact), env._ssym_prev_contact)
+        env._ssym_valid = torch.where(rb, torch.zeros_like(env._ssym_valid), env._ssym_valid)
+    liftoff = env._ssym_prev_contact & ~in_contact
+    touchdown = ~env._ssym_prev_contact & in_contact
+    env._ssym_liftoff_xy = torch.where(liftoff.unsqueeze(-1), foot_xy, env._ssym_liftoff_xy)
+    stride = torch.norm(foot_xy - env._ssym_liftoff_xy, dim=-1).clamp(max=max_stride)  # (N, 2)
+    env._ssym_last_len = torch.where(touchdown, stride, env._ssym_last_len)
+    env._ssym_valid = env._ssym_valid | touchdown
+    other_len = env._ssym_last_len.flip(-1)
+    other_ok = env._ssym_valid.flip(-1)
+    r = torch.exp(-torch.square((stride - other_len) / std)) * touchdown.float() * other_ok.float()
+    env._ssym_prev_contact = in_contact.clone()
+    cmd = env.command_manager.get_command(command_name)
+    v = torch.norm(cmd[:, :2], dim=-1)
+    turn_fade = (1.0 - (cmd[:, 2].abs() / wz_ref).clamp(max=1.0))
+    return r.sum(dim=1) * (v > min_speed).float() * turn_fade
+
+
 def joint_deviation_l1_turn_gated(
     env: "ManagerBasedRLEnv",
     asset_cfg: SceneEntityCfg,
