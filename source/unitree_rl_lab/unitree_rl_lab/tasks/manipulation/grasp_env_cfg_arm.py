@@ -434,6 +434,121 @@ def _make_gr8_tube(cfg):
     cfg.rewards.cube_hold_above.params["height"] = 0.20
 
 
+def _rename_reward(cfg, old: str, new: str):
+    """Per-object reward NAMES (operator 2026-08-31: 'generalizing policies and
+    their names isn't the play — each object's grasping policy needs a strategic
+    plan on its own'). Scene entity / obs names stay ("cube" / cube_pose — the
+    deploy contract and env.scene plumbing key on them); only the ledger-facing
+    reward terms are renamed."""
+    setattr(cfg.rewards, new, getattr(cfg.rewards, old))
+    setattr(cfg.rewards, old, None)
+
+
+def _make_gr8b_common(cfg):
+    """gr8b (operator 2026-08-31): every object in the same subphase.
+    1) RESET-EVENT ORDER FIX: mount_height_dr (root z +-5 cm) and arm_park_error
+       (+-0.08 rad) ran AFTER reset_scene — the table/object were placed for the
+       PRE-DR palm and the hand then moved by up to ~8 cm, spawning inside the
+       object/table ("when the height from the ground is too low it just spawns
+       inside the table" — confirmed, event order ['..reset_scene',
+       'mount_height_dr', 'arm_park_error'..] in every gr6/7/8 env.yaml). Managers
+       run reset terms in DECLARATION order, so re-append the placement chain
+       (reset_scene -> hand_start -> retry_seed) after the DR terms.
+    2) hand_in_slab termination: gr7c added it on the cube ("the hand teleports
+       inside the table" episodes trained on garbage); only the ramp half of the
+       tiltgate ever reached tube/ring."""
+    for name in ("reset_scene", "hand_start", "retry_seed"):
+        term = getattr(cfg.events, name)
+        delattr(cfg.events, name)
+        setattr(cfg.events, name, term)
+    from isaaclab.managers import TerminationTermCfg as DoneTerm
+    cfg.terminations.hand_in_slab = DoneTerm(
+        func=grasp_mdp.desk_penetration,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*wrist_yaw_link"]),
+                "desk_name": "platform", "xy_margin": 0.0, "z_margin": 0.0},
+    )
+
+
+def _make_gr8b_tube(cfg):
+    """gr8b tube: renames + the union cut + the keep-as-placed income.
+    hold_cube REMOVED (operator ruling: cube_hold_above and hold_cube share the
+    hold union, and palm-to-center is geometrically dead on the rim — see
+    hold_object_rim's docstring; the rimhold A/B job adds the rim-aware dish
+    back via add_reward). approach 4 -> 6 (the pull toward the object)."""
+    _make_gr8_tube(cfg)
+    _rename_reward(cfg, "cube_hold_above", "tube_hold_above")
+    _rename_reward(cfg, "approach_cube", "approach_tube")
+    _rename_reward(cfg, "cube_slide", "tube_slide")
+    cfg.rewards.hold_cube = None
+    cfg.rewards.approach_tube.weight = 6.0
+    cfg.rewards.tube_orientation_hold = RewTerm(
+        func=grasp_mdp.object_orientation_hold, weight=10.0,
+        params={"mode": "axis", "sigma": 0.3, "ramp_lo": 0.095, "ramp_hi": 0.135})
+
+
+def _make_gr8b_ring(cfg):
+    """gr8b ring: same treatment with ring numbers + the RIM-PRESENTATION FIX.
+    The gr8 offset (0, 0, 0.10) was authored as "10 cm along the wrist" but the
+    wrist z-axis points DOWN at the park pose (world (0.001, -0.005, -0.999)) —
+    xy displacement ~0, so the ring spawned at the WRIST's xy, ~16 cm from the
+    palm at the platform edge (operator 2026-08-31: "the ring appears on the
+    closest side of the table"; the asset origin itself is centered). Correct
+    vector for palm + 9 cm toward the thumb, in the wrist frame: t_palm +
+    R_w^T(0.09*x_env) = (0.1611 - 0.09, 0.0123, 0)."""
+    _make_gr8_ring(cfg)
+    cfg.events.reset_scene.params["object_offset_wrist_frame"] = (0.071, 0.012, 0.0)
+    _rename_reward(cfg, "cube_hold_above", "ring_hold_above")
+    _rename_reward(cfg, "approach_cube", "approach_ring")
+    _rename_reward(cfg, "cube_slide", "ring_slide")
+    cfg.rewards.hold_cube = None
+    cfg.rewards.approach_ring.weight = 6.0
+    cfg.rewards.ring_orientation_hold = RewTerm(
+        func=grasp_mdp.object_orientation_hold, weight=10.0,
+        params={"mode": "axis", "sigma": 0.3, "ramp_lo": 0.10, "ramp_hi": 0.14})
+
+
+def _make_gr8b_cube(cfg):
+    """gr8b cube (promoted so all three objects share the subphase): the gr7c
+    deltas baked (tilt ramp_lo 0.025; hand_in_slab arrives via _make_gr8b_common)
+    + the keep-as-placed income, FULL geodesic (the cube is not symmetric;
+    'it still wants to tilt the cube' — this is the breadcrumb). hold_cube
+    STAYS: palm-to-center matches the cube's geometry."""
+    cfg.rewards.hold_cube.params["ramp_lo"] = 0.025
+    cfg.rewards.cube_orientation_hold = RewTerm(
+        func=grasp_mdp.object_orientation_hold, weight=8.0,
+        params={"mode": "full", "sigma": 0.3, "ramp_lo": 0.025, "ramp_hi": 0.05})
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSCubeB(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Cube-B: gr8b cube."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8b_cube(self)
+        _make_gr8b_common(self)
+        _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSTubeB(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Tube-B: gr8b tube."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8b_tube(self)
+        _make_gr8b_common(self)
+        _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSRingB(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Ring-B: gr8b ring."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8b_ring(self)
+        _make_gr8b_common(self)
+        _apply_overrides(self, _load_overrides())
+
+
 @configclass
 class RobotEnvCfgArm7TableRCSTube(RobotEnvCfgArm7TableRCS):
     """GraspR-Arm7Table-CS-Tube: the CS trunk with the real tube as the object."""

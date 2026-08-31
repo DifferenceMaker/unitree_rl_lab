@@ -181,7 +181,12 @@ gym.register(
 # instead of the cube (assets/objects; asset-swap iteration 1, rim-grasp
 # geometry; tube and ring trained SEPARATELY — operator 2026-08-27).
 for _suffix, _cls in (("Tube", "RobotEnvCfgArm7TableRCSTube"),
-                      ("Ring", "RobotEnvCfgArm7TableRCSRing")):
+                      ("Ring", "RobotEnvCfgArm7TableRCSRing"),
+                      # gr8b (2026-08-31): all three objects in one subphase — per-object
+                      # reward names, keep-as-placed income, event-order + ring-offset fixes
+                      ("Cube-B", "RobotEnvCfgArm7TableRCSCubeB"),
+                      ("Tube-B", "RobotEnvCfgArm7TableRCSTubeB"),
+                      ("Ring-B", "RobotEnvCfgArm7TableRCSRingB")):
     gym.register(
         id=f"Unitree-H1_2-GraspR-Arm7Table-CS-{_suffix}",
         entry_point="isaaclab.envs:ManagerBasedRLEnv",

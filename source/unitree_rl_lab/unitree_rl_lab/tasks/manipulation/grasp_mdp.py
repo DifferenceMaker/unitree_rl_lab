@@ -1227,6 +1227,80 @@ def object_orientation_deviation(
     return ang * ramp * env.gr8_ref_valid.float()
 
 
+def object_orientation_hold(
+    env: "ManagerBasedRLEnv",
+    mode: str = "axis",
+    sigma: float = 0.3,
+    gate_mode: str = "any",
+    ramp_lo: float = 0.01,
+    ramp_hi: float = 0.05,
+) -> torch.Tensor:
+    """gr8b (operator 2026-08-31): keep-as-placed INCOME for all three objects —
+    the positive twin of object_orientation_deviation (a penalty is the wrong
+    shape per the Bible; the operator: "the policy should be rewarded for
+    keeping that tube in its position"). Reference = the object's orientation
+    at the EPISODE START, not at pickup: known at deploy (the object was
+    placed; VisualModule measures it), no capture statefulness, and a tilted
+    pickup is priced too. Income = exp(-(ang/sigma)^2) x touching x lift ramp,
+    so it pays only while actually carrying (tiltgate ramps keep tipping
+    worthless). mode "axis": angle between the object's z-axis now vs start —
+    the tube/ring are rotationally symmetric, spin about their own axis is
+    unobservable and must not be priced; "full": quaternion geodesic (cube)."""
+    cube: RigidObject = env.scene["cube"]
+    q = cube.data.root_quat_w
+    if not hasattr(env, "gr8b_ref_quat"):
+        env.gr8b_ref_quat = q.clone()
+    fresh = env.episode_length_buf <= 1
+    if fresh.any():
+        env.gr8b_ref_quat[fresh] = q[fresh]
+    if mode == "full":
+        dot = (env.gr8b_ref_quat * q).sum(dim=-1).abs().clamp(max=1.0)
+        ang = 2.0 * torch.acos(dot)
+    else:
+        ez = torch.zeros_like(q[:, :3])
+        ez[:, 2] = 1.0
+        z_now = math_utils.quat_apply(q, ez)
+        z_ref = math_utils.quat_apply(env.gr8b_ref_quat, ez)
+        ang = torch.acos((z_now * z_ref).sum(dim=-1).clamp(-1.0, 1.0))
+    ang = torch.nan_to_num(ang, nan=torch.pi).clamp(max=torch.pi)
+    if gate_mode == "closure":
+        touching = _closure_touching(env)
+    else:
+        touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    return torch.exp(-torch.square(ang / sigma)) * touching * _lift_ramp(env, ramp_lo, ramp_hi)
+
+
+def hold_object_rim(
+    env: "ManagerBasedRLEnv",
+    rim_radius: float = 0.09,
+    rim_z: float = 0.065,
+    sigma: float = 0.06,
+    gate_mode: str = "any",
+    ramp_lo: float = 0.01,
+    ramp_hi: float = 0.05,
+) -> torch.Tensor:
+    """gr8b rimhold A/B: hold_cube_bonus's dish with the distance measured to
+    the NEAREST POINT OF THE (top) RIM CIRCLE instead of the object center.
+    hold_cube's sigma-0.06 palm-to-CENTER kernel pays <=exp(-(R/sigma)^2)~=0.1
+    on an R=9 cm rim object BY GEOMETRY (operator: "it barely fires... maybe
+    the reward is built around the dimensions of the cube" — exactly). In the
+    object frame: palm -> (rho, z); d = sqrt((rho - R)^2 + (z - rim_z)^2).
+    Same 5%/95% touching/lift-ramp gate as hold_cube_bonus."""
+    _buffers(env)
+    cube: RigidObject = env.scene["cube"]
+    p_pos, _ = _palm_pose(env)
+    rel = math_utils.quat_apply_inverse(cube.data.root_quat_w, p_pos - cube.data.root_pos_w)
+    rho = rel[:, :2].norm(dim=-1)
+    d = torch.sqrt(torch.square(rho - rim_radius) + torch.square(rel[:, 2] - rim_z))
+    d = torch.nan_to_num(d, nan=1e3, posinf=1e3)
+    if gate_mode == "closure":
+        touching = _closure_touching(env)
+    else:
+        touching = (_pad_force_mags(env).sum(dim=-1) > 1.0).float()
+    gate = 0.05 * touching + 0.95 * touching * _lift_ramp(env, ramp_lo, ramp_hi)
+    return torch.exp(-torch.square(d / sigma)) * gate
+
+
 def approach_cube_bonus(env: "ManagerBasedRLEnv", sigma: float = 0.3) -> torch.Tensor:
     """gr6b_retry: the reach-back gradient. hold_cube's sigma 0.06 kernel is
     flat-zero at 30 cm, so after a slide the rational move was dangling at
