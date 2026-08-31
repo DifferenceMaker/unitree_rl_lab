@@ -508,6 +508,8 @@ def heading_l2_from_spawn(
 
 def base_pos_xy_l2_from_spawn(
     env: "ManagerBasedRLEnv",
+    command_name: str | None = None,
+    lean_height: float = 0.87,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize squared L2 distance of base xy from spawn xy.
@@ -521,12 +523,17 @@ def base_pos_xy_l2_from_spawn(
     asset = env.scene[asset_cfg.name]
     current_xy = asset.data.root_pos_w[:, :2]
     delta = current_xy - env.spawn_root_xy
+    d_lean, fwd_lean = _lean_fwd_shift(env, command_name, lean_height)
+    if d_lean is not None:
+        delta = delta - d_lean.unsqueeze(-1) * fwd_lean
     return torch.sum(delta ** 2, dim=-1)
 
 
 def base_forward_zone_penalty(
     env: "ManagerBasedRLEnv",
     threshold: float = 0.10,
+    command_name: str | None = None,
+    lean_height: float = 0.87,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """DESK LINE: penalize forward base drift into the desk zone (asymmetric).
@@ -546,6 +553,10 @@ def base_forward_zone_penalty(
     delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
     fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
     forward_disp = torch.sum(delta * fwd, dim=-1)
+    d_lean, _ = _lean_fwd_shift(env, command_name, lean_height)
+    if d_lean is not None:
+        # dp6c: the commanded lean legitimately carries the base d(theta) forward
+        forward_disp = forward_disp - d_lean
     return torch.clamp(forward_disp - threshold, min=0.0)
 
 
@@ -891,15 +902,40 @@ def joint_torque_over_limit(
     return torch.clamp(tau.abs() - limit_nm, min=0.0).sum(dim=-1)
 
 
+def _lean_fwd_shift(env, command_name: str | None, lean_height: float):
+    """dp6c (2026-08-31): the EXPECTED base xy shift under the commanded lean.
+    A pelvis pitched theta rad about the ankles moves the base ~lean_height*sin(theta)
+    along the heading. The desk position terms (anchor_hold, base_forward_zone,
+    base_pos_xy_from_spawn, base_height) scored that unavoidable displacement as
+    drift: at 0.35 rad the anchor kernel alone forfeited ~12/step against the lean
+    tracker's +1 — leaning could never pay (dp6b_leancmd verdict: "the leaning
+    appears but it is really poorly tracked"). Shifting each term's REFERENCE by
+    d(theta) makes lean and anchor-hold simultaneously satisfiable at FULL
+    strength: the feet stay planted, only the body pivot is licensed, and at
+    cmd=0 every term is bit-identical to the trunk (which also removes the
+    learned standing lean at zero). Returns (d, fwd_unit) or (None, None)."""
+    if command_name is None:
+        return None, None
+    theta = env.command_manager.get_command(command_name)[:, 0]
+    d = lean_height * torch.sin(theta)
+    fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
+    return d, fwd
+
+
 def anchor_hold_bonus(
     env: "ManagerBasedRLEnv",
     fwd_offset: float = 0.5,
     heading_scale: float = 0.5,
     sigma: float = 0.15,
     heading_to: str = "bearing",
+    command_name: str | None = None,
+    lean_height: float = 0.87,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """ANCHOR ROUND 2: bounded attractor kernel, exp(-(pos_err^2 + hs*yaw_err^2)/sigma^2).
+    command_name (dp6c): hold target shifted by the commanded-lean displacement —
+    see _lean_fwd_shift; the anchor is STILL held at full strength, measured at
+    the lean-consistent base pose.
 
     anchor_1's unbounded quadratic (-30 * d^2) diverged PPO via VALUE-function
     explosion: outlier envs (pushed/walked far) accumulated astronomically
@@ -913,6 +949,9 @@ def anchor_hold_bonus(
         return torch.zeros(env.num_envs, device=env.device)
     asset = env.scene[asset_cfg.name]
     delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
+    d_lean, fwd_lean = _lean_fwd_shift(env, command_name, lean_height)
+    if d_lean is not None:
+        delta = delta - d_lean.unsqueeze(-1) * fwd_lean
     pos_err2 = torch.sum(delta * delta, dim=-1)
     fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
     if heading_to == "spawn":
@@ -1584,6 +1623,37 @@ def stride_symmetry(
     v = torch.norm(cmd[:, :2], dim=-1)
     turn_fade = (1.0 - (cmd[:, 2].abs() / wz_ref).clamp(max=1.0))
     return r.sum(dim=1) * (v > min_speed).float() * turn_fade
+
+
+def base_height_lean_l2(
+    env: "ManagerBasedRLEnv",
+    target_height: float = 0.87,
+    command_name: str = "lean_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp6c: base_height_l2 with the target following the commanded lean —
+    a pelvis pitched theta about the ankles sits at ~target*cos(theta); the flat
+    -15 * (0.87 - z)^2 taxed every commanded lean for its unavoidable ~5 cm drop."""
+    asset = env.scene[asset_cfg.name]
+    theta = env.command_manager.get_command(command_name)[:, 0]
+    target = target_height * torch.cos(theta)
+    return torch.square(asset.data.root_pos_w[:, 2] - target)
+
+
+def joint_deviation_l1_lean_gated(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "lean_command",
+    lean_ref: float = 0.35,
+) -> torch.Tensor:
+    """dp6c: joint_deviation_l1 fading with the commanded |lean| (the lm5e
+    turn-gated pattern) — the hip-pitch excursion a commanded lean NEEDS must
+    not be taxed by the hip evictor; at cmd 0 the full tax is back."""
+    asset = env.scene[asset_cfg.name]
+    dev = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    theta = env.command_manager.get_command(command_name)[:, 0].abs()
+    fade = 1.0 - (theta / lean_ref).clamp(max=1.0)
+    return torch.sum(dev.abs(), dim=-1) * fade
 
 
 def joint_deviation_l1_turn_gated(
