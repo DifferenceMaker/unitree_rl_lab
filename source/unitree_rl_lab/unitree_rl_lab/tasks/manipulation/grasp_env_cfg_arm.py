@@ -549,6 +549,66 @@ class RobotEnvCfgArm7TableRCSRingB(RobotEnvCfgArm7TableRCS):
         _apply_overrides(self, _load_overrides())
 
 
+# ── gr8c (operator 2026-09-01): the HANDOVER wave ────────────────────────────
+# The 95%-in-Isaac gr8b_cube still fails the rig handover: the frozen-anchor
+# decode yanks the arm home and erases the resolver's converged hover. gr8c =
+# (1) actions RELATIVE to the episode-start pose (RelStartJointPositionAction —
+# deploy latches the measured arm at override start), (2) start DISPLACEMENT
+# randomization widened (park error 0.08 -> 0.20 rad; cube xy error 1 -> 3 cm)
+# so "the hand arrives NEAR the object, close the gap and grasp" is in the
+# curriculum, (3) cube orientation sigma 0.3 -> 0.7 (measured: the policy
+# carries the cube ~38 deg rotated = 2.2 sigma, kernel flat-zero, NO gradient
+# — Bible law 8/12), (4) park_keep re-referenced to the start pose (an
+# attractor at the frozen default would pay the exact yank-home behaviour this
+# wave removes).
+def _make_gr8c_relstart(cfg, side="right", action_scale=0.15, park_noise_rad=0.20):
+    arm_joints = [f"{side}_{j}_joint" for j in (
+        "shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow",
+        "wrist_roll", "wrist_pitch", "wrist_yaw")]
+    cfg.actions.arm = grasp_mdp.RelStartJointPositionActionCfg(
+        asset_name="robot", joint_names=arm_joints,
+        scale=action_scale, use_default_offset=True,
+        clip={".*": (-1.0, 1.0)},
+    )
+    cfg.events.arm_park_error.params["noise_rad"] = park_noise_rad
+    cfg.events.reset_scene.params["xy_placement_error"] = 0.03
+    cfg.rewards.park_keep.params["ref"] = "start"
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSCubeC(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Cube-C: gr8c cube — gr8b cube + the handover wave."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8b_cube(self)
+        _make_gr8b_common(self)
+        _make_gr8c_relstart(self)
+        # sigma 0.7: income + slope EXIST at the measured ~38 deg carry
+        # rotation (0.3 paid 0.052 of its weight-8 budget = no gradient)
+        self.rewards.cube_orientation_hold.params["sigma"] = 0.7
+        _apply_overrides(self, _load_overrides())
+
+
+@configclass
+class RobotEnvCfgArm7TableRCSRingC(RobotEnvCfgArm7TableRCS):
+    """GraspR-Arm7Table-CS-Ring-C: gr8c ring — REBALANCED against the parking
+    equilibrium (wandb, gr8b_ring @42-43.5k: quiet_hold 3.90 + pad_arrangement
+    2.47 + park_keep 1.19 income with ring_hold_above at 0.000 — the run NEVER
+    lifted; ~7.5/step passive pay made parking optimal, Bible law 12: the rim
+    pinch is not reachable by small steps from a parked hand, re-pricing alone
+    won't find it -> SEED from the cube winner + cut the passive income)."""
+    def __post_init__(self):
+        super().__post_init__()
+        _make_gr8b_ring(self)
+        _make_gr8b_common(self)
+        _make_gr8c_relstart(self)
+        self.rewards.quiet_hold.weight = 2.0        # was 5 — calm stays priced, not a career
+        self.rewards.park_keep.weight = 0.5         # was 2 — the attractor must not beat approach
+        self.rewards.approach_ring.weight = 10.0    # was 6 — the journey pays (law 8)
+        self.rewards.ring_orientation_hold.params["sigma"] = 0.7
+        _apply_overrides(self, _load_overrides())
+
+
 @configclass
 class RobotEnvCfgArm7TableRCSTube(RobotEnvCfgArm7TableRCS):
     """GraspR-Arm7Table-CS-Tube: the CS trunk with the real tube as the object."""
