@@ -186,7 +186,12 @@ for _suffix, _cls in (("Tube", "RobotEnvCfgArm7TableRCSTube"),
                       # reward names, keep-as-placed income, event-order + ring-offset fixes
                       ("Cube-B", "RobotEnvCfgArm7TableRCSCubeB"),
                       ("Tube-B", "RobotEnvCfgArm7TableRCSTubeB"),
-                      ("Ring-B", "RobotEnvCfgArm7TableRCSRingB")):
+                      ("Ring-B", "RobotEnvCfgArm7TableRCSRingB"),
+                      # gr8c (2026-09-01): the HANDOVER wave — actions relative to the
+                      # episode-start pose + widened start displacement + orientation
+                      # sigma 0.7 + ring anti-parking rebalance
+                      ("Cube-C", "RobotEnvCfgArm7TableRCSCubeC"),
+                      ("Ring-C", "RobotEnvCfgArm7TableRCSRingC")):
     gym.register(
         id=f"Unitree-H1_2-GraspR-Arm7Table-CS-{_suffix}",
         entry_point="isaaclab.envs:ManagerBasedRLEnv",

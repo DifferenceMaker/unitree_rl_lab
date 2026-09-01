@@ -1043,6 +1043,7 @@ def park_keep_bonus(
     env: "ManagerBasedRLEnv",
     joint_names: list | None = None,
     sigma: float = 1.7,
+    ref: str = "default",
 ) -> torch.Tensor:
     """gr5c: INCOME for keeping the arm near its PARK pose (the IK-solved
     production grasp pose that is `default_joint_pos` for these joints).
@@ -1073,10 +1074,61 @@ def park_keep_bonus(
         ids, _ = asset.find_joints(joint_names, preserve_order=True)
         setattr(env, key, ids)
     idx = getattr(env, key)
-    dev = asset.data.joint_pos[:, idx] - asset.data.default_joint_pos[:, idx]
+    # gr8c ref="start": the attractor is the EPISODE-START pose (the pose the
+    # resolver delivered), not the frozen default — under handover-relative
+    # actions an attractor at default would pay the exact yank-home behaviour
+    # the wave removes. Falls back to default until the action term stashes it.
+    if ref == "start" and hasattr(env, "gr8c_start_arm_q"):
+        home = env.gr8c_start_arm_q
+    else:
+        home = asset.data.default_joint_pos[:, idx]
+    dev = asset.data.joint_pos[:, idx] - home
     d2 = torch.sum(dev * dev, dim=-1)
     d2 = torch.nan_to_num(d2, nan=0.0, posinf=1e3, neginf=0.0)
     return torch.exp(-d2 / (sigma ** 2))
+
+
+# ── gr8c: HANDOVER-RELATIVE actions ──────────────────────────────────────────
+from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction as _JPA
+from isaaclab.envs.mdp.actions.actions_cfg import JointPositionActionCfg as _JPACfg
+
+
+class RelStartJointPositionAction(_JPA):
+    """gr8c (operator 2026-09-01): q_target = q_AT_EPISODE_START + scale*a.
+
+    The gr8b decode (default_pose + 0.15*a) freezes the reference at training
+    time; at deploy the policy's first command yanks the arm from wherever the
+    resolver parked it back toward that frozen pose (measured: a converged
+    1.5 cm hover became 6 cm the moment the override started, 2026-09-01 rig).
+    Here the reference is the pose the arm HOLDS when the episode begins —
+    after reset_arm_park_error has randomized it — so at deploy the
+    JointCommander simply latches the measured arm at override start and the
+    policy works from wherever IK delivered it. Before the first reset the
+    offset is the default pose (use_default_offset=True path), so a gr8b
+    warmstart starts from an identical decode and adapts smoothly.
+    Also stashes env.gr8c_start_arm_q for start-referenced reward terms
+    (park_keep ref="start")."""
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        if not isinstance(self._offset, torch.Tensor):
+            self._offset = torch.zeros_like(self._raw_actions) + float(self._offset)
+        self._env_ref = env
+
+    def reset(self, env_ids=None):
+        super().reset(env_ids)
+        ids = slice(None) if env_ids is None else env_ids
+        q = self._asset.data.joint_pos[:, self._joint_ids]
+        self._offset[ids] = q[ids]
+        env = self._env_ref
+        if not hasattr(env, "gr8c_start_arm_q"):
+            env.gr8c_start_arm_q = q.clone()
+        env.gr8c_start_arm_q[ids] = q[ids]
+
+
+@configclass
+class RelStartJointPositionActionCfg(_JPACfg):
+    class_type: type = RelStartJointPositionAction
 
 
 def capture_hand_start(env: "ManagerBasedRLEnv", env_ids):
