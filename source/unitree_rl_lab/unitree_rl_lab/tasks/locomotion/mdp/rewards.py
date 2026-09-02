@@ -1532,6 +1532,8 @@ def stride_track(
     min_speed: float = 0.1,
     max_stride: float = 1.2,
     stride_frac: float = 1.0,
+    period_slow: float | None = None,
+    v_ref: float = 0.8,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link"]),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
 ) -> torch.Tensor:
@@ -1565,7 +1567,18 @@ def stride_track(
     stride = torch.norm(foot_xy - env._stride_liftoff_xy, dim=-1).clamp(max=max_stride)  # (N, 2)
     cmd = env.command_manager.get_command(command_name)
     v = torch.norm(cmd[:, :2], dim=-1)                                             # (N,)
-    nominal = (v * period * stride_frac).unsqueeze(1)
+    # lm5g (operator 2026-09-02, "should have smaller strides but doesn't calculate
+    # the stride lengths that good" below 0.2): a CONSTANT period makes the nominal
+    # stride v*0.75 — 7.5 cm at vx 0.1, physically awkward under the fixed 0.4 s
+    # feet_air swing. Humans shed speed with BOTH shorter strides and slower
+    # cadence; period_slow interpolates the period up as v drops (period at
+    # v>=v_ref -> period_slow at v=0), so low speed asks for fewer, decent-length
+    # steps instead of a nervous shuffle. period_slow=None = lm5d behaviour.
+    if period_slow is not None:
+        per = period + (period_slow - period) * (1.0 - v / v_ref).clamp(0.0, 1.0)
+    else:
+        per = torch.full_like(v, period)
+    nominal = (v * per * stride_frac).unsqueeze(1)
     r = torch.exp(-torch.square((stride - nominal) / std)) * touchdown.float()
     env._stride_prev_contact = in_contact.clone()
     return r.sum(dim=1) * (v > min_speed).float()
@@ -1674,3 +1687,44 @@ def joint_deviation_l1_turn_gated(
     wz = env.command_manager.get_command(command_name)[:, 2].abs()
     gate = (1.0 - (wz / wz_ref).clamp(max=1.0))
     return torch.sum(dev.abs(), dim=1) * gate
+
+
+def shoulder_roll_swing(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    min_speed: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=[".*_shoulder_roll_joint", ".*_shoulder_yaw_joint"]),
+) -> torch.Tensor:
+    """lm5g (operator 2026-09-02: "the arm swing seems to [be] from side to side
+    instead of pitched and in anti-phase"): PENALTY on lateral arm oscillation —
+    sum qd^2 over the shoulder roll/yaw joints, gated to walking (|v_cmd| >
+    min_speed) so standing arm posture stays unpriced. Gated penalty is safe
+    (Bible law 1 forbids gated INCOME + ungated penalties, not this)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    qd = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    cmd = env.command_manager.get_command(command_name)
+    walking = (torch.norm(cmd[:, :2], dim=-1) > min_speed).float()
+    return torch.sum(torch.square(qd), dim=-1) * walking
+
+
+def arm_antiphase(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    min_speed: float = 0.15,
+    scale: float = 2.0,
+    arm_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["left_shoulder_pitch_joint", "right_shoulder_pitch_joint"]),
+    hip_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["left_hip_pitch_joint", "right_hip_pitch_joint"]),
+) -> torch.Tensor:
+    """lm5g: INCOME for the human arm swing — each shoulder PITCH velocity
+    anti-phase with the SAME-side hip pitch (left arm forward while left leg
+    back). Kernel = relu(tanh(-qd_shoulder * qd_hip / scale)) per side, mean of
+    the two sides, walking-gated. Smooth local gradient from any phase (Bible
+    law 12); pays 0 (never negative) when in-phase, so it shapes rather than
+    fights — drop-safe if it degrades the walk."""
+    asset: Articulation = env.scene[arm_cfg.name]
+    qd_arm = asset.data.joint_vel[:, arm_cfg.joint_ids]                       # (N, 2) L,R
+    qd_hip = asset.data.joint_vel[:, hip_cfg.joint_ids]                       # (N, 2) L,R
+    anti = torch.relu(torch.tanh(-(qd_arm * qd_hip) / scale))                 # (N, 2)
+    cmd = env.command_manager.get_command(command_name)
+    walking = (torch.norm(cmd[:, :2], dim=-1) > min_speed).float()
+    return anti.mean(dim=-1) * walking
