@@ -66,9 +66,12 @@ def _apply_overrides(cfg_self, overrides: dict):
     for name, val in overrides.get("set_weight", {}).items():
         term = getattr(cfg_self.rewards, name, None)
         if term is None:
-            raise ValueError(f"[QUEUE] set_weight: reward term '{name}' not in base cfg")
+            valid = [k for k in vars(cfg_self.rewards) if not k.startswith("_")]
+            raise ValueError(
+                f"[QUEUE] set_weight: reward term '{name}' not in base cfg. "
+                f"Valid terms: {sorted(valid)}"
+            )
         term.weight = float(val)
-        print(f"[QUEUE]   set_weight  rewards.{name}.weight = {val}")
 
     # --- set_param: "<term>.<param>" on rewards OR events ---
     for path, val in overrides.get("set_param", {}).items():
