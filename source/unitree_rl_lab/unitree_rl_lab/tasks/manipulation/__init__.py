@@ -166,6 +166,19 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspNoEntropyFixedLRPPORunnerCfg",
     },
 )
+# gr8d (2026-09-02): the Cube-C env under the LCP retrofit runner (smoothness as
+# a network property — operator: "It doesn't look smooth though. And look really
+# quick"; gr6d/gr7c/dp5e/lm5 precedent regime).
+gym.register(
+    id="Unitree-H1_2-GraspR-Arm7Table-CS-Cube-C-LCPR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableRCSCubeC",
+        "play_env_cfg_entry_point": f"{__name__}.grasp_env_cfg_arm:RobotEnvCfgArm7TableRCSCubeC",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:GraspLcpRetrofitPPORunnerCfg",
+    },
+)
 gym.register(
     id="Unitree-H1_2-GraspR-Arm7Table-CS-LCPR",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
