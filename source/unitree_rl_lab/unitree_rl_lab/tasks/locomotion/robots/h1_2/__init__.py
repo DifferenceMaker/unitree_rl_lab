@@ -321,6 +321,19 @@ gym.register(
     },
 )
 
+# Desk7: Desk6b + the dp7_hinge stack baked (hinge promoted to trunk,
+# operator 2026-09-03; same 91-obs contract — hinge warmstarts stay valid).
+gym.register(
+    id="Unitree-H1_2-Balance-Desk7",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk7:RobotEnvCfgDesk7",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk7:RobotPlayEnvCfgDesk7",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
+    },
+)
+
 # lm5-fsb: FastSAC Run B — LM5 world, holosoma's 10-term minimalist rewards
 # (g1_29dof_loco_fast_sac preset verbatim). Run A isolates the algorithm;
 # this isolates the reward philosophy. Trained via train_fastsac.py (the
