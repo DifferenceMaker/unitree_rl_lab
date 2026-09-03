@@ -1439,3 +1439,20 @@ def mount_orbit(
     root[:, :3] += env.scene.env_origins[env_ids]
     root[:, :2] += off
     robot.write_root_pose_to_sim(root[:, :7], env_ids)
+
+
+def disable_robot_gravity(env: "ManagerBasedRLEnv", env_ids=None):
+    """gr8d (operator 2026-09-02): GRAVITY-FREE robot links — the training-side
+    twin of deploying with tau_ff = g(q) ALWAYS ON (through the policy phase).
+    The rig's approach-only feedforward created a handover STEP the policy never
+    felt (the arm re-sagged 10-15 cm with the cube — 'the dropping' the magic
+    offsets used to hedge); with gravity in the contract on both sides the
+    discontinuity stops existing. The CUBE keeps gravity (separate asset) — load
+    holding is still learned. Startup event, all envs, all robot links."""
+    asset = env.scene["robot"]
+    view = asset.root_physx_view
+    flags = view.get_disable_gravities()
+    flags[:] = 1
+    view.set_disable_gravities(flags, torch.arange(flags.shape[0], dtype=torch.int32))
+    print(f"[gr8d] gravity DISABLED on {flags.shape[1]} robot links x {flags.shape[0]} envs "
+          f"(tau_ff-in-contract; the cube keeps gravity)", flush=True)
