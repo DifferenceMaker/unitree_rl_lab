@@ -170,18 +170,22 @@ def contact_force_above_threshold(
 def contact_force_yank(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    max_sq: float | None = None,
 ) -> torch.Tensor:
     """FIRM's "body yank": ‖ΔF‖² between the two most recent sensor samples,
     summed over bodies. Penalizes force SPIKES (slams) while leaving steady
     resting load free — the cleanest "soft touchdown" signal.
 
-    Requires ContactSensorCfg(history_length >= 2).
+    Requires ContactSensorCfg(history_length >= 2). max_sq (N² units) clamps
+    the per-step total (p13d 2026-09-04: kN spikes square to 1e6+ — Bible:
+    bounded penalties; default None keeps the liedown line's behavior).
     """
     sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     hist = sensor.data.net_forces_w_history  # (N, T, B, 3), index 0 = newest
     body_ids = sensor_cfg.body_ids if sensor_cfg.body_ids is not None else slice(None)
     delta = hist[:, 0, body_ids, :] - hist[:, 1, body_ids, :]
-    return torch.sum(torch.square(delta), dim=(-2, -1))
+    out = torch.sum(torch.square(delta), dim=(-2, -1))
+    return out.clamp(max=max_sq) if max_sq is not None else out
 
 
 def body_momentum_rate(

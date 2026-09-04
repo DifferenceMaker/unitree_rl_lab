@@ -710,6 +710,68 @@ def foot_impact_velocity(
     return torch.sum(impact_speed, dim=1)
 
 
+def foot_impact_velocity_peak(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    max_speed: float = 3.0,
+) -> torch.Tensor:
+    """softland v2 (code review 2026-09-03): foot_impact_velocity reads the
+    foot's velocity AT the policy step where the touchdown is first visible —
+    up to 4 physics substeps after contact, when the ground has already
+    arrested the foot, so it returned ~0 on almost every landing ("softland
+    indistinguishable in sim", retired 07-14 as silent).
+
+    This version LATCHES the peak downward speed of each foot DURING THE SWING
+    (per policy step, max over the flight) and charges that latched value once
+    at touchdown. Standing still => no touchdowns => 0 (stillness stays free).
+    Clamped at max_speed (Bible: bounded penalties). NEGATIVE weight.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset = env.scene[asset_cfg.name]
+    in_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0   # (N, F)
+    vz_down = torch.clamp(-asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 2], min=0.0)  # (N, F)
+    if not hasattr(env, "_fivp_peak"):
+        env._fivp_peak = torch.zeros_like(vz_down)
+        env._fivp_prev_contact = torch.ones_like(in_contact)
+    if hasattr(env, "reset_buf") and env.reset_buf.any():
+        rb = env.reset_buf.bool().unsqueeze(-1)
+        env._fivp_peak = torch.where(rb, torch.zeros_like(env._fivp_peak), env._fivp_peak)
+        env._fivp_prev_contact = torch.where(rb, torch.ones_like(in_contact), env._fivp_prev_contact)
+    airborne = ~in_contact
+    env._fivp_peak = torch.where(airborne, torch.maximum(env._fivp_peak, vz_down), env._fivp_peak)
+    touchdown = ~env._fivp_prev_contact & in_contact
+    charged = torch.clamp(env._fivp_peak, max=max_speed) * touchdown.float()
+    env._fivp_peak = torch.where(touchdown, torch.zeros_like(env._fivp_peak), env._fivp_peak)
+    env._fivp_prev_contact = in_contact.clone()
+    return torch.sum(charged, dim=1)
+
+
+def foot_contact_force_hinge(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    threshold_n: float = 950.0,
+    max_excess_n: float = 1000.0,
+) -> torch.Tensor:
+    """Calibrated impact-force hinge (code review 2026-09-03): zero below
+    threshold_n, linear on the excess, CLAMPED at max_excess_n (the IsaacLab
+    hinge pattern was unbounded in newtons on a signal that spikes to kN).
+
+    THE CALIBRATION LAW: threshold must sit ABOVE static single-support load
+    (77 kg => ~755 N — the whole robot on one foot, zero impact), else the
+    term charges for the existence of a stance phase and buys shuffling
+    (contact500 hardware verdict 08-06: "it slides around"). Default 950 N
+    ~= 1.25x single support (the Humanoid-Gym ratio). Reads the MAX over the
+    sensor history buffer — requires history_length == decimation (4), else
+    intra-step peaks fall out of the buffer unread. NEGATIVE weight.
+    """
+    sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    hist = sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]   # (N, T, F, 3)
+    peak = hist.norm(dim=-1).amax(dim=1)                                    # (N, F) max over history
+    excess = torch.clamp(peak - threshold_n, min=0.0, max=max_excess_n)
+    return torch.sum(excess, dim=1)
+
+
 def feet_flat_orientation(
     env: ManagerBasedRLEnv,
     height_thresh: float = 0.12,
