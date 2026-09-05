@@ -619,6 +619,51 @@ class TerminationsCfg:
     base_height = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.5})
 
 
+# ---------------------------------------------------------------------------
+# INPUT-PATH GUARDS (dp5 autopsy #1 + #2) — applied to the BALANCE trunk
+# 2026-09-05 after the whole p13d wave diverged.
+#
+# The guards were written 2026-08-14 into _make_desk5b() only, so the DESK
+# lineage carried them while the BALANCE lineage (Balance-QIK and every p13*
+# run) never did. GuardedPPO (#3, optimizer-side) was inherited via
+# BasePPORunnerCfg and DID fire — every p13d run logged 35-1506
+# nonfinite_skips — but a gradient guard cannot repair a poisoned rollout:
+# mean_reward went to -inf and -1e32 in 9 of 11 runs. The skip counter is the
+# designed tell that an upstream guard is missing; here it was screaming.
+#
+# (a) per-term obs CLIP in raw units (clip runs BEFORE scale in the
+#     ObservationManager): generous physical bounds, pure armor against
+#     inf/absurd magnitudes, zero effect on normal data.
+# (b) terminate envs whose root state goes non-finite or physically absurd
+#     before the rollout ever sees them. torch.clamp does NOT sanitize NaN —
+#     comparisons with NaN are False, so the explicit isfinite check in
+#     mdp.root_state_out_of_bounds does the catching clamp cannot.
+# Numbers are the desk set verbatim (proven on dp5e..dp7b since 2026-08-14).
+# ---------------------------------------------------------------------------
+_OBS_CLIPS = {
+    "base_lin_vel": (-10.0, 10.0),
+    "base_ang_vel": (-15.0, 15.0),
+    "projected_gravity": (-1.5, 1.5),
+    "joint_pos_rel": (-6.3, 6.3),
+    "joint_vel_rel": (-60.0, 60.0),
+    "joint_effort": (-600.0, 600.0),
+    "last_action": (-20.0, 20.0),
+}
+
+
+def apply_input_guards(cfg):
+    """Idempotent: safe to call again from a subclass/_make_* chain."""
+    for grp in (cfg.observations.policy, cfg.observations.critic):
+        for name, bounds in _OBS_CLIPS.items():
+            term = getattr(grp, name, None)
+            if term is not None:
+                term.clip = bounds
+    cfg.terminations.root_out_of_bounds = DoneTerm(
+        func=mdp.root_state_out_of_bounds,
+        params={"max_lin_vel": 15.0, "max_ang_vel": 25.0},
+    )
+
+
 @configclass
 class RobotEnvCfg(ManagerBasedRLEnvCfg):
     scene: RobotSceneCfg = RobotSceneCfg(num_envs=4096, env_spacing=2.5)
@@ -643,6 +688,11 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_max_rigid_patch_count = 20 * 2**15
 
         self.scene.contact_forces.update_period = self.sim.dt
+
+        # input-path guards LAST: every balance-line task (Balance-QIK, the
+        # desk chain, V5) inherits them by construction. Job overrides run
+        # after this via _apply_overrides and can still opt out explicitly.
+        apply_input_guards(self)
 
 
 @configclass
