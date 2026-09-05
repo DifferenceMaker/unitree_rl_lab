@@ -149,6 +149,12 @@ class GraspNoEntropyPPORunnerCfg(GraspPPORunnerCfg):
     """
 
     algorithm = RslRlPpoAlgorithmCfg(
+        # GUARD RESTORED 2026-09-05: @configclass REPLACES the whole `algorithm`
+        # field, so redefining it here silently dropped BasePPORunnerCfg's
+        # GuardedPPO class_name — verified in harvested agent.yaml
+        # (lm5f/lm5g ran as plain PPO). LCP subclasses were unaffected
+        # (LCPPPO extends GuardedPPO).
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
@@ -256,6 +262,12 @@ class LM4PPORunnerCfg(WalkPPORunnerCfg):
     """
 
     algorithm = RslRlPpoAlgorithmCfg(
+        # GUARD RESTORED 2026-09-05: @configclass REPLACES the whole `algorithm`
+        # field, so redefining it here silently dropped BasePPORunnerCfg's
+        # GuardedPPO class_name — verified in harvested agent.yaml
+        # (lm5f/lm5g ran as plain PPO). LCP subclasses were unaffected
+        # (LCPPPO extends GuardedPPO).
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
@@ -318,6 +330,12 @@ class LM4BMirror01PPORunnerCfg(LM4PPORunnerCfg):
     harvested agent.yaml (the gr5c silent-override lesson)."""
 
     algorithm = RslRlPpoAlgorithmCfg(
+        # GUARD RESTORED 2026-09-05: @configclass REPLACES the whole `algorithm`
+        # field, so redefining it here silently dropped BasePPORunnerCfg's
+        # GuardedPPO class_name — verified in harvested agent.yaml
+        # (lm5f/lm5g ran as plain PPO). LCP subclasses were unaffected
+        # (LCPPPO extends GuardedPPO).
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
