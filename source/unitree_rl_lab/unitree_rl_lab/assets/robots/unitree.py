@@ -768,9 +768,19 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
             effort_limit=300.0, velocity_limit=14.0,
             stiffness=300.0, damping=4.0, armature=0.01,
         ),
-        "ankle": IdealPDActuatorCfg(
-            joint_names_expr=[".*_ankle_.*"],
+        # ANKLE SPLIT (Unitree support joint table, 2026-09-07): pitch and roll are
+        # NOT the same actuator — pitch 60 N.m, roll 40 N.m. The single `.*_ankle_.*`
+        # group gave ankle ROLL 60 N.m, 50% more torque than the real joint has, on
+        # every policy trained before this date (lateral balance authority was
+        # overstated in sim). Velocities match the table (9 rad/s both).
+        "ankle_pitch": IdealPDActuatorCfg(
+            joint_names_expr=[".*_ankle_pitch_joint"],
             effort_limit=60.0, velocity_limit=9.0,
+            stiffness=40.0, damping=2.0, armature=0.01,
+        ),
+        "ankle_roll": IdealPDActuatorCfg(
+            joint_names_expr=[".*_ankle_roll_joint"],
+            effort_limit=40.0, velocity_limit=9.0,
             stiffness=40.0, damping=2.0, armature=0.01,
         ),
         "torso": IdealPDActuatorCfg(
@@ -788,9 +798,10 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
             effort_limit=18.0, velocity_limit=20.0,
             stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
+        # wrist velocity 20 -> 31.4 rad/s (Unitree support table 2026-09-07)
         "wrist": IdealPDActuatorCfg(
             joint_names_expr=[".*_elbow_roll_joint", ".*_wrist_.*"],
-            effort_limit=19.0, velocity_limit=20.0,
+            effort_limit=19.0, velocity_limit=31.4,
             stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
         "hands": IdealPDActuatorCfg(
