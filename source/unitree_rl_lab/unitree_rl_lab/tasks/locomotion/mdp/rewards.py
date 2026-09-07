@@ -945,6 +945,45 @@ def planted_in_zone_bonus(
     return (both_planted & (d < threshold)).float()
 
 
+def action_magnitude_over(
+    env: "ManagerBasedRLEnv",
+    threshold: float = 3.0,
+    max_excess: float = 15.0,
+    square: bool = False,
+) -> torch.Tensor:
+    """Hinged penalty on RAW action MAGNITUDE: zero below `threshold`, linear
+    (or squared) on the excess, clamped. Sum over action dims.
+
+    THE GAP IT FILLS (measured 2026-09-07 on p13d_armknees): the balance ledger
+    prices action CHANGE (`action_rate`), joint acceleration, and the resulting
+    joint POSITION (`dof_pos_limits`) — but NOTHING prices how big an action is.
+    A policy may hold |a| = 17 forever at zero action_rate cost. Measured
+    distribution: p50 0.86, p90 3.49, p99 11.58, max 17.37, and 2.1% of samples
+    above 10. With `scale` 0.25 an action of 17 asks for 4.3 rad off the default
+    joint position.
+
+    WHY IT MATTERS MORE THAN IT LOOKS: the worst dims are the KNEES, the only
+    joints carrying an action clip (target clamped to [0.45, 2.5] rad). The clip
+    absorbs the excess, so the huge action costs nothing AND the clipped target
+    never violates `dof_pos_limits` (-20) — the clip SHIELDS the policy from the
+    penalty that would otherwise have caught it. Clipping treats the symptom;
+    this term prices the cause. Use the two together (raise/remove the clip and
+    price the magnitude), or the policy simply keeps slamming the limit.
+
+    threshold: what counts as a "normal" action. At 1.0 roughly HALF of today's
+    samples pay (a cost, and a large behavioural reshape — expect a transient and
+    budget more iterations); at 3.0 about 12% pay; at 10.0 only the ~2%
+    pathological tail pays (a true constraint, nearly free otherwise).
+    square: excess^2 instead of excess — gentler near the threshold, far harsher
+    on the tail, which is where the pathology lives. NEGATIVE weight.
+    """
+    a = env.action_manager.action
+    exc = torch.clamp(a.abs() - threshold, min=0.0, max=max_excess)
+    if square:
+        exc = exc.square()
+    return exc.sum(dim=-1)
+
+
 def joint_torque_over_limit(
     env: "ManagerBasedRLEnv",
     limit_nm: float = 80.0,
