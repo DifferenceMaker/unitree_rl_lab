@@ -162,6 +162,22 @@ gym.register(
     },
 )
 
+# Balance-QIK under the LCP retrofit runner (p13e_lcpr, 2026-09-07): identical
+# ENV to Balance-QIK — only the algorithm changes (LCPPPO, which itself chains
+# GuardedPPO). DeskLcpRetrofitPPORunnerCfg already extends QueuePPORunnerCfg,
+# the runner this task uses, so it is reusable verbatim: no symmetry_cfg (the
+# mirror map is the walk obs contract), action_rate kept as the sigma anchor.
+gym.register(
+    id="Unitree-H1_2-Balance-QIK-LCPR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_queue_ik:RobotEnvCfgQueueIK",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_queue_ik:RobotPlayEnvCfgQueueIK",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:DeskLcpRetrofitPPORunnerCfg",
+    },
+)
+
 gym.register(
     id="Unitree-H1_2-Balance-Desk",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
