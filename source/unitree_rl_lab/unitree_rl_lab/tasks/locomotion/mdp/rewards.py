@@ -950,6 +950,9 @@ def action_magnitude_over(
     threshold: float = 3.0,
     max_excess: float = 15.0,
     square: bool = False,
+    mode: str = "hinge",
+    tau: float = 1.0,
+    power: float = 3.0,
 ) -> torch.Tensor:
     """Hinged penalty on RAW action MAGNITUDE: zero below `threshold`, linear
     (or squared) on the excess, clamped. Sum over action dims.
@@ -974,11 +977,37 @@ def action_magnitude_over(
     samples pay (a cost, and a large behavioural reshape — expect a transient and
     budget more iterations); at 3.0 about 12% pay; at 10.0 only the ~2%
     pathological tail pays (a true constraint, nearly free otherwise).
-    square: excess^2 instead of excess — gentler near the threshold, far harsher
-    on the tail, which is where the pathology lives. NEGATIVE weight.
+    SHAPES (operator 2026-09-07: "making the disincentivising after a threshold
+    doesn't disincentivise taking smaller actions"). The hinge has EXACTLY ZERO
+    gradient below `threshold`, so a policy sitting at |a| = 2.9 feels nothing
+    and never moves toward 1.0 — only the excess is priced. The other two modes
+    keep a nonzero (but small) gradient everywhere:
+
+      mode="hinge"     relu(|a| - thr)              grad 0 below thr, 1 above
+      mode="softplus"  tau*log(1 + e^((|a|-thr)/tau))   grad sigmoid((|a|-thr)/tau):
+                       0.12 at |a|=1, 0.5 AT the threshold, ->1 above. Gentle
+                       pressure everywhere, ramps hard at thr, bounded gradient.
+                       This is the operator's "doesn't penalise at low, ramps up
+                       quick at 3.0" — and it IS a logarithm (softplus), unlike a
+                       plain log(), which is CONCAVE and would push hardest on the
+                       SMALL actions and barely notice |a|=17.
+      mode="power"     (|a| / thr)^power            grad grows without bound:
+                       33x (p=3) at |a|=17 vs 1.0 at the threshold. The tail-killer.
+
+    threshold: what counts as a "normal" action. At 1.0 roughly HALF of today's
+    samples pay (a cost, and a large behavioural reshape — expect a transient and
+    budget more iterations); at 3.0 about 12% pay; at 10.0 only the ~2%
+    pathological tail pays.
+    square: legacy hinge variant (excess^2). NEGATIVE weight for every mode.
     """
-    a = env.action_manager.action
-    exc = torch.clamp(a.abs() - threshold, min=0.0, max=max_excess)
+    a = env.action_manager.action.abs()
+    if mode == "softplus":
+        pen = tau * torch.nn.functional.softplus((a - threshold) / tau)
+        return pen.clamp(max=max_excess).sum(dim=-1)
+    if mode == "power":
+        pen = (a / threshold).pow(power)
+        return pen.clamp(max=max_excess * max_excess).sum(dim=-1)
+    exc = torch.clamp(a - threshold, min=0.0, max=max_excess)
     if square:
         exc = exc.square()
     return exc.sum(dim=-1)
