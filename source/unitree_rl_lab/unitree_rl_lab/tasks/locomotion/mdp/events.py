@@ -207,8 +207,16 @@ def move_anchor(
     yaw_range: tuple = (-0.4, 0.4),
     half_normal_sigma: float | None = None,
     linear_decay: bool = False,
+    prob: float | None = None,
 ):
     """dp4b (operator design 2026-08-05): mid-episode HOME RELOCATION.
+
+    prob (dp5h, hardware 2026-09-07): per-TRIGGER Bernoulli gate — only that
+    fraction of the envs the interval fires for actually move; the rest keep
+    their anchor. Models the real desk-line scene: the ArUco tile is slid a
+    few cm every now and then (operator: "marker movements like that 1/20
+    times or so"), the desk itself never moves (Desk5b place_desk_follow stays
+    None). With yaw_range=None the slide is a pure translation, like a tile.
 
     Shifts the whole spawn-anchored frame — spawn_root_xy, spawn_foot_pos and
     (optionally) spawn_yaw — by a random planar offset. Because the anchor
@@ -224,6 +232,11 @@ def move_anchor(
     capture. Bounded by construction (radius_range clamps the jump)."""
     if not hasattr(env, "spawn_root_xy"):
         return
+    if prob is not None:
+        keep = torch.rand(len(env_ids), device=env.device) < prob
+        env_ids = env_ids[keep]
+        if len(env_ids) == 0:
+            return
     n = len(env_ids)
     if linear_decay:
         # dp4c anchor-wander v2 (operator 2026-08-06): displacement density

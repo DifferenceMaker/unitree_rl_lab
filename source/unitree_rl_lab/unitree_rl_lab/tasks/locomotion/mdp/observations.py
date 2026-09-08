@@ -106,6 +106,60 @@ def anchor_point_b(
     return rel_b
 
 
+def anchor_point_b_held(
+    env: ManagerBasedRLEnv,
+    fwd_offset: float = 0.5,
+    height_w: float = 1.0,
+    noise_std: float = 0.0,
+    hold_range_s: tuple = (0.5, 2.0),
+    dropout_prob: float = 0.0,
+    dropout_range_s: tuple = (2.0, 6.0),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """anchor_point_b as the REAL perception pipe delivers it (dp5h, hardware
+    2026-09-07): SAMPLE-AND-HOLD in the BASE frame.
+
+    On the robot the anchor is re-estimated only when the VisualModule
+    processes a frame (~0.5-2 s apart) and MovementModule holds the last
+    base-frame value in between — so while the body moves, the vector the
+    policy sees is STALE (it drifts with the body until the next fix), then
+    jumps. When detection drops out (tile occluded / out of view) the value
+    freezes for seconds. dp5g_pushwin trained on a 50 Hz exact anchor and met
+    this for the first time on the desk.
+
+    Per env: refresh the held value from the live anchor_point_b (noise
+    included) at reset and whenever its hold timer expires; each refresh draws
+    the next hold from hold_range_s, or — with dropout_prob — a long freeze
+    from dropout_range_s. State lives on the env (lazy) and is advanced at
+    most once per env step, so a second obs group calling this term sees the
+    same value. Use in the POLICY group only; the critic keeps the exact
+    anchor_point_b (privileged, asymmetric)."""
+    live = anchor_point_b(env, fwd_offset, height_w, noise_std, asset_cfg)
+    n, dev = env.num_envs, env.device
+    if not hasattr(env, "_anchor_held"):
+        env._anchor_held = live.clone()
+        env._anchor_hold_until = torch.zeros(n, dtype=torch.long, device=dev)
+        env._anchor_hold_step = -1
+        print(f"[anchor_point_b_held] policy anchor = sample-and-hold {hold_range_s[0]:.2f}-"
+              f"{hold_range_s[1]:.2f} s, dropout p={dropout_prob:g} -> freeze "
+              f"{dropout_range_s[0]:.1f}-{dropout_range_s[1]:.1f} s (step_dt {env.step_dt:.3f})", flush=True)
+    step = int(env.common_step_counter)
+    if env._anchor_hold_step != step:
+        env._anchor_hold_step = step
+        refresh = (env.episode_length_buf == 0) | (step >= env._anchor_hold_until)
+        if refresh.any():
+            idx = refresh.nonzero(as_tuple=False).squeeze(-1)
+            env._anchor_held[idx] = live[idx]
+            k = len(idx)
+            hold_s = hold_range_s[0] + torch.rand(k, device=dev) * (hold_range_s[1] - hold_range_s[0])
+            if dropout_prob > 0.0:
+                drop = torch.rand(k, device=dev) < dropout_prob
+                long_s = dropout_range_s[0] + torch.rand(k, device=dev) * (dropout_range_s[1] - dropout_range_s[0])
+                hold_s = torch.where(drop, long_s, hold_s)
+            env._anchor_hold_until[idx] = step + (hold_s / env.step_dt).round().long().clamp(min=1)
+    return env._anchor_held
+
+
 def reach_point_b(
     env: ManagerBasedRLEnv,
     noise_std: float = 0.0,
