@@ -757,16 +757,37 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
         },
         joint_vel={".*": 0.0},
     ),
+    # ARMATURE = Unitree's own numbers (motor table received 2026-09-08; two-stage
+    # planetary reducers, armature = J2 + J1*i2^2 + Jr*(i1*i2)^2 = the table's
+    # "total equivalent moment of inertia at the output" column, kg.m^2):
+    #   M107-15    i=15    200 Nm  Jr 2.71e-4   -> 0.063259741  hip yaw, waist        (SDK 0, 6, 12)
+    #   M107-24    i=24    300 Nm  Jr 2.71e-4   -> 0.160478022  hip pitch/roll, knee  (SDK 1,2,3, 7,8,9)
+    #   N7520-14.3 i=14.3   75 Nm  Jr 0.489e-4  -> 0.01017752   ankles, shoulder yaw  (SDK 4,5,10,11, 15,22)
+    #   N7520-22.5 i=22.5  120 Nm  Jr 0.489e-4  -> 0.025101925  shoulder pitch/roll, elbow pitch (13,14,20,21, 16,23)
+    #   N5020-16   i=16     25 Nm  Jr 0.139e-4  -> 0.003609725  wrist roll/pitch/yaw  (SDK 17,18,19, 24,25,26)
+    # Before this date every group sat at the 0.01 placeholder (hip pitch/roll and
+    # the arms 2.5x too light, wrists 2.8x too heavy); the p13d wave proved the
+    # knee/hip/torso values as job deltas (armknees = wave leader). The "hip" group
+    # is SPLIT (yaw is a different motor than pitch/roll) and so is
+    # "shoulder_yaw_elbow" — old jobs indexing actuators["hip"] /
+    # ["shoulder_yaw_elbow"] fail LOUDLY (KeyError) rather than set a wrong value.
+    # Effort/velocity limits stay the joint-table values (support 2026-09-07), not
+    # the motor peaks.
     actuators={
-        "hip": IdealPDActuatorCfg(
-            joint_names_expr=[".*_hip_yaw_joint", ".*_hip_roll_joint", ".*_hip_pitch_joint"],
+        "hip_yaw": IdealPDActuatorCfg(
+            joint_names_expr=[".*_hip_yaw_joint"],
             effort_limit=200.0, velocity_limit=23.0,
-            stiffness=200.0, damping=2.5, armature=0.01,
+            stiffness=200.0, damping=2.5, armature=0.063259741,   # M107-15
+        ),
+        "hip_pitch_roll": IdealPDActuatorCfg(
+            joint_names_expr=[".*_hip_roll_joint", ".*_hip_pitch_joint"],
+            effort_limit=200.0, velocity_limit=23.0,
+            stiffness=200.0, damping=2.5, armature=0.160478022,   # M107-24
         ),
         "knee": IdealPDActuatorCfg(
             joint_names_expr=[".*_knee_joint"],
             effort_limit=300.0, velocity_limit=14.0,
-            stiffness=300.0, damping=4.0, armature=0.01,
+            stiffness=300.0, damping=4.0, armature=0.160478022,   # M107-24
         ),
         # ANKLE SPLIT (Unitree support joint table, 2026-09-07): pitch and roll are
         # NOT the same actuator — pitch 60 N.m, roll 40 N.m. The single `.*_ankle_.*`
@@ -776,33 +797,39 @@ UNITREE_H1_2_CFG = UnitreeArticulationCfg(
         "ankle_pitch": IdealPDActuatorCfg(
             joint_names_expr=[".*_ankle_pitch_joint"],
             effort_limit=60.0, velocity_limit=9.0,
-            stiffness=40.0, damping=2.0, armature=0.01,
+            stiffness=40.0, damping=2.0, armature=0.01017752,   # N7520-14.3
         ),
         "ankle_roll": IdealPDActuatorCfg(
             joint_names_expr=[".*_ankle_roll_joint"],
             effort_limit=40.0, velocity_limit=9.0,
-            stiffness=40.0, damping=2.0, armature=0.01,
+            stiffness=40.0, damping=2.0, armature=0.01017752,   # N7520-14.3
         ),
         "torso": IdealPDActuatorCfg(
             joint_names_expr=["torso_joint"],
             effort_limit=200.0, velocity_limit=23.0,
-            stiffness=300.0, damping=6.0, armature=0.01,
+            stiffness=300.0, damping=6.0, armature=0.063259741,   # M107-15
         ),
         "shoulder_strong": IdealPDActuatorCfg(
             joint_names_expr=[".*_shoulder_pitch_joint", ".*_shoulder_roll_joint"],
             effort_limit=40.0, velocity_limit=9.0,
-            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 100.0 / 2.0 @ p8_gold)
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.025101925,  # N7520-22.5; deploy gains (was 100.0 / 2.0 @ p8_gold)
         ),
-        "shoulder_yaw_elbow": IdealPDActuatorCfg(
-            joint_names_expr=[".*_shoulder_yaw_joint", ".*_elbow_pitch_joint"],
+        "shoulder_yaw": IdealPDActuatorCfg(
+            joint_names_expr=[".*_shoulder_yaw_joint"],
             effort_limit=18.0, velocity_limit=20.0,
-            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01017752,  # N7520-14.3; deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
-        # wrist velocity 20 -> 31.4 rad/s (Unitree support table 2026-09-07)
+        "elbow_pitch": IdealPDActuatorCfg(
+            joint_names_expr=[".*_elbow_pitch_joint"],
+            effort_limit=18.0, velocity_limit=20.0,
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.025101925,  # N7520-22.5; deploy gains (was 50.0 / 2.0 @ p8_gold)
+        ),
+        # wrist velocity 20 -> 31.4 rad/s (Unitree support table 2026-09-07);
+        # Isaac's elbow_roll_joint IS the SDK "wrist roll" (index 17/24) -> N5020-16.
         "wrist": IdealPDActuatorCfg(
             joint_names_expr=[".*_elbow_roll_joint", ".*_wrist_.*"],
             effort_limit=19.0, velocity_limit=31.4,
-            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.01,  # deploy gains (was 50.0 / 2.0 @ p8_gold)
+            stiffness=ARM_DEPLOY_KP, damping=ARM_DEPLOY_KD, armature=0.003609725,  # N5020-16; deploy gains (was 50.0 / 2.0 @ p8_gold)
         ),
         "hands": IdealPDActuatorCfg(
             joint_names_expr=["[LR]_.*"],
