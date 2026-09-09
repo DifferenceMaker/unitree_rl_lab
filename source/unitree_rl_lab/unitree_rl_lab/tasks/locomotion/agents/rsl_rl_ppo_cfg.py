@@ -66,6 +66,42 @@ class QueuePPORunnerCfg(BasePPORunnerCfg):
     milestones/<slug> resolves under logs/rsl_rl/unitree_h1_2_balance/."""
     experiment_name = "unitree_h1_2_balance"
 
+
+@configclass
+class QueueFixedLRPPORunnerCfg(QueuePPORunnerCfg):
+    """p13f (2026-09-09): QueuePPORunnerCfg with a FIXED learning rate (3e-4),
+    entropy_coef unchanged (0.01). The severed-loop A/B for the balance line.
+
+    Why: every p13e action-price run with the knee clip off (actcap3, actfree,
+    actsoftfree, actcap1) shows the adaptive-KL scheduler thrashing between its
+    1e-5 floor and 8.6e-4 ceiling (wandb Loss/learning_rate, 2026-09-09 read),
+    and every reward collapse (-1159 @34.5k actcap3, -1813 @37.2k actsoftfree,
+    541 @37.0k actfree, -235 @37.5k actcap1) lands on a floor episode: a KL
+    spike (a tail action -> fall -> saturated price -> outsized advantage)
+    then the brake, after the damage. sigma stayed 0.5-0.7 throughout, so this
+    is NOT the gr5b runaway-sigma failure (Bible rule 20) - it is the same loop
+    seen from the lr side. 3e-4 = the band healthy balance runs settle into
+    under the adaptive scheduler (measured mean 3.8e-4, p13f_plant final
+    3.84e-4). @configclass replaces the whole `algorithm` block, so GuardedPPO
+    is restated (guards-are-per-line, 2026-09-05).
+    """
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3.0e-4,      # <- fixed, no schedule (the severed loop)
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,           # unused under schedule="fixed"
+        max_grad_norm=1.0,
+    )
+
 @configclass
 class WalkPPORunnerCfg(BasePPORunnerCfg):
     """Locomotion (lm line) runner.

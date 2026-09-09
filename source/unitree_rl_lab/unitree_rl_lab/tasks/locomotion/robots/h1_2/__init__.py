@@ -179,6 +179,21 @@ gym.register(
 )
 
 gym.register(
+    # p13f (2026-09-09): QIK env, FIXED lr 3e-4 runner. The adaptive-KL
+    # scheduler A/B for the clip-off action-price runs (see
+    # QueueFixedLRPPORunnerCfg). Same env cfg, same experiment_name, so
+    # warmstart/harvest paths are identical to Balance-QIK.
+    id="Unitree-H1_2-Balance-QIK-FIXLR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_queue_ik:RobotEnvCfgQueueIK",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_queue_ik:RobotPlayEnvCfgQueueIK",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Unitree-H1_2-Balance-Desk",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
