@@ -156,8 +156,15 @@ def feet_air_time_step_penalty(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,
     touchdown_penalty: float = 0.4,
+    free_when_displaced_m: float | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Digit-style stepping regularizer (Oregon State, arXiv 2404.19173).
+    free_when_displaced_m (dp8, 2026-09-09): touchdowns are priced only while
+    the base is within this radius of its anchor (env.spawn_root_xy); farther
+    out the step toward the anchor is FREE — the transit must not be taxed by
+    the stillness regularizer that made the shimmy the cheaper move. None =
+    legacy, always priced.
 
     Standing perfectly still => feet never lift => no touchdown => returns 0
     (stillness is free). Each foot touchdown costs `touchdown_penalty`,
@@ -174,7 +181,12 @@ def feet_air_time_step_penalty(
     # each step costs a fixed amount regardless of stride length (want NO
     # stepping, not long strides). alive=30 dominates a needed recovery step.
     touchdowns = just_landed.float() * touchdown_penalty
-    return torch.sum(touchdowns, dim=1)
+    pen = torch.sum(touchdowns, dim=1)
+    if free_when_displaced_m is not None and hasattr(env, "spawn_root_xy"):
+        asset = env.scene[asset_cfg.name]
+        near = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) < free_when_displaced_m
+        pen = pen * near.float()
+    return pen
 
 
 def air_time_variance_penalty(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -1060,9 +1072,16 @@ def anchor_hold_bonus(
     heading_to: str = "bearing",
     command_name: str | None = None,
     lean_height: float = 0.87,
+    deadband: float = 0.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """ANCHOR ROUND 2: bounded attractor kernel, exp(-(pos_err^2 + hs*yaw_err^2)/sigma^2).
+    deadband (dp8, operator 2026-09-09: 'the policy doesn't stop until it
+    reaches the minimum allowed error... 5cm? 10cm?'): positional tolerance in
+    metres — the kernel is FLAT (full income, zero gradient) inside it and the
+    pull starts at its edge. Kills the shimmy-to-zero: inside the tolerance no
+    foot slide earns anything. Deploy twin: the resolver snaps table_vector to
+    home below the same radius.
     command_name (dp6c): hold target shifted by the commanded-lean displacement —
     see _lean_fwd_shift; the anchor is STILL held at full strength, measured at
     the lean-consistent base pose.
@@ -1082,7 +1101,11 @@ def anchor_hold_bonus(
     d_lean, fwd_lean = _lean_fwd_shift(env, command_name, lean_height)
     if d_lean is not None:
         delta = delta - d_lean.unsqueeze(-1) * fwd_lean
-    pos_err2 = torch.sum(delta * delta, dim=-1)
+    if deadband > 0.0:
+        dist = torch.norm(delta, dim=-1)
+        pos_err2 = torch.clamp(dist - deadband, min=0.0) ** 2
+    else:
+        pos_err2 = torch.sum(delta * delta, dim=-1)
     fwd = torch.stack([torch.cos(env.spawn_yaw), torch.sin(env.spawn_yaw)], dim=-1)
     if heading_to == "spawn":
         # dp4c heading fix (pushfull rotation bug, 2026-08-06): displaced off
@@ -1174,7 +1197,19 @@ def _recovery_gate(env, asset, gate_mode: str, gate_speed: float, gate_anchor_di
                   push_by_setting_velocity_stamped) OR a sustained push is active
                   (_sustained_push_clear_time). Privileged, reward-side only —
                   the policy feels the shove through proprioception exactly as on
-                  hardware; it just cannot fake the window."""
+                  hardware; it just cannot fake the window.
+      "prop"    — dp8 (operator 2026-09-09: 'gaiting needs to be active all
+                  the time and proportional to the amount it needs to walk'):
+                  a FLOAT gate = clamp(dist_from_anchor / gate_anchor_dist, 0, 1).
+                  No threshold: 5 cm off pays a quarter of the gait income at
+                  gate_anchor_dist 0.20, 20 cm+ pays it in full, at home it is
+                  zero (no marching subsidy at rest, Bible rule 1). Callers
+                  multiply by .float(), a no-op on a float tensor."""
+    if gate_mode == "prop":
+        if gate_anchor_dist is None or not hasattr(env, "spawn_root_xy"):
+            return torch.zeros(env.num_envs, device=env.device)
+        dist = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1)
+        return (dist / gate_anchor_dist).clamp(0.0, 1.0)
     if gate_mode == "pushwin":
         t = env.episode_length_buf.float() * env.step_dt
         gate = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)

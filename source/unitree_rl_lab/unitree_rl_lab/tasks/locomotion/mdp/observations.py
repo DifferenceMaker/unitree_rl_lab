@@ -147,6 +147,10 @@ def anchor_point_b_held(
     if env._anchor_hold_step != step:
         env._anchor_hold_step = step
         refresh = (env.episode_length_buf == 0) | (step >= env._anchor_hold_until)
+        # dp8 (2026-09-09): expose this step's refresh mask so anchor_yaw_b_held
+        # refreshes the SAME envs on the SAME tick — one VisualModule fix carries
+        # both the table centroid and the Kabsch yaw.
+        env._anchor_refresh_mask = refresh
         if refresh.any():
             idx = refresh.nonzero(as_tuple=False).squeeze(-1)
             env._anchor_held[idx] = live[idx]
@@ -158,6 +162,95 @@ def anchor_point_b_held(
                 hold_s = torch.where(drop, long_s, hold_s)
             env._anchor_hold_until[idx] = step + (hold_s / env.step_dt).round().long().clamp(min=1)
     return env._anchor_held
+
+
+def _root_yaw(asset) -> torch.Tensor:
+    q = asset.data.root_quat_w
+    return torch.atan2(
+        2.0 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+        1.0 - 2.0 * (q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3]),
+    )
+
+
+def anchor_yaw_b(
+    env: ManagerBasedRLEnv,
+    noise_std: float = 0.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp8 (operator 2026-09-09, 'I want the Kabsch yaw'): the TABLE's yaw
+    relative to the base heading, as (cos, sin) of the error — 2 floats.
+
+    The anchor vector tells the policy WHERE the table is; nothing in the 91-obs
+    contract tells it how the table is TURNED (projected gravity has no yaw,
+    the bearing to a point is not an orientation). On hardware the policy
+    therefore drifts in yaw and stands skewed to the desk (09-07 run), while in
+    sim heading_l2_from_spawn / anchor_hold(heading_to=spawn) shape a yaw it
+    can only infer by integrating the gyro. This term is the missing channel.
+
+    Sim source: spawn_yaw (the desk is placed along it; move_anchor with a
+    yaw_range turns it). Deploy analog: DecisionModule's table_vector carries
+    the Kabsch rotation of the 4 table markers vs their nominal poses; its yaw
+    component, rotated to base frame, is this error. (cos, sin) rather than the
+    raw angle: continuous through +-pi, bounded, no wrap-around edge for the
+    MLP. Zeros-error = (1, 0) until the spawn buffers exist. noise_std is in
+    radians on the error before the trig."""
+    asset = env.scene[asset_cfg.name]
+    if not hasattr(env, "spawn_yaw"):
+        out = torch.zeros(env.num_envs, 2, device=env.device)
+        out[:, 0] = 1.0
+        return out
+    err = env.spawn_yaw - _root_yaw(asset)
+    if noise_std > 0.0:
+        err = err + torch.randn_like(err) * noise_std
+    return torch.stack([torch.cos(err), torch.sin(err)], dim=-1)
+
+
+def anchor_yaw_b_held(
+    env: ManagerBasedRLEnv,
+    noise_std: float = 0.0,
+    hold_range_s: tuple = (0.5, 2.0),
+    dropout_prob: float = 0.0,
+    dropout_range_s: tuple = (2.0, 6.0),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """anchor_yaw_b as the perception pipe delivers it: SAMPLE-AND-HOLD.
+
+    Synchronised with anchor_point_b_held when that term is in the same obs
+    group (evaluated earlier in cfg order): it refreshes exactly the envs the
+    anchor refreshed this tick (env._anchor_refresh_mask), so the policy sees
+    one coherent fix (centroid + yaw) per VisualModule frame, as on the robot
+    (table_vector is one message). Falls back to its own schedule with the
+    same parameters when the anchor is exact (no mask published this tick).
+    Use in the POLICY group only; the critic keeps anchor_yaw_b."""
+    live = anchor_yaw_b(env, noise_std, asset_cfg)
+    n, dev = env.num_envs, env.device
+    if not hasattr(env, "_anchor_yaw_held"):
+        env._anchor_yaw_held = live.clone()
+        env._anchor_yaw_hold_until = torch.zeros(n, dtype=torch.long, device=dev)
+        env._anchor_yaw_hold_step = -1
+        print(f"[anchor_yaw_b_held] policy table-yaw = sample-and-hold {hold_range_s[0]:.2f}-"
+              f"{hold_range_s[1]:.2f} s, dropout p={dropout_prob:g}; synced to "
+              f"anchor_point_b_held when present", flush=True)
+    step = int(env.common_step_counter)
+    if env._anchor_yaw_hold_step != step:
+        env._anchor_yaw_hold_step = step
+        synced = hasattr(env, "_anchor_refresh_mask") and getattr(env, "_anchor_hold_step", -2) == step
+        if synced:
+            refresh = env._anchor_refresh_mask
+        else:
+            refresh = (env.episode_length_buf == 0) | (step >= env._anchor_yaw_hold_until)
+        if refresh.any():
+            idx = refresh.nonzero(as_tuple=False).squeeze(-1)
+            env._anchor_yaw_held[idx] = live[idx]
+            if not synced:
+                k = len(idx)
+                hold_s = hold_range_s[0] + torch.rand(k, device=dev) * (hold_range_s[1] - hold_range_s[0])
+                if dropout_prob > 0.0:
+                    drop = torch.rand(k, device=dev) < dropout_prob
+                    long_s = dropout_range_s[0] + torch.rand(k, device=dev) * (dropout_range_s[1] - dropout_range_s[0])
+                    hold_s = torch.where(drop, long_s, hold_s)
+                env._anchor_yaw_hold_until[idx] = step + (hold_s / env.step_dt).round().long().clamp(min=1)
+    return env._anchor_yaw_held
 
 
 def reach_point_b(
