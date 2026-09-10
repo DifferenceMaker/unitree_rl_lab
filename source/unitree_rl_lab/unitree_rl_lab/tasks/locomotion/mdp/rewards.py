@@ -137,6 +137,48 @@ def feet_too_near(
     return (threshold - distance).clamp(min=0)
 
 
+def feet_too_far(
+    env: ManagerBasedRLEnv, threshold: float = 0.45, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """p13g (operator 2026-09-10): the SPLIT fail type — "gets pushed -> puts its leg like a
+    block that the javelin throwers do -> falls sideways" / "a few times does a far split
+    and falls" (95 % of the wave's falls). Hinge on the HORIZONTAL ankle-to-ankle distance
+    above `threshold`: zero at every normal stance (0.26 m nominal, recovery steps to
+    ~0.4 m), pays only in the lunge. The mirror of feet_too_near (a constraint, not a
+    cost — Bible rule 2). NEGATIVE weight."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    feet_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    distance = torch.norm(feet_pos[:, 0] - feet_pos[:, 1], dim=-1)
+    return (distance - threshold).clamp(min=0)
+
+
+def feet_crossed(
+    env: ManagerBasedRLEnv,
+    min_gap: float = 0.05,
+    left_body: str = "left_ankle_roll_link",
+    right_body: str = "right_ankle_roll_link",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """p13g (operator 2026-09-10): the CROSSED-LEGS fail type — "some of the falls happen
+    when the policies cross their legs and can't recover". In the BASE frame (+y = left)
+    the left foot must stay at least `min_gap` to the left of the right foot; hinge on
+    (y_left - y_right) below min_gap. Zero unless the feet actually cross (or nearly).
+    Base-frame lateral, not world: a yawed robot's feet are compared along its own hips.
+    NEGATIVE weight."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    key = "_feet_crossed_ids"
+    if not hasattr(env, key):
+        l_ids, _ = asset.find_bodies(left_body)
+        r_ids, _ = asset.find_bodies(right_body)
+        setattr(env, key, (l_ids[0], r_ids[0]))
+    li, ri = getattr(env, key)
+    root_pos, root_quat = asset.data.root_pos_w, asset.data.root_quat_w
+    l_b = quat_apply_inverse(root_quat, asset.data.body_pos_w[:, li] - root_pos)
+    r_b = quat_apply_inverse(root_quat, asset.data.body_pos_w[:, ri] - root_pos)
+    gap = l_b[:, 1] - r_b[:, 1]
+    return (min_gap - gap).clamp(min=0)
+
+
 def feet_contact_without_cmd(
     env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, command_name: str = "base_velocity"
 ) -> torch.Tensor:
