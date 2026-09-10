@@ -1278,13 +1278,20 @@ def desk_reach_bonus(
     env: "ManagerBasedRLEnv",
     sigma: float = 0.2,
     command_name: str = "arm_pose_command",
+    gate_anchor_dist: float | None = None,
 ) -> torch.Tensor:
     """dp4c LEAN PROGRAM: bounded bonus for each hand approaching its WISH
     (the pre-resolution world target), gated to DESK-PLANE draws. The arm
     joints are externally commanded, so the only actuator that reduces the
     world-frame hand-to-wish gap is the BODY: shoulder forward = lean. This is
     the tilt2 hand_reach gradient revived on the wish machinery. exp kernel,
-    [0,1] per arm, averaged. Zeros when no desk draw is active."""
+    [0,1] per arm, averaged. Zeros when no desk draw is active.
+
+    gate_anchor_dist (dp8, operator 2026-09-10 'gated on anchor distance'): pay
+    the reach ONLY while the base is within this radius of its anchor
+    (env.spawn_root_xy). Off home the term is silent, so a displaced robot
+    walks back first instead of leaning at the target from where it stands —
+    the 09-07 'leaned into the table' path. None = legacy, ungated."""
     try:
         cmd = env.command_manager.get_term(command_name)
     except Exception:
@@ -1297,7 +1304,11 @@ def desk_reach_bonus(
         bonus = torch.exp(-err2 / (sigma * sigma))
         active = cmd.desk_wish_mask[side] & ~cmd.default_mode
         total = total + bonus * active.float()
-    return total * 0.5
+    total = total * 0.5
+    if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
+        near = torch.norm(robot.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1) < gate_anchor_dist
+        total = total * near.float()
+    return total
 
 
 def desk_hit_penalty(

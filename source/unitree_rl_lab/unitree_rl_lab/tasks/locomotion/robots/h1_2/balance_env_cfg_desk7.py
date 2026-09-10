@@ -38,7 +38,16 @@ def _make_desk7(cfg):
     cfg.rewards.joint_deviation_hips.params["lean_ref"] = 0.35
     cfg.rewards.upright_bonus.weight = 8.0
     cfg.rewards.upright_bonus.params["std"] = 0.1
-    cfg.rewards.base_height.weight = 0.0
+    # DEAD TERMS REMOVED (operator 2026-09-10: "Remove the 0-weight terms"): the
+    # three zero-weight rows the trunk carried for history only. base_height
+    # (redundant under the lean command), desk_hit (dp4c strike penalty, 0 since
+    # dp6), foot_displacement_l2_from_spawn (0 since dp5). None contributed to
+    # training; dropping them shortens the 34-row ledger to 31 and removes three
+    # rows a diff can mis-read. dp7_plant (34 terms) and everything after are
+    # identical in gradient.
+    cfg.rewards.base_height = None
+    cfg.rewards.desk_hit = None
+    cfg.rewards.foot_displacement_l2_from_spawn = None
 
 
 @configclass
