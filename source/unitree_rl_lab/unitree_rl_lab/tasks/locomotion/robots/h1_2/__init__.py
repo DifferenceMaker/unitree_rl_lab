@@ -365,6 +365,26 @@ gym.register(
     },
 )
 
+gym.register(
+    # dp8b (2026-09-11): Desk7 env, FIXED lr 3e-4 runner — the general line's
+    # single biggest result, never transferred to the desk line. Every dp8 run
+    # trained on `schedule: adaptive` at lr 1e-3; on the balance line the same
+    # recipe under a fixed 3e-4 went 1400 -> 1781 with less than half the
+    # limit-riding and the lowest action_rate of the wave (p13f_softfree30 vs
+    # _fixlr, identical deltas). NOTE the desk line has not shown the p13e/p13f
+    # detonation, so this is a bet on final QUALITY, not a fix for a collapse.
+    # Same env cfg and experiment_name as Balance-Desk7, so warmstart/harvest
+    # paths are identical and dp8 milestones warmstart it unchanged.
+    id="Unitree-H1_2-Balance-Desk7-FIXLR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk7:RobotEnvCfgDesk7",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk7:RobotPlayEnvCfgDesk7",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
 # lm5-fsb: FastSAC Run B — LM5 world, holosoma's 10-term minimalist rewards
 # (g1_29dof_loco_fast_sac preset verbatim). Run A isolates the algorithm;
 # this isolates the reward philosophy. Trained via train_fastsac.py (the
