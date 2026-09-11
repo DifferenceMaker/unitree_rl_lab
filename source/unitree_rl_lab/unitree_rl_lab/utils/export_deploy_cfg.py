@@ -11,7 +11,16 @@ from isaaclab.utils.string import resolve_matching_names
 def format_value(x):
     if isinstance(x, float):
         return float(f"{x:.3g}")
-    elif isinstance(x, list):
+    elif isinstance(x, (list, tuple)):
+        # TUPLES MUST BECOME LISTS. deploy.yaml is a cross-language contract read by
+        # MovementModule with a SafeLoader that only tolerates the Isaac
+        # !!python/object/apply tags; a Python tuple survives yaml.dump as
+        # !!python/tuple and makes the whole file unparseable there, taking the
+        # module down at import (dp8_transit/transitcalm/yaw, 2026-09-11 -- the jobs
+        # set anchor_point hold_range_s/dropout_range_s as tuples). Any tuple
+        # anywhere in a term's params hits this, so normalise here rather than
+        # per-field (term_cfg.clip was already special-cased below for the same
+        # reason).
         return [format_value(i) for i in x]
     elif isinstance(x, dict):
         return {k: format_value(v) for k, v in x.items()}
