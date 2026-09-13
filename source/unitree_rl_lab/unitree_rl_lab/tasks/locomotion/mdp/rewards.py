@@ -1321,6 +1321,7 @@ def desk_reach_bonus(
     sigma: float = 0.2,
     command_name: str = "arm_pose_command",
     gate_anchor_dist: float | None = None,
+    require_desk_draw: bool = True,
 ) -> torch.Tensor:
     """dp4c LEAN PROGRAM: bounded bonus for each hand approaching its WISH
     (the pre-resolution world target), gated to DESK-PLANE draws. The arm
@@ -1333,7 +1334,22 @@ def desk_reach_bonus(
     the reach ONLY while the base is within this radius of its anchor
     (env.spawn_root_xy). Off home the term is silent, so a displaced robot
     walks back first instead of leaning at the target from where it stands —
-    the 09-07 'leaned into the table' path. None = legacy, ungated."""
+    the 09-07 'leaned into the table' path. None = legacy, ungated.
+
+    require_desk_draw (p14, 2026-09-13): False pays the reach on EVERY non-default
+    arm draw, not only desk-plane ones. The GENERAL line never makes a desk draw
+    (desk_level_prob 0.0, cycle_mode off), so the term is silent there with the
+    default True — which is exactly why the general-line policy has no reason to
+    care where its hand ends up, and retreating the shoulders to balance the
+    arms-forward CoM is free. Evidence it is the INCOME and not the posture taxes
+    that produce the lean: the desk line leans while carrying joint_deviation_hips
+    at -2.5, ELEVEN TIMES the general line's -0.225, and what it has that the
+    general line lacks is this term at +8.0.
+
+    Keyed on the arm command's own wish, so the target is inferable from
+    arm_pose_command, which the policy already observes — no new observation and
+    no warmstart transplant (hand_reach_bonus samples an independent reach_point_w
+    the policy cannot see, which would be a blind gradient)."""
     try:
         cmd = env.command_manager.get_term(command_name)
     except Exception:
@@ -1344,7 +1360,9 @@ def desk_reach_bonus(
         ee = robot.data.body_pos_w[:, cmd.ee_body_idx[side]]
         err2 = torch.sum((ee - cmd.wish_w[side]) ** 2, dim=-1)
         bonus = torch.exp(-err2 / (sigma * sigma))
-        active = cmd.desk_wish_mask[side] & ~cmd.default_mode
+        active = ~cmd.default_mode
+        if require_desk_draw:
+            active = cmd.desk_wish_mask[side] & active
         total = total + bonus * active.float()
     total = total * 0.5
     if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
