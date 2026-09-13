@@ -1321,6 +1321,7 @@ def desk_reach_bonus(
     sigma: float = 0.2,
     command_name: str = "arm_pose_command",
     gate_anchor_dist: float | None = None,
+    require_desk_draw: bool = True,
 ) -> torch.Tensor:
     """dp4c LEAN PROGRAM: bounded bonus for each hand approaching its WISH
     (the pre-resolution world target), gated to DESK-PLANE draws. The arm
@@ -1344,7 +1345,14 @@ def desk_reach_bonus(
         ee = robot.data.body_pos_w[:, cmd.ee_body_idx[side]]
         err2 = torch.sum((ee - cmd.wish_w[side]) ** 2, dim=-1)
         bonus = torch.exp(-err2 / (sigma * sigma))
-        active = cmd.desk_wish_mask[side] & ~cmd.default_mode
+        # require_desk_draw (p14, 2026-09-13): False pays the reach on EVERY non-default
+        # arm draw. The GENERAL line never makes a desk draw (desk_level_prob 0.0,
+        # cycle_mode off), so with the default True this term is silent there — which is
+        # why that policy has no reason to care where its hand ends up and retreating the
+        # shoulders to balance an arms-forward CoM is free.
+        active = ~cmd.default_mode
+        if require_desk_draw:
+            active = cmd.desk_wish_mask[side] & active
         total = total + bonus * active.float()
     total = total * 0.5
     if gate_anchor_dist is not None and hasattr(env, "spawn_root_xy"):
