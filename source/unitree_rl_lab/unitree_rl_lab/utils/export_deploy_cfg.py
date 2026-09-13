@@ -11,7 +11,13 @@ from isaaclab.utils.string import resolve_matching_names
 def format_value(x):
     if isinstance(x, float):
         return float(f"{x:.3g}")
-    elif isinstance(x, list):
+    elif isinstance(x, (list, tuple)):
+        # TUPLES MUST BECOME LISTS. deploy.yaml is a cross-language contract read by
+        # MovementModule and BridgeModule with SafeLoaders; a Python tuple survives
+        # yaml.dump as !!python/tuple and makes the file unparseable there. Bridge then
+        # silently falls back to config.py PD gains (arms kp 30 instead of the trained
+        # 40). Hit every dp8/dp8b run, whose jobs set anchor_point hold_range_s and
+        # dropout_range_s as tuples.
         return [format_value(i) for i in x]
     elif isinstance(x, dict):
         return {k: format_value(v) for k, v in x.items()}
