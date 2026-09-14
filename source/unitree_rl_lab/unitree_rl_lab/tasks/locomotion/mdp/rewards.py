@@ -564,9 +564,15 @@ def base_pos_xy_l2_from_spawn(
     env: "ManagerBasedRLEnv",
     command_name: str | None = None,
     lean_height: float = 0.87,
+    push_window_s: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize squared L2 distance of base xy from spawn xy.
+
+    push_window_s (p14_recovery, 2026-09-14): when set, the penalty is OFF for this many
+    seconds after a push (pushwin gate on env.last_push_t, written only by
+    push_by_setting_velocity_STAMPED). Stamp push_robot ONLY — micro_push fires every
+    1-3 s against a 2 s window and would hold the gate open permanently.
 
     Magnitudes scale with displacement squared: 0.5m drift = 0.25 reward unit
     (with weight=-1.0, penalty = -0.25 per step).
@@ -580,7 +586,11 @@ def base_pos_xy_l2_from_spawn(
     d_lean, fwd_lean = _lean_fwd_shift(env, command_name, lean_height)
     if d_lean is not None:
         delta = delta - d_lean.unsqueeze(-1) * fwd_lean
-    return torch.sum(delta ** 2, dim=-1)
+    pen = torch.sum(delta ** 2, dim=-1)
+    if push_window_s is not None:
+        gate = _recovery_gate(env, asset, "pushwin", 0.0, None, push_window_s)
+        pen = pen * (~gate).float()
+    return pen
 
 
 def base_forward_zone_penalty(
@@ -616,6 +626,7 @@ def base_forward_zone_penalty(
 
 def foot_displacement_l2_from_spawn(
     env: "ManagerBasedRLEnv",
+    push_window_s: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
 ) -> torch.Tensor:
     """Penalize squared L2 displacement of feet from spawn foot positions.
@@ -630,7 +641,11 @@ def foot_displacement_l2_from_spawn(
     current_foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
     delta = current_foot_pos - env.spawn_foot_pos
     # Sum over feet and xy
-    return torch.sum(delta ** 2, dim=(-2, -1))
+    pen = torch.sum(delta ** 2, dim=(-2, -1))
+    if push_window_s is not None:
+        gate = _recovery_gate(env, asset, "pushwin", 0.0, None, push_window_s)
+        pen = pen * (~gate).float()
+    return pen
 
 def heading_stable_bonus(
     env: "ManagerBasedRLEnv",
