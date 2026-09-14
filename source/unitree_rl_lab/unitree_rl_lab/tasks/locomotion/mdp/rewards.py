@@ -564,12 +564,25 @@ def base_pos_xy_l2_from_spawn(
     env: "ManagerBasedRLEnv",
     command_name: str | None = None,
     lean_height: float = 0.87,
+    push_window_s: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize squared L2 distance of base xy from spawn xy.
 
     Magnitudes scale with displacement squared: 0.5m drift = 0.25 reward unit
     (with weight=-1.0, penalty = -0.25 per step).
+
+    push_window_s (p14_recovery, 2026-09-14): when set, the penalty is switched OFF
+    for this many seconds after a push (the `pushwin` gate — env.last_push_t, which
+    only push_by_setting_velocity_STAMPED writes; also open while a sustained push
+    is active). Rationale: this term plus foot_displacement_l2_from_spawn pay
+    -2.23/s on the p14 parent, the ledger's second-largest cost, against +0.63/s
+    for the whole upright/still cluster. Under that ratio the cheapest response to
+    a shove is to STOP the displacement as fast as physics allows — lean into the
+    push and throw a foot far out to block. Freeing displacement inside the window
+    lets the policy absorb the shove; the penalty returns afterwards so it still
+    comes home. Stamp push_robot ONLY: micro_push fires every 1-3 s against a 2 s
+    window and would hold the gate open permanently.
     """
     if not hasattr(env, "spawn_root_xy"):
         return torch.zeros(env.num_envs, device=env.device)
@@ -580,7 +593,11 @@ def base_pos_xy_l2_from_spawn(
     d_lean, fwd_lean = _lean_fwd_shift(env, command_name, lean_height)
     if d_lean is not None:
         delta = delta - d_lean.unsqueeze(-1) * fwd_lean
-    return torch.sum(delta ** 2, dim=-1)
+    pen = torch.sum(delta ** 2, dim=-1)
+    if push_window_s is not None:
+        gate = _recovery_gate(env, asset, "pushwin", 0.0, None, push_window_s)
+        pen = pen * (~gate).float()
+    return pen
 
 
 def base_forward_zone_penalty(
@@ -616,12 +633,17 @@ def base_forward_zone_penalty(
 
 def foot_displacement_l2_from_spawn(
     env: "ManagerBasedRLEnv",
+    push_window_s: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*_ankle_roll_link"]),
 ) -> torch.Tensor:
     """Penalize squared L2 displacement of feet from spawn foot positions.
 
     Sums over both feet and xy. A foot stepping 0.3m gives reward unit 0.09
     (with weight=-0.5, penalty = -0.045 per step). Multiple steps compound.
+
+    push_window_s (p14_recovery, 2026-09-14): same pushwin gate as
+    base_pos_xy_l2_from_spawn — see there. This is the ANTI-STEP term of the pair:
+    it charges for the feet leaving spawn, i.e. for the calm recovery step itself.
     """
     if not hasattr(env, "spawn_foot_pos") or asset_cfg.body_ids is None:
         return torch.zeros(env.num_envs, device=env.device)
@@ -630,7 +652,11 @@ def foot_displacement_l2_from_spawn(
     current_foot_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :2]
     delta = current_foot_pos - env.spawn_foot_pos
     # Sum over feet and xy
-    return torch.sum(delta ** 2, dim=(-2, -1))
+    pen = torch.sum(delta ** 2, dim=(-2, -1))
+    if push_window_s is not None:
+        gate = _recovery_gate(env, asset, "pushwin", 0.0, None, push_window_s)
+        pen = pen * (~gate).float()
+    return pen
 
 def heading_stable_bonus(
     env: "ManagerBasedRLEnv",
