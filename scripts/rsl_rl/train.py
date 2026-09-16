@@ -199,10 +199,14 @@ def _safe_resume(runner, resume_path):
 def _reset_noise_std(runner, value: float):
     """Set the actor's exploration std to `value` after a warmstart load.
 
-    rsl_rl's GaussianDistribution keeps the std as nn.Parameter log_std_param
-    (rsl_rl/modules/distribution.py); the state-dependent variant has no such
-    parameter and is left alone (reported). Adam moments for the parameter are
-    kept -- they are gradient statistics, not the value.
+    rsl_rl's GaussianDistribution (rsl_rl/modules/distribution.py) keeps the std as
+    ONE of two nn.Parameters depending on std_type: "scalar" (the default) ->
+    `std_param` holds the std itself; "log" -> `log_std_param` holds its log. The
+    first version of this helper only knew the log form and silently did nothing on
+    the scalar form (p14b smoke, 2026-09-16: "[WARN] no *log_std_param*"). Both are
+    handled now; a state-dependent std has neither and is left alone (reported).
+    Adam moments for the parameter are kept -- they are gradient statistics, not
+    the value.
     """
     import math, torch
     hit = []
@@ -215,9 +219,15 @@ def _reset_noise_std(runner, value: float):
                 before = torch.exp(prm.detach()).mean().item()
                 with torch.no_grad():
                     prm.fill_(math.log(value))
-                hit.append((f"{owner_name}.{name}", before))
+            elif name.endswith("std_param"):
+                before = prm.detach().mean().item()
+                with torch.no_grad():
+                    prm.fill_(value)
+            else:
+                continue
+            hit.append((f"{owner_name}.{name}", before))
     if not hit:
-        print("[WARN]: --reset_noise_std given but no *log_std_param* parameter found "
+        print("[WARN]: --reset_noise_std given but no std_param / log_std_param parameter found "
               "(state-dependent std, or a different distribution) -- nothing changed.")
         return
     for name, before in hit:
