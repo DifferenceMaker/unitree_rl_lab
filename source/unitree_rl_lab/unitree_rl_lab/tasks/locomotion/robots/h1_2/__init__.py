@@ -194,6 +194,22 @@ gym.register(
 )
 
 gym.register(
+    # p14b (2026-09-16): p14_kitchen promoted to parent + TRUNK. Balance-QIK-FIXLR
+    # with the p14_kitchen.job apply_edits baked (balance_env_cfg_kitchen), job
+    # overrides applied last -> every p14b job is a pure delta on what kitchen
+    # trained on. Same runner cfg / experiment_name as QIK-FIXLR, so p14_kitchen
+    # warmstarts and harvest paths are unchanged.
+    id="Unitree-H1_2-Balance-Kitchen-FIXLR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_kitchen:RobotEnvCfgKitchen",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_kitchen:RobotPlayEnvCfgKitchen",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Unitree-H1_2-Balance-Desk",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
