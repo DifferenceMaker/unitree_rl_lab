@@ -17,8 +17,14 @@ boundary) and (b) walks the LEFT foot inward once the policy engages (FixStand i
 symmetric). p14b attacks both: upright dose, stance hinge, the 790 g hand plant,
 exploration reset. Nothing in this file is a delta — deltas live in the jobs.
 
+The trunk BODY is the real-hand plant (operator 2026-09-16: "Make sure the model is
+the correct one with the correct hand"): h1_2_comx06_hand790.urdf -- see _use_real_hand.
+Every p14b run trains on it; p14b_plant (zero reward delta) is the same-plant reference
+and p14_kitchen (comx06, 0.19 kg hands) the cross-plant baseline.
+
 Trunk parity is proven by scripts/queue/lineage_check_p14b.py (aspired-isaac-lab):
-smoke env.yaml vs the kitchen milestone env.yaml, all sections.
+smoke env.yaml vs the kitchen milestone env.yaml, all sections (asset basename expected
+to differ: hand790).
 """
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -99,12 +105,28 @@ def _make_kitchen(cfg):
     R.joint_vel_reg = RewTerm(func=mdp.joint_vel_l2, weight=-0.01, params={})
 
 
+def _use_real_hand(cfg):
+    """The trunk BODY: comx06 with the real 790 g Inspire hand. Training carried a 0.192 kg
+    vendor-lineage hand + a 0.324 kg wrist stand-in; the real RH56DFTP is 790 g on a
+    0.124 kg wrist. h1_2_comx06_hand790.urdf (aspired-isaac-lab assets/robot/h1_2,
+    MODELS.md) keeps total mass 77.2676 kg and the whole-body CoM. Hardware 2026-09-16:
+    kitchen leans forward in proportion to arm extension -- the heavier-than-modelled
+    hand is the prime suspect. sim2sim body: scene_comx06_armature_hand790.xml
+    (run_mujoco_sim.sh --hand790). Fails loudly if the base body is not comx06, so a
+    wrong ROBOT_ASSETS_DIR can never train silently on the old hand."""
+    spawn = cfg.scene.robot.spawn
+    spawn.asset_path = spawn.asset_path.replace("h1_2_comx06.urdf", "h1_2_comx06_hand790.urdf")
+    assert spawn.asset_path.endswith("h1_2_comx06_hand790.urdf"), (
+        f"[Kitchen trunk] expected the comx06 body to swap to hand790, got {spawn.asset_path}")
+
+
 @configclass
 class RobotEnvCfgKitchen(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         _swap_in_ik_command(self)
         _make_kitchen(self)
+        _use_real_hand(self)
         _apply_overrides(self, _load_overrides())   # jobs win, applied last
 
 
@@ -114,6 +136,7 @@ class RobotPlayEnvCfgKitchen(RobotPlayEnvCfg):
         super().__post_init__()
         _swap_in_ik_command(self)
         _make_kitchen(self)
+        _use_real_hand(self)
         self.commands.arm_pose_command.debug_vis = True
         # Play at the full workspace immediately (as Balance-QIK's play cfg does).
         self.curriculum.ik_workspace.params["warmup_steps"] = 0
