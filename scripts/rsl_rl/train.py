@@ -43,6 +43,15 @@ parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy 
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
+parser.add_argument(
+    "--reset_noise_std", type=float, default=None,
+    help="After loading a warmstart checkpoint, reset the policy's action std to this value "
+         "(every parameter named *log_std_param* in the actor). 2026-09-15 finding: fixed LR "
+         "collapses entropy 11.4 -> 5.9 (std 0.6 -> 0.4) by p13g, and every p14 warmstart "
+         "inherited that spent exploration budget -- p14_recovery could not unlearn the javelin "
+         "step under two opposite reward changes. A run that must learn something NEW restores "
+         "exploration here; a polish run leaves it unset.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -187,6 +196,34 @@ def _safe_resume(runner, resume_path):
         print(f"[INFO]: Resuming from iteration {ckpt['iter']}.")
     print(f"[INFO]: Optimizer state SKIPPED (will re-initialize on first step).")
 
+def _reset_noise_std(runner, value: float):
+    """Set the actor's exploration std to `value` after a warmstart load.
+
+    rsl_rl's GaussianDistribution keeps the std as nn.Parameter log_std_param
+    (rsl_rl/modules/distribution.py); the state-dependent variant has no such
+    parameter and is left alone (reported). Adam moments for the parameter are
+    kept -- they are gradient statistics, not the value.
+    """
+    import math, torch
+    hit = []
+    for owner_name in ("actor", "policy", "actor_critic"):
+        owner = getattr(runner.alg, owner_name, None)
+        if owner is None:
+            continue
+        for name, prm in owner.named_parameters():
+            if name.endswith("log_std_param"):
+                before = torch.exp(prm.detach()).mean().item()
+                with torch.no_grad():
+                    prm.fill_(math.log(value))
+                hit.append((f"{owner_name}.{name}", before))
+    if not hit:
+        print("[WARN]: --reset_noise_std given but no *log_std_param* parameter found "
+              "(state-dependent std, or a different distribution) -- nothing changed.")
+        return
+    for name, before in hit:
+        print(f"[INFO]: reset_noise_std: {name} mean std {before:.3f} -> {value:.3f}")
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -261,6 +298,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model with fallback for architecture changes
         _safe_resume(runner, resume_path)
+        if args_cli.reset_noise_std is not None:
+            _reset_noise_std(runner, float(args_cli.reset_noise_std))
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
