@@ -62,6 +62,26 @@ def _apply_overrides(cfg_self, overrides: dict):
     job = overrides.get("job_name", "<unnamed>")
     print(f"[QUEUE] applying overrides for job '{job}'")
 
+    # --- set_body: swap the robot URDF (a PLANT probe, 2026-09-17) ---
+    # Applied FIRST so a later reward edit can never be silently discarded by a
+    # body swap. Value is a BASENAME inside the same assets dir, so a job can
+    # never point training at an arbitrary path. The swap is asserted and
+    # printed: the 2026-08-28 desk-rig and 2026-09-17 sim2sim body traps were
+    # both "the launch path quietly used a different body than the config says".
+    body = overrides.get("set_body")
+    if body:
+        import os
+        spawn = cfg_self.scene.robot.spawn
+        old = spawn.asset_path
+        if os.path.basename(body) != body:
+            raise ValueError(f"[QUEUE] set_body: expected a basename, got '{body}'")
+        spawn.asset_path = os.path.join(os.path.dirname(old), body)
+        if not os.path.isfile(spawn.asset_path):
+            raise ValueError(
+                f"[QUEUE] set_body: '{spawn.asset_path}' does not exist "
+                f"(ROBOT_ASSETS_DIR wrong, or the body was never generated)")
+        print(f"[QUEUE]   set_body    {os.path.basename(old)} -> {body}")
+
     # --- set_weight: self.rewards.<name>.weight = value ---
     for name, val in overrides.get("set_weight", {}).items():
         term = getattr(cfg_self.rewards, name, None)
@@ -75,9 +95,11 @@ def _apply_overrides(cfg_self, overrides: dict):
         term_name, _, param_key = path.partition(".")
         if not param_key:
             raise ValueError(f"[QUEUE] set_param path '{path}' must be '<term>.<param>'")
-        # find the term on rewards first, then events, then curriculum
+        # find the term on rewards first, then events, then curriculum, then commands
+        # (commands added 2026-09-17 so a wave can tune the ARM ENVELOPE -- e.g.
+        #  arm_pose_command.resampling_time_range -- without a new task)
         container = None
-        for cname in ("rewards", "events", "curriculum"):
+        for cname in ("rewards", "events", "curriculum", "commands"):
             c = getattr(cfg_self, cname, None)
             if c is not None and getattr(c, term_name, None) is not None:
                 container = c
@@ -87,13 +109,24 @@ def _apply_overrides(cfg_self, overrides: dict):
         term = getattr(container, term_name)
         # std lives as a direct kwarg-style param in params dict for reward fns;
         # for events it's also params[...]. Both store under term.params.
-        if not hasattr(term, "params") or term.params is None:
-            raise ValueError(f"[QUEUE] set_param: term '{term_name}' has no params dict")
         # lists in json -> tuples (Isaac expects tuples for ranges)
         if isinstance(val, list):
             val = tuple(val)
-        term.params[param_key] = val
-        print(f"[QUEUE]   set_param   {container.__class__.__name__}.{term_name}.params[{param_key}] = {val}")
+        if hasattr(term, "params") and term.params is not None:
+            # reward / event / curriculum terms: knobs live in a params dict
+            term.params[param_key] = val
+            print(f"[QUEUE]   set_param   {container.__class__.__name__}.{term_name}.params[{param_key}] = {val}")
+        elif hasattr(term, param_key):
+            # COMMAND terms (2026-09-17): a CommandTermCfg has no params dict, its
+            # knobs are plain dataclass fields (resampling_time_range, workspace_scale,
+            # default_pose_prob ...). Strictly additive: this branch is only reachable
+            # when the term has no params dict at all, so no reward path changes.
+            setattr(term, param_key, val)
+            print(f"[QUEUE]   set_param   {container.__class__.__name__}.{term_name}.{param_key} = {val}")
+        else:
+            raise ValueError(
+                f"[QUEUE] set_param: term '{term_name}' has neither a params dict "
+                f"nor a '{param_key}' field")
 
     # --- add_reward: attach a NEW RewTerm ---
     for name, spec in overrides.get("add_reward", {}).items():
