@@ -210,6 +210,23 @@ gym.register(
 )
 
 gym.register(
+    # STANCE trunk (2026-09-17) — Kitchen with feet_too_near.threshold = 0.25 baked, i.e. the
+    # p14b_stance delta promoted to parent after it solved the inward creep on hardware. p14c
+    # jobs are therefore pure deltas on what stance trained on; a job that merely warmstarted
+    # from the stance milestone WITHOUT this trunk would silently revert to kitchen's 0.22,
+    # because terms do not travel with a checkpoint. Same runner cfg / experiment_name as
+    # Kitchen-FIXLR, so p14b_stance warmstarts and harvest paths are unchanged.
+    id="Unitree-H1_2-Balance-Stance-FIXLR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_stance:RobotEnvCfgStance",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_stance:RobotPlayEnvCfgStance",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Unitree-H1_2-Balance-Desk",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
