@@ -1082,6 +1082,157 @@ def action_magnitude_over(
     return exc.sum(dim=-1)
 
 
+def action_magnitude_over_perjoint(
+    env: "ManagerBasedRLEnv",
+    threshold_per_joint: list | None = None,
+    limit_frac: float | None = None,
+    max_excess: float = 1.0e9,
+    mode: str = "power",
+    power: float = 3.0,
+    tau: float = 1.0,
+    asset_cfg: "SceneEntityCfg" = SceneEntityCfg("robot"),
+) -> "torch.Tensor":
+    """`action_magnitude_over` with a PER-JOINT threshold derived from the PLANT.
+
+    WHY (2026-09-18). The scalar-threshold version cannot serve this robot: with
+    `target = default + scale * a`, the action that puts a joint target exactly ON its
+    URDF limit is `(limit - default) / scale`, and across the 13 leg+torso actions that
+    ceiling ranges from **1.0 (ankle roll) to 12.6 (hip pitch/roll)** -- a factor of 12.
+    A single threshold of 1.5 is therefore simultaneously LOOSER than ankle roll's
+    physical ceiling and far tighter than hip pitch's. This version computes one
+    threshold per action dim from the joint's own limit, so "over" means the same
+    physical thing everywhere: the policy is commanding a position the robot cannot reach.
+
+    WHY IT IS NOT A CAP. `max_excess` defaults to effectively infinity here, on purpose.
+    The scalar version clamps the excess at 5.0, so beyond |a| = threshold + 5 its
+    gradient is EXACTLY ZERO -- it stops discouraging growth precisely where runaway
+    begins. The p14 detonation signature is the policy output running past every physical
+    ceiling while this term, by construction, no longer cares. Keeping the gradient alive
+    is the whole point; bounding the VALUE is what a termination or the critic guard is for.
+
+    Mode defaults to "power" ((|a|/thr)^p), the tail-killer: gradient grows without bound
+    so the further out the policy goes the harder it is pulled back, while at the
+    threshold the cost is exactly 1.0 per dim.
+
+    PRIOR ART that sets the expectation: p13e_actcap1 (scalar hinge, thr 1.0, w -0.05)
+    survived 9000 it with NO detonation where actcap3 (thr 3.0) detonated, and its
+    verdict asked for a sweep of thr 1.0..2.0 that was never run. Operator sim2sim:
+    "Small pushes recovers really well without any chaotic movements. Trips up on much
+    bigger pushes" -- i.e. a threshold that is too tight bites into the large-amplitude
+    saves, which is exactly why the threshold here is scaled to the joint rather than guessed.
+
+    MEASURED 2026-09-18 (probe_actions.py, p14b_stance model_62825, 512 envs, 400 steps,
+    full +-1.5 m/s push envelope) -- and it OVERTURNS the naive reading of "physical
+    ceiling". The hardware-validated policy commands FAR past those ceilings as its normal
+    operating mode:
+
+        joint                mean|a|   max|a|   ceiling   headroom
+        ankle_roll  L/R        3.88     5.85      1.05      0.2x
+        ankle_pitch L/R        4.02     7.87      3.29      0.4-0.6x
+        hip_yaw     L/R        3.09     4.75      1.72      0.4-0.5x
+        knee        L/R        2.59     4.09      5.80      1.4-1.6x
+        hip_roll    L/R        4.78     8.56     12.56      1.5-1.9x
+        torso                  1.50     2.12      9.40      4.4x
+
+    On the NARROW joints the MEAN action is already 3-6x the ceiling. That is not
+    pathology: with a PD controller, commanding past the limit is how you hold a joint AT
+    its limit with full effort, and ankle roll (+-0.262 rad) and hip yaw (+-0.43) are the
+    narrowest joints on the robot. So `limit_frac=1.0` would price normal behaviour, not a
+    tail -- use `threshold_per_joint` with values measured from the probe instead, and keep
+    `limit_frac` only for a deliberate "never command past the limit" experiment.
+
+    threshold_per_joint: explicit per-action-dim thresholds, in action-term joint order.
+    limit_frac: fallback -- threshold = limit_frac * (physical ceiling). Mutually exclusive.
+    NEGATIVE weight.
+    """
+    asset = env.scene[asset_cfg.name]
+    cache = getattr(env, "_amo_perjoint_thr", None)
+    if cache is not None and cache.shape[-1] != env.action_manager.action.shape[-1]:
+        cache = None
+    if cache is None and threshold_per_joint is not None:
+        cache = torch.tensor([float(v) for v in threshold_per_joint], device=env.device).clamp(min=1e-6)
+        if cache.shape[-1] != env.action_manager.action.shape[-1]:
+            raise ValueError(
+                f"[action_magnitude_over_perjoint] threshold_per_joint has {cache.shape[-1]} entries, "
+                f"action has {env.action_manager.action.shape[-1]} dims")
+        env._amo_perjoint_thr = cache
+        print(f"[action_magnitude_over_perjoint] MEASURED per-joint thresholds: "
+              f"{[round(v, 2) for v in cache.tolist()]}")
+    if cache is None:
+        # resolve the joint action term: its joint ids and its scale
+        aterm = None
+        for _n, _t in env.action_manager._terms.items():
+            if hasattr(_t, "_joint_ids"):
+                aterm = _t
+                break
+        if aterm is None:
+            raise ValueError("[action_magnitude_over_perjoint] no joint action term found")
+        ids = aterm._joint_ids
+        jid = list(range(asset.data.joint_pos.shape[-1])) if isinstance(ids, slice) else list(ids)
+        scale = getattr(aterm, "_scale", 1.0)
+        scale = float(scale.flatten()[0]) if hasattr(scale, "flatten") else float(scale)
+        lim = asset.data.joint_pos_limits[0]
+        dflt = asset.data.default_joint_pos[0]
+        thr = torch.tensor(
+            [max(abs(lim[j, 1] - dflt[j]).item(), abs(dflt[j] - lim[j, 0]).item()) / max(scale, 1e-9) for j in jid],
+            device=env.device,
+        )
+        cache = (float(limit_frac if limit_frac is not None else 1.0) * thr).clamp(min=1e-6)
+        env._amo_perjoint_thr = cache
+        print(f"[action_magnitude_over_perjoint] per-joint thresholds (limit_frac={limit_frac}): "
+              f"{[round(v, 2) for v in cache.tolist()]}")
+    a = env.action_manager.action.abs()
+    if mode == "softplus":
+        pen = tau * torch.nn.functional.softplus((a - cache) / tau)
+        return pen.clamp(max=max_excess).sum(dim=-1)
+    if mode == "power":
+        return (a / cache).pow(power).clamp(max=max_excess).sum(dim=-1)
+    return torch.clamp(a - cache, min=0.0, max=max_excess).sum(dim=-1)
+
+
+def stance_bonus_band(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: "SceneEntityCfg",
+    band: float = 0.20,
+    std: float = 0.15,
+) -> "torch.Tensor":
+    """`stance_bonus` with a FLAT-BOTTOMED acceptance band instead of a point target.
+
+    Returns 1.0 while ||q - q_default|| <= `band`, then exp(-(d - band)^2 / std^2).
+
+    WHY (operator's colleague, 2026-09-18): *"Reward funkcija izveidot pielaujamo distancu
+    zonu ar vienadu reward, nevis gradientu uz vienu preciezu punktu, lai noverstu
+    oscilacijas un nevajadzigas kustibas"* -- a tolerance zone of equal reward rather than
+    a gradient toward one exact point, so the policy is not permanently nudged and does
+    not answer with micro-corrections.
+
+    WHY IT FITS THE MEASUREMENT. `stance_bonus` (std 0.15, w +0.75) is the only term with a
+    restoring gradient toward the default pose, and inverting its income across six
+    policies gives the posture each actually holds: kitchen 0.194 rad, p14b_attract_stance
+    0.207, p14b_stance 0.225, p14c_armrate 0.264, p14c_attract 0.401, p14c_tilt 0.412 --
+    an ordering that matched the operator's visual stance ranking five for five. At std
+    0.15 a 0.40 rad posture sits at exp(-7.1) of the ceiling where the GRADIENT is dead
+    too, so nothing pulls it home; and near zero the same kernel pulls constantly, which
+    is the oscillation the advice above targets. A flat band plus a skirt fixes both ends:
+    no pull where the posture is fine, real pull where it is not. Precedent that the
+    constant pull itself can hurt: p11 stance25 was REJECTED because the 0.15 kernel's
+    restoring gradient sank the diamond.
+
+    band: radius (rad, L2 over the selected joints) of the zero-gradient zone.
+    std:  width of the restoring skirt beyond the band. POSITIVE weight.
+    """
+    asset = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None or (isinstance(joint_ids, slice) and joint_ids == slice(None)):
+        current, default = asset.data.joint_pos, asset.data.default_joint_pos
+    else:
+        current = asset.data.joint_pos[:, joint_ids]
+        default = asset.data.default_joint_pos[:, joint_ids]
+    d = torch.linalg.norm(current - default, dim=-1)
+    over = (d - band).clamp(min=0.0)
+    return torch.exp(-over * over / (std * std))
+
+
 def joint_torque_over_limit(
     env: "ManagerBasedRLEnv",
     limit_nm: float = 80.0,
