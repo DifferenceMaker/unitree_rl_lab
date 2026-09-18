@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import torch
+
+from isaaclab.utils import math as math_utils
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -453,3 +455,48 @@ def offset_spawn_from_anchor(
     root[:, 7:] = 0.0                                     # no velocity carried into the seed
     asset.write_root_pose_to_sim(root[:, :7], env_ids=pick)
     asset.write_root_velocity_to_sim(root[:, 7:], env_ids=pick)
+
+
+def push_by_setting_velocity_disc(
+    env: "ManagerBasedEnv",
+    env_ids: "torch.Tensor",
+    velocity_range: dict,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Push like `push_by_setting_velocity`, but ISOTROPIC and truly magnitude-capped.
+
+    WHY (2026-09-18). The stock event samples vx and vy INDEPENDENTLY and uniformly, i.e.
+    uniformly over a SQUARE. Two consequences nobody had looked at:
+      * direction is NOT uniform -- at high magnitude the probability mass sits toward
+        the corners;
+      * the magnitude cap is direction-dependent. At the top curriculum level of 1.5 m/s
+        per axis the robot gets 1.5 m/s forward/back/left/right but **2.12 m/s on the
+        diagonals**, 41 % harder, and that corner is the hardest disturbance in the whole
+        curriculum.
+    This version draws a direction uniformly on the circle and a magnitude uniformly in
+    [0, L], so every direction is equally likely and |v| <= L in ALL of them.
+
+    DROP-IN: it reads the same `velocity_range` dict the stock event uses, taking
+    L = max |bound| over the x and y entries, so `push_velocity_curriculum` keeps driving
+    it unchanged. z/roll/pitch/yaw entries are honoured as in the stock event.
+
+    Like the stock event this ADDS to the current root velocity (an impulse), it does not
+    overwrite it.
+    """
+    asset = env.scene[asset_cfg.name]
+    vel_w = asset.data.root_vel_w[env_ids]
+    n = vel_w.shape[0]
+    dev = asset.device
+    xr = velocity_range.get("x", (0.0, 0.0))
+    yr = velocity_range.get("y", (0.0, 0.0))
+    L = max(abs(xr[0]), abs(xr[1]), abs(yr[0]), abs(yr[1]))
+    theta = torch.rand(n, device=dev) * (2.0 * math.pi)
+    r = torch.rand(n, device=dev) * L
+    vel_w[:, 0] += r * torch.cos(theta)
+    vel_w[:, 1] += r * torch.sin(theta)
+    # remaining axes keep the stock behaviour
+    rest = [velocity_range.get(k, (0.0, 0.0)) for k in ("z", "roll", "pitch", "yaw")]
+    if any(lo != 0.0 or hi != 0.0 for lo, hi in rest):
+        rr = torch.tensor(rest, device=dev)
+        vel_w[:, 2:] += math_utils.sample_uniform(rr[:, 0], rr[:, 1], vel_w[:, 2:].shape, device=dev)
+    asset.write_root_velocity_to_sim(vel_w, env_ids=env_ids)
