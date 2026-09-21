@@ -44,6 +44,19 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument(
+    "--resume_curriculum", action="store_true", default=False,
+    help="After a warmstart load, set env.common_step_counter = loaded_iteration * num_steps_per_env so every "
+         "curriculum term (push_velocity, sustained_push, ik_workspace) resumes at the PARENT's level instead of "
+         "restarting from warmup under a critic that was fitted at the parent's level (p14e, 2026-09-21).")
+parser.add_argument(
+    "--curriculum_step_offset", type=int, default=None,
+    help="Explicit env.common_step_counter to start from; overrides the value --resume_curriculum derives.")
+parser.add_argument(
+    "--critic_warmup_iters", type=int, default=0,
+    help="Critic-only phase: for the first N PPO iterations the actor's gradients (policy net and std) are dropped "
+         "before the optimizer step, so the loaded critic re-fits the new reward ledger before the actor moves. "
+         "Requires GuardedPPO (agent.algorithm.class_name). p14e, 2026-09-21.")
+parser.add_argument(
     "--reset_noise_std", type=float, default=None,
     help="After loading a warmstart checkpoint, reset the policy's action std to this value "
          "(every parameter named *log_std_param* in the actor). 2026-09-15 finding: fixed LR "
@@ -196,6 +209,66 @@ def _safe_resume(runner, resume_path):
         print(f"[INFO]: Resuming from iteration {ckpt['iter']}.")
     print(f"[INFO]: Optimizer state SKIPPED (will re-initialize on first step).")
 
+def _apply_curriculum_offset(env, runner, agent_cfg, args_cli):
+    """Resume every curriculum term at the parent's level (p14e).
+
+    All three balance curricula key off ``env.common_step_counter`` (curriculums.py), which
+    ManagerBasedRLEnv zeroes ONLY in __init__ -- a warmstart therefore restarts them at warmup:
+    push 0.25 / sustained 0 N / ik 0.6 under a critic that learned values at 1.5 / 50 N / 1.0,
+    and the world then steps every 125 iterations. Setting the counter to loaded_iteration x
+    num_steps_per_env puts every term at the level the parent finished on. reset() does not
+    touch the counter, so setting it once before learn() is enough.
+    """
+    if args_cli.curriculum_step_offset is None and not args_cli.resume_curriculum:
+        return
+    loaded_it = int(getattr(runner, "current_learning_iteration", 0))
+    nspe = int(agent_cfg.num_steps_per_env)
+    offset = int(args_cli.curriculum_step_offset) if args_cli.curriculum_step_offset is not None else loaded_it * nspe
+    base = env.unwrapped
+    before = int(base.common_step_counter)
+    base.common_step_counter = offset
+    # Apply NOW, for every env. Curriculum terms are otherwise only re-evaluated when an env
+    # resets, so with few envs the warmup-level event params (and the logged Curriculum/*
+    # values) would stay stale for many iterations -- the 4-iteration smoke logged push 0.25
+    # after the counter was set (2026-09-21). compute(None) evaluates all terms, writes the
+    # event-term params (push velocity range etc.) and stores the state that gets logged.
+    levels = {}
+    cm = getattr(base, "curriculum_manager", None)
+    if cm is not None:
+        cm.compute(env_ids=None)
+        st = getattr(cm, "_curriculum_state", {}) or {}
+        for k, v in st.items():
+            try:
+                levels[k] = float(v.item() if hasattr(v, "item") else v)
+            except Exception:
+                levels[k] = str(v)
+        # extras["log"] (what rsl_rl prints as Curriculum/*) is only rewritten inside _reset_idx,
+        # so until some env resets the console shows the wrapper-init values (push 0.25) even
+        # though the event params already carry the parent's level -- a 64-env 4-iteration smoke
+        # printed exactly that (2026-09-21). Write the recomputed state in so iteration 1 is truthful.
+        try:
+            log = base.extras.setdefault("log", {})
+            for k, v in st.items():
+                log[f"Curriculum/{k}"] = v
+        except Exception as e:  # cosmetic only -- never fail a run over the log line
+            print(f"[WARN]: resume_curriculum: could not pre-fill extras['log'] ({e})")
+    print(f"[INFO]: resume_curriculum: common_step_counter {before} -> {offset} "
+          f"(loaded iteration {loaded_it} x {nspe} steps/iter); curriculum recomputed for all envs -> "
+          f"{levels if levels else 'no curriculum manager'}", flush=True)
+
+
+def _apply_critic_warmup(runner, n_iters: int):
+    if not n_iters:
+        return
+    alg = runner.alg
+    if not hasattr(alg, "critic_warmup_updates"):
+        raise SystemExit("[ERROR]: --critic_warmup_iters needs GuardedPPO as agent.algorithm.class_name "
+                         f"(got {type(alg).__name__}) -- refusing to run a warm-up that would silently not happen")
+    alg.critic_warmup_updates = int(n_iters)
+    print(f"[INFO]: critic_warmup: actor gradients dropped for the first {n_iters} PPO iterations "
+          f"(critic-only; policy net and std frozen). Loss/critic_only logs the phase.", flush=True)
+
+
 def _reset_noise_std(runner, value: float):
     """Set the actor's exploration std to `value` after a warmstart load.
 
@@ -310,6 +383,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         _safe_resume(runner, resume_path)
         if args_cli.reset_noise_std is not None:
             _reset_noise_std(runner, float(args_cli.reset_noise_std))
+        _apply_curriculum_offset(env, runner, agent_cfg, args_cli)
+    elif args_cli.resume_curriculum or args_cli.curriculum_step_offset is not None:
+        print("[WARN]: --resume_curriculum given without a warmstart (no --resume) -- nothing to resume, ignored.")
+    _apply_critic_warmup(runner, int(args_cli.critic_warmup_iters))
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
