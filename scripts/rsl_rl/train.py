@@ -57,6 +57,10 @@ parser.add_argument(
          "before the optimizer step, so the loaded critic re-fits the new reward ledger before the actor moves. "
          "Requires GuardedPPO (agent.algorithm.class_name). p14e, 2026-09-21.")
 parser.add_argument(
+    "--reinit_critic", action="store_true", default=False,
+    help="After a warmstart load, DISCARD the parent's critic: re-initialise every nn.Linear in it and wipe its "
+         "Adam state (actor untouched). Pair with --critic_warmup_iters. p14e_critic_reinit, 2026-09-21.")
+parser.add_argument(
     "--reset_noise_std", type=float, default=None,
     help="After loading a warmstart checkpoint, reset the policy's action std to this value "
          "(every parameter named *log_std_param* in the actor). 2026-09-15 finding: fixed LR "
@@ -381,11 +385,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model with fallback for architecture changes
         _safe_resume(runner, resume_path)
+        if args_cli.reinit_critic:
+            from unitree_rl_lab.tasks.locomotion.agents.guarded_ppo import reinit_critic
+            reinit_critic(runner.alg)
         if args_cli.reset_noise_std is not None:
             _reset_noise_std(runner, float(args_cli.reset_noise_std))
         _apply_curriculum_offset(env, runner, agent_cfg, args_cli)
-    elif args_cli.resume_curriculum or args_cli.curriculum_step_offset is not None:
-        print("[WARN]: --resume_curriculum given without a warmstart (no --resume) -- nothing to resume, ignored.")
+    elif args_cli.resume_curriculum or args_cli.curriculum_step_offset is not None or args_cli.reinit_critic:
+        print("[WARN]: --resume_curriculum / --reinit_critic given without a warmstart (no --resume) -- ignored.")
     _apply_critic_warmup(runner, int(args_cli.critic_warmup_iters))
 
     # dump the configuration into log-directory
