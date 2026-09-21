@@ -82,3 +82,47 @@ class GuardedPPO(PPO):
             print(f"[GuardedPPO] critic warm-up complete after {self._updates_done} iterations -- actor unfrozen",
                   flush=True)
         return loss_dict
+
+
+def reinit_critic(alg) -> dict:
+    """--reinit_critic (p14e_critic_reinit, 2026-09-21): DISCARD the parent's value function.
+
+    The seven p14e rows all keep the warmstart parent's critic and ask how to make it cope
+    (warm-up, curriculum resume, no value clip, calmer actor). This is the opposite
+    hypothesis: the parent critic is not stale but ANCHORED -- 62k iterations of sharp
+    features and Adam moments fitted to another ledger -- and re-fitting FROM it is worse
+    than fitting from zero. The scratch critic, which never saw the old ledger, is smooth
+    for 20000 iterations (one spike, at init). Paired with the same 300-iteration critic
+    warm-up as p14e_critic, the only difference between the two rows is keep vs discard.
+
+    What it does: every nn.Linear in the critic gets reset_parameters() (that IS the value
+    function; rsl_rl's critic is a small MLP), and the critic parameters' Adam state entries
+    are deleted so the parent's second-moment scale cannot steer a random network. The
+    critic's observation normaliser (if any) is left alone -- its running statistics describe
+    the INPUTS and are still valid. The actor and its optimizer state are untouched.
+    Value loss at iteration 1 will be LARGE by design (values start near 0 against returns
+    of ~1300); that is the empirical signature that the discard happened.
+    """
+    critic = getattr(alg, "critic", None)
+    if critic is None:
+        raise SystemExit("[ERROR]: --reinit_critic: alg has no .critic (rsl_rl >= 5 expected)")
+    before = {n: p.detach().clone() for n, p in critic.named_parameters()}
+    n_lin = 0
+    for m in critic.modules():
+        if isinstance(m, torch.nn.Linear):
+            m.reset_parameters()
+            n_lin += 1
+    changed = sum(int(not torch.equal(before[n], p.detach())) for n, p in critic.named_parameters())
+    crit_ids = {id(p) for p in critic.parameters()}
+    wiped = 0
+    for p in list(alg.optimizer.state.keys()):
+        if id(p) in crit_ids:
+            del alg.optimizer.state[p]
+            wiped += 1
+    if changed == 0:
+        raise SystemExit("[ERROR]: --reinit_critic changed nothing -- no nn.Linear found in the critic?")
+    info = {"linear_layers": n_lin, "tensors_changed": changed, "tensors_total": len(before), "adam_entries_wiped": wiped}
+    print(f"[INFO]: reinit_critic: {n_lin} Linear layers re-initialised, {changed}/{len(before)} critic parameter "
+          f"tensors changed, {wiped} Adam state entries wiped; actor untouched. Expect a LARGE value loss at "
+          f"iteration 1 (fresh critic) -- that is the discard showing.", flush=True)
+    return info
