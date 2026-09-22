@@ -532,3 +532,47 @@ def desk_draw_reach_curriculum(
     lo = cmd.cfg.desk_x_range[0]
     cmd.cfg.desk_x_range = (lo, far)
     return torch.tensor(far, device=env.device)
+
+
+def reward_schedule_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    reward_term_name: str,
+    weight_from: float | None = None,
+    weight_to: float | None = None,
+    params_from: dict | None = None,
+    params_to: dict | None = None,
+    ramp_steps: int = 48000,
+    start_steps: int = 0,
+) -> "torch.Tensor":
+    """Ramp a reward term's WEIGHT and/or numeric PARAMS linearly from `*_from` to `*_to`.
+
+    p14f_rampw (2026-09-22). The detonation anatomy (09-21) says a warmstart breaks on the ledger
+    DELTA: the critic re-fits a stepped income, std rises on the new income. This enters the delta
+    gradually instead -- the tilt delta (upright_bonus w 1 -> 3, std .025 -> .05) over ~2000 it.
+
+    The ramp is RELATIVE TO THE FIRST CALL, not to common_step_counter=0: with --resume_curriculum
+    the counter starts at the parent's step (~1.5e6), so an absolute schedule would already be
+    finished. The first call latches t0 on the env (one latch per term name).
+
+    `start_steps` delays the ramp start after t0 (default 0). Ticks are env.common_step_counter
+    units (24 per PPO iteration at num_steps_per_env=24): ramp_steps 48000 = 2000 iterations.
+    Returns the current weight (or the ramp fraction when only params are scheduled) for the
+    Curriculum/<name> log.
+    """
+    latch = getattr(env, "_reward_schedule_t0", None)
+    if latch is None:
+        latch = {}
+        env._reward_schedule_t0 = latch
+    t0 = latch.setdefault(reward_term_name, int(env.common_step_counter))
+    elapsed = int(env.common_step_counter) - t0 - int(start_steps)
+    u = 0.0 if elapsed <= 0 else min(1.0, elapsed / float(max(1, ramp_steps)))
+    term = env.reward_manager.get_term_cfg(reward_term_name)
+    if weight_from is not None and weight_to is not None:
+        term.weight = float(weight_from) + u * (float(weight_to) - float(weight_from))
+    if params_from and params_to:
+        for k, v1 in params_to.items():
+            v0 = params_from.get(k, term.params.get(k))
+            term.params[k] = float(v0) + u * (float(v1) - float(v0))
+    out = term.weight if (weight_from is not None and weight_to is not None) else u
+    return torch.tensor(float(out), device=env.device)

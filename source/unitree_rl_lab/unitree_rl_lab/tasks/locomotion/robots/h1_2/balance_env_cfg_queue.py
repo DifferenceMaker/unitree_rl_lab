@@ -36,6 +36,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
 from unitree_rl_lab.tasks.locomotion import mdp
@@ -141,7 +142,7 @@ def _apply_overrides(cfg_self, overrides: dict):
     # --- edit_raw: arbitrary python with `self` bound to the cfg ---
     for line in overrides.get("edit_raw", []):
         print(f"[QUEUE]   edit_raw    {line}")
-        exec(line, {"mdp": mdp, "RewTerm": RewTerm, "EventTerm": EventTerm,
+        exec(line, {"mdp": mdp, "RewTerm": RewTerm, "EventTerm": EventTerm, "CurrTerm": CurrTerm,
                     "ObsTerm": ObsTerm, "SceneEntityCfg": SceneEntityCfg},
              {"self": cfg_self})
 
