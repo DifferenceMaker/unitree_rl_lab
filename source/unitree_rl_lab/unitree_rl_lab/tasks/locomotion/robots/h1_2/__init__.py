@@ -459,3 +459,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
     },
 )
+
+# HipsArm-FIXLR (2026-09-28): the p14g_hips_armfull recipe promoted to trunk -- Stance + tilt (std .05
+# w3) + hips -1.0 + the full arm envelope baked, real-hand body. p14h jobs warmstart
+# milestones/p14g_hips_armfull_2026-09-23 on this task and carry only their deltas. Same runner cfg /
+# experiment_name as Stance-FIXLR, so warmstarts and harvest paths are unchanged.
+gym.register(
+    id="Unitree-H1_2-Balance-HipsArm-FIXLR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_hipsarm:RobotEnvCfgHipsArm",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_hipsarm:RobotPlayEnvCfgHipsArm",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
