@@ -445,3 +445,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueuePPORunnerCfg",
     },
 )
+
+# LM6 (2026-09-28): the p14 balance conclusions unioned onto the LM5-C + lm5f_symonly recipe,
+# real-hand body + Unitree armature table, trained FROM SCRATCH (operator: "a fresh start").
+# Same runner as LM5-C (mirror 0.1, adaptive lr, GuardedPPO) -- fixed lr is a polish tool.
+gym.register(
+    id="Unitree-H1_2-LM6",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm6_env_cfg:RobotEnvCfgLM6",
+        "play_env_cfg_entry_point": f"{__name__}.lm6_env_cfg:RobotPlayEnvCfgLM6",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
