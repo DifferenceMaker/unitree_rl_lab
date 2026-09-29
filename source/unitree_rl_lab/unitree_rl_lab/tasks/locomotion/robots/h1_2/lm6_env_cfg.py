@@ -150,12 +150,30 @@ class RobotPlayEnvCfgLM6(RobotPlayEnvCfg):
 # episode length ~530 steps = 10.6 s = the first push, base_height termination 1.00, action std
 # frozen at 0.96, lin_vel_levels never left 0.40. push_velocity hit 1.5 m/s by iteration ~1000.
 # Operator: "we are administrating the curric level increase too frequently ... sparse out the
-# jumps ... implement the ramping the same way unitree does it? They had a gated ramp."
-LM6B_GATE = dict(gate_term="time_out", gate_frac=0.5, min_resets=4096, min_hold_steps=24000, warmup_steps=24000)
+# jumps ... implement the ramping the same way unitree does it? They had a gated ramp." /
+# "Tracking walking before adding pushes is the right call ... make sure the pushing comes after the
+# tracking is fine."
+# The gate: pushes advance only when TRACKING is fine (track_lin_vel_xy earns >= 50 % of its weight over
+# the recent ~4096 episode ends -- the upstream lin_vel_cmd_levels metric, which couples quality with
+# survival) AND >= 50 % of those episodes ran to time-out, >= 1000 it per level, first level held 1000 it.
+LM6B_GATE = dict(gate_reward_term="track_lin_vel_xy", gate_frac=0.5, survival_term="time_out", survival_frac=0.5,
+                 min_resets=4096, min_hold_steps=24000, warmup_steps=24000)
+# The SCRATCH tracking economy (lm4b_mirror01 / lm4c_lcp_scratch, the only scratch walkers that ever escaped the
+# first-push plateau): w 3 / 1.5, std 0.5, no track_err. lm6's 10 / 7 at std 0.15 + track_err -1 came from lm5e
+# onward, all WARMSTARTED policies that already tracked; at scratch-quality errors (0.3-0.5 m/s) a std .15 kernel
+# earns ~nothing and has no gradient (Bible rule 31), and no lm6 row escaped in 10k it. The sharp economy is a
+# later polish stage on a warmstart (lm5e "precise"), re-applied by the lm6b_sharp control row.
+LM6B_TRACK_W, LM6B_TRACK_ANG_W, LM6B_TRACK_STD = 3.0, 1.5, 0.5
 
 
 def _make_lm6b(cfg):
     from isaaclab.managers import CurriculumTermCfg as CurrTerm
+    R = cfg.rewards
+    R.track_lin_vel_xy.weight = LM6B_TRACK_W
+    R.track_ang_vel_z.weight = LM6B_TRACK_ANG_W
+    R.track_lin_vel_xy.params["std"] = LM6B_TRACK_STD
+    R.track_ang_vel_z.params["std"] = LM6B_TRACK_STD
+    R.track_err = None
     pv = cfg.curriculum.push_velocity
     cfg.curriculum.push_velocity = CurrTerm(
         func=mdp.push_velocity_curriculum_gated,
@@ -167,6 +185,8 @@ def _make_lm6b(cfg):
         params={"event_term_name": "sustained_push_apply", "levels": tuple(sp.params["levels"]), **LM6B_GATE},
     )
     assert cfg.curriculum.push_velocity.params["levels"][-1] == 1.5, "[LM6B] push ceiling must stay 1.5 m/s"
+    assert cfg.curriculum.push_velocity.params["gate_reward_term"] == "track_lin_vel_xy", "[LM6B] pushes gate on tracking"
+    assert R.track_lin_vel_xy.params["std"] == 0.5 and R.track_lin_vel_xy.weight == 3.0 and R.track_err is None, "[LM6B] scratch tracking economy"
 
 
 @configclass
