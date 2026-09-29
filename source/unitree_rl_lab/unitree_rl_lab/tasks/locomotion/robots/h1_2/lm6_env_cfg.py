@@ -143,3 +143,47 @@ class RobotPlayEnvCfgLM6(RobotPlayEnvCfg):
         _lm6_stack(self)
         self.commands.base_velocity.debug_vis = True
         _apply_overrides(self, _load_overrides())
+
+
+# ── LM6B: the same trunk with COMPETENCE-gated push curricula (2026-09-29) ──────────────────
+# lm6 (clock-stepped pushes): all four rows flat at reward ~200 from iteration 500 to 10000,
+# episode length ~530 steps = 10.6 s = the first push, base_height termination 1.00, action std
+# frozen at 0.96, lin_vel_levels never left 0.40. push_velocity hit 1.5 m/s by iteration ~1000.
+# Operator: "we are administrating the curric level increase too frequently ... sparse out the
+# jumps ... implement the ramping the same way unitree does it? They had a gated ramp."
+LM6B_GATE = dict(gate_term="time_out", gate_frac=0.5, min_resets=4096, min_hold_steps=24000, warmup_steps=24000)
+
+
+def _make_lm6b(cfg):
+    from isaaclab.managers import CurriculumTermCfg as CurrTerm
+    pv = cfg.curriculum.push_velocity
+    cfg.curriculum.push_velocity = CurrTerm(
+        func=mdp.push_velocity_curriculum_gated,
+        params={"event_term_name": "push_robot", "levels": tuple(pv.params["levels"]), **LM6B_GATE},
+    )
+    sp = cfg.curriculum.sustained_push
+    cfg.curriculum.sustained_push = CurrTerm(
+        func=mdp.sustained_push_curriculum_gated,
+        params={"event_term_name": "sustained_push_apply", "levels": tuple(sp.params["levels"]), **LM6B_GATE},
+    )
+    assert cfg.curriculum.push_velocity.params["levels"][-1] == 1.5, "[LM6B] push ceiling must stay 1.5 m/s"
+
+
+@configclass
+class RobotEnvCfgLM6B(RobotEnvCfg):
+    """Unitree-H1_2-LM6B: LM6 + survival-gated push / sustained-push curricula."""
+    def __post_init__(self):
+        super().__post_init__()
+        _lm6_stack(self)
+        _make_lm6b(self)
+        _apply_overrides(self, _load_overrides())   # jobs win, applied last
+
+
+@configclass
+class RobotPlayEnvCfgLM6B(RobotPlayEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _lm6_stack(self)
+        _make_lm6b(self)
+        self.commands.base_velocity.debug_vis = True
+        _apply_overrides(self, _load_overrides())

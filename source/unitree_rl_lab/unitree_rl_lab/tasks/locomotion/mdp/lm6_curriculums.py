@@ -1,0 +1,96 @@
+"""LM6B (2026-09-29): push curricula gated on COMPETENCE, not on the clock.
+
+The step-clocked push_velocity_curriculum / sustained_push_curriculum advance one level every
+hold_steps (3000 env steps = ~125 PPO iterations on the balance trunk), so a SCRATCH walker met
+1.5 m/s pushes by iteration ~1000, when it had just learned to stand: every lm6 episode ended at
+~10.6 s = the first push (episode length ~530 steps, base_height termination 1.00, time_out 0.00,
+action std frozen at 0.96 for 9000 iterations, lin_vel_levels never left 0.40). A warmstarted
+walker inherited push competence from its balance parent and never showed this; from scratch the
+clock is the wrong gate.
+
+Gate = SURVIVAL, the way lin_vel_cmd_levels gates the command ranges on the tracking reward
+(upstream unitree h1/g1 style): a level advances only when, since the last change, at least
+`min_resets` episodes have ended AND at least `gate_frac` of them ended by TIME-OUT (the robot
+stood/walked the whole episode), AND at least `min_hold_steps` env steps have passed. Levels never
+descend. `warmup_steps` holds levels[0] regardless. Returns the current level for logging under the
+same Curriculum/<name> key as before.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
+
+import torch
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+def _survival_gate(env, env_ids, key: str, n_levels: int, gate_term: str, gate_frac: float,
+                   min_resets: int, min_hold_steps: int, warmup_steps: int) -> int:
+    """Shared state machine: returns the current level index after accounting this reset batch."""
+    states = getattr(env, "_lm6_gate_states", None)
+    if states is None:
+        states = env._lm6_gate_states = {}
+    st = states.get(key)
+    step = int(env.common_step_counter)
+    if st is None:
+        st = states[key] = {"level": 0, "last_change": step, "resets": 0, "timeouts": 0}
+    if len(env_ids) > 0:
+        to = env.termination_manager.get_term(gate_term)[env_ids]
+        st["resets"] += int(len(env_ids))
+        st["timeouts"] += int(to.sum().item())
+    if (st["level"] < n_levels - 1 and step >= warmup_steps and step - st["last_change"] >= min_hold_steps
+            and st["resets"] >= min_resets and st["timeouts"] >= gate_frac * st["resets"]):
+        st["level"] += 1
+        st["last_change"] = step
+        st["resets"] = 0
+        st["timeouts"] = 0
+    return st["level"]
+
+
+def push_velocity_curriculum_gated(
+    env: "ManagerBasedRLEnv",
+    env_ids: Sequence[int],
+    event_term_name: str = "push_robot",
+    levels: tuple = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5),
+    gate_term: str = "time_out",
+    gate_frac: float = 0.5,
+    min_resets: int = 4096,
+    min_hold_steps: int = 24000,
+    warmup_steps: int = 24000,
+) -> torch.Tensor:
+    """push_velocity_curriculum with the survival gate (see module docstring). Same levels/log key."""
+    lvl = _survival_gate(env, env_ids, f"{event_term_name}:vel", len(levels), gate_term, gate_frac,
+                         min_resets, min_hold_steps, warmup_steps)
+    target_vel = float(levels[lvl])
+    event_term = env.event_manager.get_term_cfg(event_term_name)
+    event_term.params["velocity_range"] = {"x": (-target_vel, target_vel), "y": (-target_vel, target_vel)}
+    return torch.tensor(target_vel, device=env.device)
+
+
+def sustained_push_curriculum_gated(
+    env: "ManagerBasedRLEnv",
+    env_ids: Sequence[int],
+    event_term_name: str = "sustained_push_apply",
+    levels: tuple = (
+        ((0.0, 0.0), (0.0, 0.0)),
+        ((0.0, 15.0), (1.5, 3.0)),
+        ((0.0, 30.0), (2.0, 3.5)),
+        ((0.0, 40.0), (2.0, 3.5)),
+        ((0.0, 50.0), (2.0, 4.0)),
+    ),
+    gate_term: str = "time_out",
+    gate_frac: float = 0.5,
+    min_resets: int = 4096,
+    min_hold_steps: int = 24000,
+    warmup_steps: int = 24000,
+) -> torch.Tensor:
+    """sustained_push_curriculum with the survival gate. Returns the current max force (N) for logging."""
+    lvl = _survival_gate(env, env_ids, f"{event_term_name}:force", len(levels), gate_term, gate_frac,
+                         min_resets, min_hold_steps, warmup_steps)
+    force_range, duration_range = levels[lvl]
+    event_term = env.event_manager.get_term_cfg(event_term_name)
+    event_term.params["force_magnitude_range"] = tuple(force_range)
+    event_term.params["duration_range_s"] = tuple(duration_range)
+    return torch.tensor(float(force_range[1]), device=env.device)

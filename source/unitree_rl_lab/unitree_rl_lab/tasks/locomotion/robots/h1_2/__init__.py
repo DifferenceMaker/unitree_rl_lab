@@ -474,3 +474,18 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
     },
 )
+
+# LM6B (2026-09-29): LM6 with the push / sustained-push curricula gated on SURVIVAL (>= 50 % time-outs
+# over >= 4096 resets, >= 1000 iterations per level, first level held 1000 iterations) instead of the
+# step clock that put 1.5 m/s pushes on a scratch walker by iteration ~1000 (lm6: every episode ended
+# at the first push). Same runner as LM6.
+gym.register(
+    id="Unitree-H1_2-LM6B",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm6_env_cfg:RobotEnvCfgLM6B",
+        "play_env_cfg_entry_point": f"{__name__}.lm6_env_cfg:RobotPlayEnvCfgLM6B",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
