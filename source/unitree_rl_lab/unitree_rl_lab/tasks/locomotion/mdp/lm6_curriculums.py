@@ -10,8 +10,8 @@ clock is the wrong gate.
 
 Gate = SURVIVAL, the way lin_vel_cmd_levels gates the command ranges on the tracking reward
 (upstream unitree h1/g1 style): a level advances only when, since the last change, at least
-`min_resets` episodes have ended AND at least `gate_frac` of them ended by TIME-OUT (the robot
-stood/walked the whole episode), AND at least `min_hold_steps` env steps have passed. Levels never
+`min_resets` episodes have ended AND the exponentially-weighted fraction of the recent ~`min_resets` episode
+ends that were TIME-OUTS (the robot stood/walked the whole episode) is at least `gate_frac`, AND at least `min_hold_steps` env steps have passed. Levels never
 descend. `warmup_steps` holds levels[0] regardless. Returns the current level for logging under the
 same Curriculum/<name> key as before.
 """
@@ -35,17 +35,22 @@ def _survival_gate(env, env_ids, key: str, n_levels: int, gate_term: str, gate_f
     st = states.get(key)
     step = int(env.common_step_counter)
     if st is None:
-        st = states[key] = {"level": 0, "last_change": step, "resets": 0, "timeouts": 0}
-    if len(env_ids) > 0:
-        to = env.termination_manager.get_term(gate_term)[env_ids]
-        st["resets"] += int(len(env_ids))
-        st["timeouts"] += int(to.sum().item())
+        st = states[key] = {"level": 0, "last_change": step, "resets": 0, "surv": 0.0}
+    n = int(len(env_ids))
+    if n > 0:
+        # survival = exponentially-weighted time-out fraction with a memory of ~min_resets episode
+        # ends (NOT cumulative since the last change: a long dying phase would otherwise bury the
+        # first thousands of survivals and the gate would open thousands of resets late)
+        to = env.termination_manager.get_term(gate_term)[env_ids].float().mean().item()
+        decay = (1.0 - 1.0 / max(min_resets, 1)) ** n
+        st["surv"] = st["surv"] * decay + to * (1.0 - decay)
+        st["resets"] += n
     if (st["level"] < n_levels - 1 and step >= warmup_steps and step - st["last_change"] >= min_hold_steps
-            and st["resets"] >= min_resets and st["timeouts"] >= gate_frac * st["resets"]):
+            and st["resets"] >= min_resets and st["surv"] >= gate_frac):
         st["level"] += 1
         st["last_change"] = step
         st["resets"] = 0
-        st["timeouts"] = 0
+        st["surv"] = 0.0          # the new level must prove itself on fresh evidence
     return st["level"]
 
 
