@@ -418,6 +418,20 @@ gym.register(
     },
 )
 
+# Desk8-Work (2026-09-30): the WORK policy trunk -- Desk7 + the dp8c_yaw heading stack (93 obs)
+# + the BALANCE carry list, transit teleports OFF, anchor frozen, BALANCE push regime and
+# HipsArm arm envelope, lean-aware base_height back at -15, hand790 body. SCRATCH.
+gym.register(
+    id="Unitree-H1_2-Balance-Desk8-Work",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8:RobotEnvCfgDesk8Work",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8:RobotPlayEnvCfgDesk8Work",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
 # lm5-fsb: FastSAC Run B — LM5 world, holosoma's 10-term minimalist rewards
 # (g1_29dof_loco_fast_sac preset verbatim). Run A isolates the algorithm;
 # this isolates the reward philosophy. Trained via train_fastsac.py (the

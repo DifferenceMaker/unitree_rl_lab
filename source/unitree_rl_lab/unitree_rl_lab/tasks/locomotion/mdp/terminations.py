@@ -76,3 +76,20 @@ def desk_penetration(
     inside = (lx.abs() < hx) & (ly.abs() < hy) & (body[:, :, 2] < top + z_margin)
     inside = inside & torch.isfinite(body).all(dim=-1)
     return inside.any(dim=1)
+
+
+def root_displaced_from_spawn(
+    env: "ManagerBasedRLEnv",
+    radius: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """dp9_work_zone (2026-09-30): the WORK policy's zone boundary. In deployment a robot displaced
+    beyond the work zone is handed to HOMING (the walk policy + goal commander), so the WORK policy
+    must never be paid for walking back: the episode simply ends when the root leaves ``radius`` m
+    of the spawn anchor (``env.spawn_root_xy`` from capture_spawn_state). Silent no-op before the
+    first reset has captured the spawn."""
+    if not hasattr(env, "spawn_root_xy"):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    asset = env.scene[asset_cfg.name]
+    d = torch.norm(asset.data.root_pos_w[:, :2] - env.spawn_root_xy, dim=-1)
+    return d > radius
