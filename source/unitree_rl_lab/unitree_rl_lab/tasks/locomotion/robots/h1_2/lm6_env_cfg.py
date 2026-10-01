@@ -207,3 +207,63 @@ class RobotPlayEnvCfgLM6B(RobotPlayEnvCfg):
         _make_lm6b(self)
         self.commands.base_velocity.debug_vis = True
         _apply_overrides(self, _load_overrides())
+
+
+# ============================================================================
+# LM6C (2026-10-01): the lm6b_sharp recipe PROMOTED TO TRUNK + working gates.
+# Operator, sim2sim 2026-10-01: lm6b_sharp "DOES track ... IT TRACKS WZ ... go off of this policy"; the
+# soft-economy rows (base/energy/nopose) stood still on the rig. So the sharp economy (10 / 7 at
+# std .15 + track_err -1 = the lm5e/lm6 values) is baked here and lm6b_sharp_2026-09-29 is the parent.
+# GATES, measured on lm6b: 'tracking >= 50 % of the term's weight' is structurally unreachable under
+# the std .15 kernel (an RMS error of 0.15 m/s already pays only 37 %; with command transients a GOOD
+# walker holds ~30 %), so the push gate never opened (push 0.25 / sustained 0 for 20k it) and the
+# velocity gate advanced only on lucky reset batches (lin 0.4 -> 0.9, ang 0.5 at 20k). Thresholds set
+# to what the kernel can hold while a STANDER still fails them (a stander at a 0.5-1 m/s command earns
+# ~0 % at std .15): push/sustained gate tracking 0.20 + survival 0.60; lin/ang velocity gates 0.25.
+# Sliding (operator: "it looks like it is sliding its feet"): feet_slide -0.5 earned -0.065/step against
+# clearance +8.1 (w 12) -> back to the lm3 value -2.0 ("Increase it back").
+# ============================================================================
+LM6C_TRACK_W, LM6C_TRACK_ANG_W, LM6C_TRACK_STD, LM6C_TRACK_ERR_W = 10.0, 7.0, 0.15, -1.0
+LM6C_FEET_SLIDE_W = -2.0
+LM6C_PUSH_GATE = dict(gate_frac=0.20, survival_frac=0.60)
+LM6C_VEL_GATE_FRAC = 0.25
+
+
+def _make_lm6c(cfg):
+    _make_lm6b(cfg)
+    R = cfg.rewards
+    # the sharp tracking economy, baked (lm6b_sharp.job 1:1)
+    R.track_lin_vel_xy.weight = LM6C_TRACK_W
+    R.track_ang_vel_z.weight = LM6C_TRACK_ANG_W
+    R.track_lin_vel_xy.params["std"] = LM6C_TRACK_STD
+    R.track_ang_vel_z.params["std"] = LM6C_TRACK_STD
+    R.track_err = RewTerm(func=mdp.track_vel_err_l2, weight=LM6C_TRACK_ERR_W, params={"command_name": "base_velocity"})
+    # the slide priced again
+    R.feet_slide.weight = LM6C_FEET_SLIDE_W
+    # gates the sharp kernel can actually pass
+    cfg.curriculum.push_velocity.params.update(LM6C_PUSH_GATE)
+    cfg.curriculum.sustained_push.params.update(LM6C_PUSH_GATE)
+    cfg.curriculum.lin_vel_levels.params["gate_frac"] = LM6C_VEL_GATE_FRAC
+    cfg.curriculum.ang_vel_levels.params["gate_frac"] = LM6C_VEL_GATE_FRAC
+    assert R.track_lin_vel_xy.weight == 10.0 and R.track_lin_vel_xy.params["std"] == 0.15 and R.track_ang_vel_z.weight == 7.0, "[LM6C] sharp economy"
+    assert R.track_err is not None and R.track_err.weight == -1.0, "[LM6C] track_err"
+    assert R.feet_slide.weight == -2.0, "[LM6C] feet_slide priced"
+    assert cfg.curriculum.push_velocity.params["gate_frac"] == 0.20 and cfg.curriculum.push_velocity.params["survival_frac"] == 0.60, "[LM6C] push gate"
+    assert cfg.curriculum.sustained_push.params["gate_frac"] == 0.20 and cfg.curriculum.sustained_push.params["survival_frac"] == 0.60, "[LM6C] sustained gate"
+    assert cfg.curriculum.lin_vel_levels.params["gate_frac"] == 0.25 and cfg.curriculum.ang_vel_levels.params["gate_frac"] == 0.25, "[LM6C] velocity gates"
+
+
+@configclass
+class RobotEnvCfgLM6C(RobotEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_lm6c(self)
+        _apply_overrides(self, _load_overrides())   # jobs win, applied last
+
+
+@configclass
+class RobotPlayEnvCfgLM6C(RobotPlayEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _make_lm6c(self)
+        _apply_overrides(self, _load_overrides())
