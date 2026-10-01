@@ -230,6 +230,7 @@ LM6C_VEL_GATE_FRAC = 0.25
 
 
 def _make_lm6c(cfg):
+    _lm6_stack(cfg)      # LM3..LM6 (the class LM6B composes these itself; _make_lm6b is only its delta)
     _make_lm6b(cfg)
     R = cfg.rewards
     # the sharp tracking economy, baked (lm6b_sharp.job 1:1)
@@ -266,4 +267,5 @@ class RobotPlayEnvCfgLM6C(RobotPlayEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         _make_lm6c(self)
+        self.commands.base_velocity.debug_vis = True
         _apply_overrides(self, _load_overrides())
