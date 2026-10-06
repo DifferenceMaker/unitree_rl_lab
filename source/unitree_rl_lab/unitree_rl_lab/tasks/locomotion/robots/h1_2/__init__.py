@@ -531,6 +531,21 @@ gym.register(
     },
 )
 
+# Desk8c-Work (2026-10-06): Desk8b-Work with the lean kernel re-opened -- upright_bonus (lean tracker) std 0.035 -> 0.10
+# (the std every leaning policy learned under; the dp9b parents never leaned and earned only the zero-command share at
+# 0.035) and base_height -15 -> 0 (the dp6c over-seat lever; the crouch comes from the knee anchor as an axis row).
+# Parent milestones/dp9b_work_stancewide_2026-10-05 (model_90025); procedure = the stack + the std reset.
+gym.register(
+    id="Unitree-H1_2-Balance-Desk8c-Work",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8c:RobotEnvCfgDesk8cWork",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8c:RobotPlayEnvCfgDesk8cWork",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
 # LM7 (2026-10-06): lm5f_symonly (the walker) continued -- symonly's ledger + hand790/motor table + gait on
 # the command + the linear box resumed at the parent's final; the lm6 and balance conclusions arrive as
 # edit_raw genes (lm7_env_cfg.gene_*). Parent milestones/lm5f_symonly_resume_2026-08-31 (model_63421).
