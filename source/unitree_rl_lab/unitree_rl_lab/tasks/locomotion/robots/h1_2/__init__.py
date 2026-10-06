@@ -530,3 +530,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
     },
 )
+
+# LM7 (2026-10-06): lm5f_symonly (the walker) continued -- symonly's ledger + hand790/motor table + gait on
+# the command + the linear box resumed at the parent's final; the lm6 and balance conclusions arrive as
+# edit_raw genes (lm7_env_cfg.gene_*). Parent milestones/lm5f_symonly_resume_2026-08-31 (model_63421).
+gym.register(
+    id="Unitree-H1_2-LM7",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm7_env_cfg:RobotEnvCfgLM7",
+        "play_env_cfg_entry_point": f"{__name__}.lm7_env_cfg:RobotPlayEnvCfgLM7",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
