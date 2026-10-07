@@ -11,3 +11,4 @@ from .lm6_curriculums import *  # noqa: F401, F403
 from .events import *  # noqa: F401, F403
 from .liedown import *  # noqa: F401, F403
 from .terminations import *  # noqa: F401, F403
+from .dr import *  # noqa: F401, F403

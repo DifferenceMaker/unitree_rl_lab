@@ -546,6 +546,20 @@ gym.register(
     },
 )
 
+# HipsArm-DR (2026-10-07): the HipsArm trunk with the domain-randomization hooks -- RobustJointPositionAction (encoder
+# subtraction + optional action lag) and joint_pos_rel_encoder on the policy; bit-identical to HipsArm until a gene opens a range
+# (balance_env_cfg_hipsarm_dr.gene_*: enc03/enc05, com, mass, fric, gains, lag + combos). Parent p14g_hips_armfull (model_75600).
+gym.register(
+    id="Unitree-H1_2-Balance-HipsArm-DR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_hipsarm_dr:RobotEnvCfgHipsArmDR",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_hipsarm_dr:RobotPlayEnvCfgHipsArmDR",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
 # LM7B (2026-10-07): lm7_walls (model_70420) continued with the torso split baked -- the two lm7 sim2sim keepers as the trunk,
 # tracking at symonly's 10/7/-1 and std .15 so the precision rows (std .10/.05, weights 1.5x/2x/4x), the spin sampler (+-0.8 box)
 # and the A block arrive as lm7b_env_cfg.gene_* edit_raw lines. Upright gene out (the sway suspect).
