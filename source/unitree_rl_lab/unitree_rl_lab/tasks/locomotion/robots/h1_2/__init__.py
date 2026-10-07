@@ -546,6 +546,20 @@ gym.register(
     },
 )
 
+# LM7B (2026-10-07): lm7_walls (model_70420) continued with the torso split baked -- the two lm7 sim2sim keepers as the trunk,
+# tracking at symonly's 10/7/-1 and std .15 so the precision rows (std .10/.05, weights 1.5x/2x/4x), the spin sampler (+-0.8 box)
+# and the A block arrive as lm7b_env_cfg.gene_* edit_raw lines. Upright gene out (the sway suspect).
+gym.register(
+    id="Unitree-H1_2-LM7B",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm7b_env_cfg:RobotEnvCfgLM7B",
+        "play_env_cfg_entry_point": f"{__name__}.lm7b_env_cfg:RobotPlayEnvCfgLM7B",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
+
 # LM7 (2026-10-06): lm5f_symonly (the walker) continued -- symonly's ledger + hand790/motor table + gait on
 # the command + the linear box resumed at the parent's final; the lm6 and balance conclusions arrive as
 # edit_raw genes (lm7_env_cfg.gene_*). Parent milestones/lm5f_symonly_resume_2026-08-31 (model_63421).
