@@ -1,4 +1,4 @@
-"""Domain-randomization pieces the trunks never had (2026-10-07, the p16dr wave).
+"""Domain-randomization pieces the trunks never had (2026-10-07, the p16_dr wave).
 
 Every balance / walk trunk has run with DR effectively OFF since p6 (friction fixed 1.0, base mass +0, PD-gain scale 1.0; only the
 0-3 kg hand payload and the pushes). The one sim2real symptom nothing in that list can represent is an ENCODER ZERO OFFSET: the
