@@ -28,8 +28,8 @@ as UNREWARDED leftovers; they have been constants in training since Desk8 froze 
 WorkLean88 (88 obs): the anchor inputs removed from policy AND critic, leaving p14h's 87 + lean_command LAST (critic 117 + 1):
 the layout milestones/p14h_stancewide_lean88pad_2026-10-09 was padded for (transplant_v3_to_v4 --extra_obs 1).
 
-GENES: gene_p14h_curric (p14h's push curriculum and intervals: 8-12 s to 1.5 m/s, 15-25 s to 50 N) and gene_crouch (the
-lean-gated height price at p14h_stancewide's measured standing height).
+GENES: gene_p14h_curric (p14h's push curriculum and intervals: 8-12 s to 1.5 m/s, 15-25 s to 50 N), gene_crouch (the
+lean-gated height price at p14h_stancewide's measured standing height, -15) and gene_crouch280 (the same at -280).
 """
 import copy
 
@@ -58,6 +58,9 @@ WORKLEAN_CHANGED = ("upright_bonus", "flat_orientation_l2", "joint_deviation_hip
 # dp9b_work_stancewide model_90025 at lean 0 stands at 1.026 +- 0.009 on near-straight knees (0.115 rad)
 WORKLEAN_CROUCH_TARGET = 0.99
 WORKLEAN_CROUCH_W = -15.0
+# gene_crouch280 (operator 2026-10-09: "Raise it, but as a different run to it. Another axis."): -15 pulls the dp9b parent's 3.6 cm
+# gap with only 0.019/step (smoke: -0.011); -280 gives that gap the pull -15 had at the old 0.87 target (-0.36/step): 0.36 / 0.036^2 = 278
+WORKLEAN_CROUCH_STRONG_W = -280.0
 
 
 def _terms(grp):
@@ -136,6 +139,15 @@ def gene_crouch(cfg):
                                               "lean_ref": WORKLEAN_HINGE_REF})
     assert cfg.rewards.base_height.func is mdp.base_height_l2_lean_gated and cfg.rewards.base_height.weight == -15.0, "[crouch] gated height -15"
     assert cfg.rewards.base_height.params["target_height"] == 0.99 and cfg.rewards.base_height.params["lean_ref"] == 0.35, "[crouch] target .99, fade over .35"
+
+
+def gene_crouch280(cfg):
+    """dp9d_p14h_crouch280: gene_crouch at -280 -- the same lean-gated price at 0.99 m, strong enough to move the 93-input
+    parent's straight-legged 1.026 m stand (the -15 row is kept as the weak-pull reference)."""
+    gene_crouch(cfg)
+    cfg.rewards.base_height.weight = WORKLEAN_CROUCH_STRONG_W
+    assert cfg.rewards.base_height.func is mdp.base_height_l2_lean_gated and cfg.rewards.base_height.weight == -280.0, "[crouch280] gated height -280"
+    assert cfg.rewards.base_height.params["target_height"] == 0.99 and cfg.rewards.base_height.params["lean_ref"] == 0.35, "[crouch280] target .99, fade over .35"
 
 
 @configclass
