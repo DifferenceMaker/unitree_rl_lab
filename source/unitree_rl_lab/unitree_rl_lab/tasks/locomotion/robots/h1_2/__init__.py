@@ -587,3 +587,45 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
     },
 )
+
+# Desk8d-Work (2026-10-09): Desk8c-Work + energy -0.01, the desk line's new default ("From now on the energy term is
+# default. At the p14h_stancewide rate."): the desk policies paid action_rate -7.7..-8.2 vs -3.2 on the balance line with
+# the term configured identically -- nothing priced fast loaded motion. gene_merge = the operator's p14h merge list.
+# Parent milestones/dp9b_work_stancewide_2026-10-05 (model_90025); procedure = the stack + the std reset.
+gym.register(
+    id="Unitree-H1_2-Balance-Desk8d-Work",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8d:RobotEnvCfgDesk8dWork",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_desk8d:RobotPlayEnvCfgDesk8dWork",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
+# WorkLean (2026-10-09): p14h_stancewide's reward ledger with the lean command, in the Desk8d world ("i want that policy but
+# just with leaning"): tracker 8/.10, lean-aware L2, hinge fade at p14h's -1.0, desk contact set -100 + desk_hit; everything
+# else p14h's; contact history 4. 93 obs (the desk contract, anchor inputs unrewarded) -> warmstarts from dp9b_work_stancewide.
+gym.register(
+    id="Unitree-H1_2-Balance-WorkLean",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_worklean:RobotEnvCfgWorkLean",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_worklean:RobotPlayEnvCfgWorkLean",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
+
+# WorkLean88 (2026-10-09): WorkLean without the anchor inputs -- p14h's 87 obs + lean_command last (critic 117 + 1), the
+# layout of milestones/p14h_stancewide_lean88pad_2026-10-09 (p14h_stancewide model_82475, transplant_v3_to_v4 --extra_obs 1).
+gym.register(
+    id="Unitree-H1_2-Balance-WorkLean88",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.balance_env_cfg_worklean:RobotEnvCfgWorkLean88",
+        "play_env_cfg_entry_point": f"{__name__}.balance_env_cfg_worklean:RobotPlayEnvCfgWorkLean88",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
+    },
+)
