@@ -629,3 +629,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:QueueFixedLRPPORunnerCfg",
     },
 )
+
+# LM7U (2026-10-09): lm7_union (model_70420) continued with the lm7b precision setting (std .05 + tracking 20/14/-2) and feet_too_near
+# .22 -- the lm7b_u wave. Genes in lm7u_env_cfg: energy (flat e2/e4, command-gated g2/g4, cost of transport), the tracking-std ladder,
+# rotation (clearance only for moving feet, a yaw-only L2, both). LM4BMirror01 runner as LM7 / LM7B.
+gym.register(
+    id="Unitree-H1_2-LM7U",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.lm7u_env_cfg:RobotEnvCfgLM7U",
+        "play_env_cfg_entry_point": f"{__name__}.lm7u_env_cfg:RobotPlayEnvCfgLM7U",
+        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
+    },
+)
