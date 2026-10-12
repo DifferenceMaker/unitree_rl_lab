@@ -69,7 +69,8 @@ def joint_pos_rel_encoder(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = Scen
 
 
 def encoder_offset_obs(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Privileged: the offsets themselves (NOT used by the p16dr critic -- it would change the critic width)."""
+    """Privileged: the offsets themselves. Not in the p16_dr critic (it would change the critic width); gene_critic_offset
+    (2026-10-12, p16_dr_enc01_critic) appends them to the critic group on a zero-padded transplant of the parent."""
     return encoder_offset_buffer(env, asset_cfg.name)[:, asset_cfg.joint_ids]
 
 
