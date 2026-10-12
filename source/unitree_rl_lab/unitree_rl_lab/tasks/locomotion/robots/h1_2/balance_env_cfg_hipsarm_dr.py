@@ -9,6 +9,8 @@ Every trunk has run with DR effectively OFF since p6 (friction 1.0 fixed, base m
 the pushes), so each gene below is a range on an event that already exists at its nominal value, except the encoder offset (new) and
 the torso CoM (p12g_comdr precedent, x only, never on hardware).
   gene_enc03 / gene_enc05  encoder offset +-0.03 / +-0.05 rad per LEG + torso joint, drawn per reset (the MIT baselines: 0.015-0.05)
+  gene_critic_offset       2026-10-12: the offsets as a privileged CRITIC input (13 cols appended last; critic 117 -> 130, needs
+                           the enc13pad transplant parent); gene_enc01_critic = enc01 + it
   gene_enc01               encoder offset +-0.01 rad (0.57 deg), 2026-10-12: sized to the RESIDUAL after the deploy-side table C
                            correction (largest table-C entry 1.53 deg = 0.027 rad, so enc03 already trained on errors the corrected
                            robot no longer has); every enc03/enc05 row went unstable -- an extra layer of safety, not the main defence
@@ -20,6 +22,7 @@ the torso CoM (p12g_comdr precedent, x only, never on hardware).
                            probe, not a model of the robot
 """
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
@@ -56,6 +59,17 @@ def _enc(cfg, half):
                                           params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=DR_LEG_JOINTS)})
 
 def gene_enc01(cfg): _enc(cfg, 0.01)
+
+
+def gene_critic_offset(cfg):
+    """2026-10-12 (p16_dr_enc01_critic): the drawn encoder offsets as a PRIVILEGED critic input -- 13 columns (legs + torso, the
+    DR_LEG_JOINTS order), appended LAST in the critic group (the obs manager concatenates terms in attribute order). Why: the p16_dr
+    critic sees the TRUE joint angles but not what the policy sees (angle + offset), so it cannot predict what the policy will do;
+    every enc03/enc05 row went unstable with the critic spiking from +500 while time_out held .99. The critic widens 117 -> 130, so the
+    warmstart must be the zero-padded transplant `p14g_hips_armfull_enc13pad_2026-10-12` (equal to the parent at t = 0)."""
+    cfg.observations.critic.encoder_offset = ObsTerm(func=mdp.encoder_offset_obs, params={"asset_cfg": SceneEntityCfg("robot", joint_names=DR_LEG_JOINTS)})
+
+def gene_enc01_critic(cfg): gene_enc01(cfg); gene_critic_offset(cfg)
 def gene_enc03(cfg): _enc(cfg, 0.03)
 def gene_enc05(cfg): _enc(cfg, 0.05)
 
