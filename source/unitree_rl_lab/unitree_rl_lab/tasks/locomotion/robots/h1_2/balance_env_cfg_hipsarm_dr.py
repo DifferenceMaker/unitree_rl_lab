@@ -9,6 +9,9 @@ Every trunk has run with DR effectively OFF since p6 (friction 1.0 fixed, base m
 the pushes), so each gene below is a range on an event that already exists at its nominal value, except the encoder offset (new) and
 the torso CoM (p12g_comdr precedent, x only, never on hardware).
   gene_enc03 / gene_enc05  encoder offset +-0.03 / +-0.05 rad per LEG + torso joint, drawn per reset (the MIT baselines: 0.015-0.05)
+  gene_enc01               encoder offset +-0.01 rad (0.57 deg), 2026-10-12: sized to the RESIDUAL after the deploy-side table C
+                           correction (largest table-C entry 1.53 deg = 0.027 rad, so enc03 already trained on errors the corrected
+                           robot no longer has); every enc03/enc05 row went unstable -- an extra layer of safety, not the main defence
   gene_com                 torso_link CoM +-2.5 cm in x AND y at startup (torso = 34 % of the mass -> +-8.6 mm whole-body)
   gene_mass                torso mass -0.5..+0.5 kg at startup (the mass is pinned to ~77 kg +-0.2; the band is the residual)
   gene_fric                static / dynamic friction 0.6..1.2 (sole on cement unknown and it should not matter)
@@ -52,6 +55,7 @@ def _enc(cfg, half):
     cfg.events.encoder_offset = EventTerm(func=mdp.randomize_encoder_offset, mode="reset",
                                           params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=DR_LEG_JOINTS)})
 
+def gene_enc01(cfg): _enc(cfg, 0.01)
 def gene_enc03(cfg): _enc(cfg, 0.03)
 def gene_enc05(cfg): _enc(cfg, 0.05)
 
