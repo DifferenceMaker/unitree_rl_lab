@@ -37,13 +37,23 @@ from .balance_env_cfg_queue_ik import _swap_in_ik_command
 DR_LEG_JOINTS = [".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint"]
 
 
-def _make_hipsarm_dr(cfg):
+def install_dr_hooks(cfg):
+    """The two trunk hooks on ANY balance cfg (2026-10-12, factored out for the desk line's dp9e_phys): the action term becomes
+    mdp.RobustJointPositionAction (same affine, lag 0; encoder subtraction only when an encoder event exists) and the policy's
+    joint_pos_rel becomes mdp.joint_pos_rel_encoder (identical values while the offset buffer is zero). Changes nothing a policy
+    can feel until a gene opens a band."""
     old = cfg.actions.JointPositionAction
+    assert type(old).__name__ == "JointPositionActionCfg" and old.scale == 0.25, "[DR hooks] a plain JointPositionAction underneath"
+    assert cfg.observations.policy.joint_pos_rel.func is mdp.joint_pos_rel and cfg.observations.critic.joint_pos_rel.func is mdp.joint_pos_rel, "[DR hooks] clean joint_pos_rel underneath"
     cfg.actions.JointPositionAction = mdp.RobustJointPositionActionCfg(
         asset_name=old.asset_name, joint_names=old.joint_names, scale=old.scale, offset=old.offset,
         use_default_offset=old.use_default_offset, clip=old.clip, preserve_order=old.preserve_order, max_lag_steps=0,
     )
     cfg.observations.policy.joint_pos_rel.func = mdp.joint_pos_rel_encoder
+
+
+def _make_hipsarm_dr(cfg):
+    install_dr_hooks(cfg)
     A = cfg.actions.JointPositionAction
     assert A.class_type is mdp.RobustJointPositionAction and A.scale == 0.25 and A.use_default_offset is True and A.clip is None and A.max_lag_steps == 0, "[HipsArm-DR] action term = Robust, same affine, lag 0"
     assert cfg.observations.policy.joint_pos_rel.func is mdp.joint_pos_rel_encoder and cfg.observations.critic.joint_pos_rel.func is mdp.joint_pos_rel, "[HipsArm-DR] policy sees the encoder frame, critic the true one"
@@ -95,6 +105,7 @@ def gene_lag(cfg):
 def gene_enc_com(cfg): gene_enc05(cfg); gene_com(cfg)
 def gene_enc_plant(cfg): gene_enc05(cfg); gene_fric(cfg); gene_gains(cfg)
 def gene_phys(cfg): gene_mass(cfg); gene_fric(cfg); gene_gains(cfg); gene_lag(cfg)
+def gene_phys_com(cfg): gene_phys(cfg); gene_com(cfg)   # p16b (2026-10-12): the two sim2sim/hardware candidates together
 def gene_all(cfg): gene_enc05(cfg); gene_com(cfg); gene_mass(cfg); gene_fric(cfg); gene_gains(cfg); gene_lag(cfg)
 
 
