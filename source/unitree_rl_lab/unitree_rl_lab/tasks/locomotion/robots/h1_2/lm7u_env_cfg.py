@@ -109,6 +109,25 @@ def gene_rot(cfg):
     gene_yaw(cfg)
 
 
+# ── lm7c (2026-10-12, parent lm7b_u_ladder @77419; the ladder gene is re-applied by every row, the level re-climbs on resume) ──
+def gene_g4_yaw(cfg):
+    gene_g4(cfg)
+    gene_yaw(cfg)
+
+
+def gene_clear6(cfg):
+    """feet_clearance 12 -> 6, target / std / gate kept: a walk that follows the clearance less (operator 2026-10-12 on the swing
+    rows' lift: "makslig" -- artificial). Works on the plain term (lm7c_clear6) and on the swing form (lm7c_rot_clear6)."""
+    R = cfg.rewards
+    assert R.feet_clearance.weight == 12.0 and R.feet_clearance.params["target_height"] == 0.15, "[clear6] from the trunk's 12 @ .15"
+    R.feet_clearance.weight = 6.0
+
+
+def gene_rot_clear6(cfg):
+    gene_rot(cfg)
+    gene_clear6(cfg)
+
+
 @configclass
 class RobotEnvCfgLM7U(RobotEnvCfg):
     def __post_init__(self):

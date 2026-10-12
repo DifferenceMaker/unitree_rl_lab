@@ -26,6 +26,7 @@ from unitree_rl_lab.tasks.locomotion import mdp
 from .balance_env_cfg import RobotEnvCfg, RobotPlayEnvCfg
 from .balance_env_cfg_desk8c import _desk8c_stack
 from .balance_env_cfg_hipsarm import _make_hipsarm
+from .balance_env_cfg_hipsarm_dr import gene_phys, install_dr_hooks
 from .balance_env_cfg_kitchen import _use_real_hand
 from .balance_env_cfg_queue import _apply_overrides, _load_overrides
 from .balance_env_cfg_queue_ik import _swap_in_ik_command
@@ -97,6 +98,49 @@ def gene_merge(cfg):
     assert R.feet_air_time_step.weight == -1.0 and "free_when_displaced_m" not in R.feet_air_time_step.params, "[merge] feet_air plain"
     assert R.gait.params.get("gate_anchor_dist") == 0.20 and R.anchor_hold.weight == 12.0 and R.base_forward_zone.weight == -6.0, "[merge] gait anchor-gated, anchor terms kept"
     assert R.heading_stable_bonus.weight == 1.5 and R.heading_stable_bonus.params["std"] == 0.10 and R.desk_reach.weight == 4.0, "[merge] heading std .10, desk_reach 4"
+
+
+
+# ── dp9e genes (2026-10-12): one lever each on dp9d_merge @94375 (= Desk8d-Work + gene_merge), combos compose them in order ──
+def gene_stance(cfg):
+    """The short stance (merge already carries p14h's .28 / +-.15 and still stands short; hardware 10-12 tied the sway to a narrow
+    stance): move the TARGET (p12 note), keep the std .08 kernel (p11 stance25: widening the kernel killed the diamond)."""
+    R = cfg.rewards
+    assert R.feet_too_near.params["threshold"] == 0.28 and tuple(map(tuple, R.foot_stance_tracking.params["nominal_foot_pos_b"])) == ((0.0, 0.15), (0.0, -0.15)), "[stance] from p14h's values"
+    R.feet_too_near.params["threshold"] = 0.32
+    R.foot_stance_tracking.params["nominal_foot_pos_b"] = ((0.0, 0.18), (0.0, -0.18))
+
+
+def gene_still(cfg):
+    """torso_stability_ang std_ang .30 -> .60: the kernel earns 8 % of 3 at the merge pick (Bible rule 31: widen a flat kernel from
+    its measured fraction; the dp8b_still row that never ran)."""
+    R = cfg.rewards
+    assert R.torso_stability_ang.weight == 3.0 and R.torso_stability_ang.params["std_ang"] == 0.3, "[still] from the split's .30"
+    R.torso_stability_ang.params["std_ang"] = 0.6
+
+
+def gene_energy2(cfg):
+    """energy -0.01 -> -0.02 (Bible rule 38: -0.01 is visible on hardware and not over-dosed) -- the 'unsure' recoveries."""
+    assert cfg.rewards.energy.weight == -0.01, "[energy2] from the desk default"
+    cfg.rewards.energy.weight = -0.02
+
+
+def gene_calm(cfg):
+    """micro_push every 1-3 s -> 3-6 s (dp7 sway diagnosis: the dither is trained; dp9c_nomicro removed it and detonated)."""
+    ev = cfg.events.micro_push
+    assert tuple(ev.interval_range_s) == (1.0, 3.0), "[calm] from Desk8's 1-3 s"
+    ev.interval_range_s = (3.0, 6.0)
+
+
+def gene_phys_desk(cfg):
+    """p16_dr_phys's four physical bands (mass / friction / gains / lag) on the desk world: the DR hooks + gene_phys."""
+    install_dr_hooks(cfg)
+    gene_phys(cfg)
+
+
+def gene_stance_still(cfg): gene_stance(cfg); gene_still(cfg)
+def gene_stance_still_energy2(cfg): gene_stance_still(cfg); gene_energy2(cfg)
+def gene_stance_still_energy2_calm(cfg): gene_stance_still_energy2(cfg); gene_calm(cfg)
 
 
 @configclass
