@@ -216,8 +216,10 @@ def gene_near26(cfg):
 
 
 def gene_footyaw(cfg):
-    """feet_yaw_l2_turn_gated -1: foot orientation priced for the first time (the outward-rotated leg / default stance)."""
-    cfg.rewards.feet_yaw = RewTerm(func=mdp.feet_yaw_l2_turn_gated, weight=-1.0,
+    """feet_yaw_l2_turn_gated -10: foot orientation priced for the first time (the outward-rotated leg / default stance).
+    -1 was INERT in the 90-it liveness (-0.005/s; a 20-degree outward foot on both sides would cost 0.24/s against a 66/s
+    ledger); at -10 it is 2.4/s at 20 deg both / 0.6/s at 10 deg -- a price, not a wall."""
+    cfg.rewards.feet_yaw = RewTerm(func=mdp.feet_yaw_l2_turn_gated, weight=-10.0,
                                    params={"asset_cfg": _FEET, "command_name": "base_velocity", "wz_ref": 0.5})
 
 
