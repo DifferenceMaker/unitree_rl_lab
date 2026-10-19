@@ -106,6 +106,7 @@ def gene_enc_com(cfg): gene_enc05(cfg); gene_com(cfg)
 def gene_enc_plant(cfg): gene_enc05(cfg); gene_fric(cfg); gene_gains(cfg)
 def gene_phys(cfg): gene_mass(cfg); gene_fric(cfg); gene_gains(cfg); gene_lag(cfg)
 def gene_phys_com(cfg): gene_phys(cfg); gene_com(cfg)   # p16b (2026-10-12): the two sim2sim/hardware candidates together
+def gene_phys_enc01(cfg): gene_phys(cfg); gene_enc01(cfg)   # p16c (2026-10-19): the physical bands + the residual-sized encoder band, on the stancewide recipe from the p14g parent
 def gene_all(cfg): gene_enc05(cfg); gene_com(cfg); gene_mass(cfg); gene_fric(cfg); gene_gains(cfg); gene_lag(cfg)
 
 
