@@ -257,6 +257,7 @@ def feet_gait(
     sensor_cfg: SceneEntityCfg,
     threshold: float = 0.5,
     command_name=None,
+    cmd_thr: float = 0.1,   # lm7d: the walking gate, was a hard-coded 0.1
 ) -> torch.Tensor:
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
@@ -275,7 +276,7 @@ def feet_gait(
 
     if command_name is not None:
         cmd_norm = torch.norm(env.command_manager.get_command(command_name), dim=1)
-        reward *= cmd_norm > 0.1
+        reward *= cmd_norm > cmd_thr
     return reward
 
 
@@ -1617,6 +1618,7 @@ def base_pos_xy_hold_standing(
     env: "ManagerBasedRLEnv",
     command_name: str = "base_velocity",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_thr: float = 0.1,   # lm7d: the standing gate (was _standing_gate's default 0.1)
 ) -> torch.Tensor:
     """base_pos_xy_l2_from_spawn, active ONLY while commanded to stand.
     With reanchor_on_stop this is station-keeping at the stop point: walk,
@@ -1625,30 +1627,32 @@ def base_pos_xy_hold_standing(
         return torch.zeros(env.num_envs, device=env.device)
     asset = env.scene[asset_cfg.name]
     delta = asset.data.root_pos_w[:, :2] - env.spawn_root_xy
-    return torch.sum(delta * delta, dim=-1) * _standing_gate(env, command_name)
+    return torch.sum(delta * delta, dim=-1) * _standing_gate(env, command_name, cmd_thr)
 
 
 def body_lin_vel_xy_l2_standing(
     env: "ManagerBasedRLEnv",
     command_name: str = "base_velocity",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["torso_link"]),
+    cmd_thr: float = 0.1,   # lm7d: the standing gate (was _standing_gate's default 0.1)
 ) -> torch.Tensor:
     """torso_lin_vel_xy gated on standing — body_lin_vel_xy_l2 is WORLD-frame
     (verified 2026-08-12), so ungated it taxes commanded walking at -w*v^2."""
     asset = env.scene[asset_cfg.name]
     v = asset.data.body_lin_vel_w[:, asset_cfg.body_ids[0], :2]
-    return torch.sum(v * v, dim=-1) * _standing_gate(env, command_name)
+    return torch.sum(v * v, dim=-1) * _standing_gate(env, command_name, cmd_thr)
 
 
 def body_ang_vel_l2_standing(
     env: "ManagerBasedRLEnv",
     command_name: str = "base_velocity",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["torso_link"]),
+    cmd_thr: float = 0.1,   # lm7d: the standing gate (was _standing_gate's default 0.1)
 ) -> torch.Tensor:
     """torso_ang_vel gated on standing (commanded turning would pay it)."""
     asset = env.scene[asset_cfg.name]
     w = asset.data.body_ang_vel_w[:, asset_cfg.body_ids[0], :]
-    return torch.sum(w * w, dim=-1) * _standing_gate(env, command_name)
+    return torch.sum(w * w, dim=-1) * _standing_gate(env, command_name, cmd_thr)
 
 
 def capture_point_touchdown_standing(
@@ -1691,6 +1695,7 @@ def foot_clearance_reward_cmd(
     std: float,
     tanh_mult: float,
     command_name: str = "base_velocity",
+    cmd_thr: float = 0.1,   # lm7d: the walking gate, was a hard-coded 0.1
 ) -> torch.Tensor:
     """lm3 FLAG-1 fix (Bible audit, 2026-08-12): foot_clearance_reward GATED on
     a nonzero velocity command.
@@ -1706,7 +1711,7 @@ def foot_clearance_reward_cmd(
     """
     base = foot_clearance_reward(env, asset_cfg, target_height, std, tanh_mult)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
-    return base * (cmd > 0.1).float()
+    return base * (cmd > cmd_thr).float()
 
 
 def arm_gait_swing(
@@ -1771,6 +1776,7 @@ def standing_pose_bonus(
     std: float = 0.8,
     command_name: str = "base_velocity",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_thr: float = 0.1,   # lm7d: the standing gate, was a hard-coded 0.1
 ) -> torch.Tensor:
     """lm4d: the firm 'at attention' stance (operator: 'stands like a zombie
     ... I want the standing to be firm and somewhat default like'). Kernel on
@@ -1783,7 +1789,7 @@ def standing_pose_bonus(
     )
     base = torch.exp(-err / std**2)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
-    return base * (cmd <= 0.1).float()
+    return base * (cmd <= cmd_thr).float()
 
 
 def flat_orientation_split_l2(
