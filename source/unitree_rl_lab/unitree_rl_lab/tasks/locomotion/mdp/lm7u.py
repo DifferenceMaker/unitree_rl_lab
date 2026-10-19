@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import torch
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils.math import euler_xyz_from_quat, wrap_to_pi
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -67,6 +68,7 @@ def foot_clearance_swing_cmd(
     std: float,
     tanh_mult: float,
     command_name: str = "base_velocity",
+    cmd_thr: float = 0.1,   # lm7d: the walking gate, was a hard-coded 0.1
 ) -> torch.Tensor:
     """Clearance that pays only for a MOVING foot: max over feet of tanh(tanh_mult |v_foot_xy|) x exp(-(z - target)^2 / std),
     command-gated (|cmd| > 0.1). foot_clearance_reward = exp(-sum (z - target)^2 tanh(|v|) / std) is MAXIMAL for a motionless foot,
@@ -77,7 +79,7 @@ def foot_clearance_swing_cmd(
     v = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2)
     per_foot = torch.tanh(tanh_mult * v) * torch.exp(-torch.square(z - target_height) / std)
     cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
-    return per_foot.max(dim=1).values * (cmd > 0.1).float()
+    return per_foot.max(dim=1).values * (cmd > cmd_thr).float()
 
 
 def track_yaw_err_l2(
@@ -116,3 +118,41 @@ def tracking_std_levels(
             for n in reward_terms:
                 rm.get_term_cfg(n).params["std"] = levels[env._track_std_level]
     return torch.tensor(levels[env._track_std_level], device=env.device)
+
+
+# ── lm7d (2026-10-19) ──────────────────────────────────────────────────────────────────────────
+def body_ang_vel_l2_walking(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    cmd_thr: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["torso_link"]),
+) -> torch.Tensor:
+    """The torso's angular-velocity L2 while a command is ACTIVE (|cmd| >= cmd_thr) -- the complement of
+    body_ang_vel_l2_standing. The stillness terms are all standing-gated, so a slowly walking torso is priced by
+    nothing (operator 2026-10-19: "total control over the stability of the torso while walking at low speeds").
+    Meant at a LOW weight next to the standing term, never instead of it."""
+    asset = env.scene[asset_cfg.name]
+    w = asset.data.body_ang_vel_w[:, asset_cfg.body_ids, :]
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    return torch.sum(w * w, dim=(1, 2)) * (cmd >= cmd_thr).float()
+
+
+def feet_yaw_l2_turn_gated(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    wz_ref: float = 0.5,
+) -> torch.Tensor:
+    """Sum over the feet of (foot yaw - base yaw)^2, faded out with the commanded yaw rate (x (1 - min(|wz|/wz_ref, 1)),
+    the joint_deviation_l1_turn_gated fade). Foot ORIENTATION has never been priced (stance_bonus-kernel-is-flat): the
+    outward-rotated leg, the "right leg forward and rotated outward" default stance and the both-legs-outward stance are all
+    free. Parallel feet under the heading; a commanded turn may rotate them."""
+    asset = env.scene[asset_cfg.name]
+    base_yaw = euler_xyz_from_quat(asset.data.root_quat_w)[2]
+    fq = asset.data.body_quat_w[:, asset_cfg.body_ids, :]
+    n_feet = fq.shape[1]
+    foot_yaw = euler_xyz_from_quat(fq.reshape(-1, 4))[2].reshape(-1, n_feet)
+    d = wrap_to_pi(foot_yaw - base_yaw.unsqueeze(1))
+    wz = env.command_manager.get_command(command_name)[:, 2].abs()
+    gate = 1.0 - (wz / wz_ref).clamp(max=1.0)
+    return torch.sum(d * d, dim=1) * gate
