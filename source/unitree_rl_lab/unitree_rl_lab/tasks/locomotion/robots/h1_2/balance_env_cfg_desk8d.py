@@ -143,6 +143,45 @@ def gene_stance_still_energy2(cfg): gene_stance_still(cfg); gene_energy2(cfg)
 def gene_stance_still_energy2_calm(cfg): gene_stance_still_energy2(cfg); gene_calm(cfg)
 
 
+# ── dp9f (2026-10-19): the anchor attractor as the sway suspect. Parent dp9e_stance_still_energy2 @99050 (operator: "by far the
+# best"); every row re-applies merge + stance_still_energy2 (gene_dp9f_base) and changes ONE anchor knob (or calm). ──
+def gene_dp9f_base(cfg):
+    gene_merge(cfg)
+    gene_stance_still_energy2(cfg)
+
+
+def _anchor(cfg):
+    A = cfg.rewards.anchor_hold
+    assert A.func is mdp.anchor_hold_bonus and A.weight == 12.0 and A.params["deadband"] == 0.05 and A.params["sigma"] == 0.15, "[dp9f] from the merge's anchor_hold 12 / deadband .05 / sigma .15"
+    return A
+
+
+def gene_zone15(cfg):
+    """anchor_hold deadband .05 -> .15 m: the flat zone, bigger (inside 5 cm the kernel pays 12/s in full, at 10 cm it has already
+    lost 1.26/s -- the dominant position gradient by two orders of magnitude; the WORK line has no transit, stepping is locomotion's)."""
+    _anchor(cfg).params["deadband"] = 0.15
+
+
+def gene_zone25(cfg):
+    _anchor(cfg).params["deadband"] = 0.25
+
+
+def gene_sigma30(cfg):
+    """sigma .15 -> .30 with the .05 band kept: the alternative shape, a soft pull instead of a flat zone."""
+    _anchor(cfg).params["sigma"] = 0.30
+
+
+def gene_noanchor(cfg):
+    """anchor_hold 12 -> 0 on an otherwise UNCHANGED desk ledger (never run: the only anchor-free rows, WorkLean88, swapped the
+    whole ledger too). Forward zone, heading terms and the anchor OBSERVATIONS stay (reward-only; no transplant)."""
+    _anchor(cfg).weight = 0.0
+
+
+def gene_zone15_calm(cfg): gene_zone15(cfg); gene_calm(cfg)
+def gene_zone25_calm(cfg): gene_zone25(cfg); gene_calm(cfg)
+def gene_noanchor_calm(cfg): gene_noanchor(cfg); gene_calm(cfg)
+
+
 @configclass
 class RobotEnvCfgDesk8dWork(RobotEnvCfg):
     def __post_init__(self):
