@@ -227,3 +227,23 @@ def gene_pc_contacts(cfg):
 
 
 def gene_pc_all(cfg): gene_dr_all(cfg); gene_pc_contacts(cfg)
+
+
+# ── Group C, second wave (operator 2026-10-22: "we really need to push on the experimentation of giving the critic more information") ──
+def gene_C_feet(cfg):
+    """pc_contacts + the two hardware-wear terms (contact-force limit, air time) in one row: the critic sees the feet while the
+    ledger prices stomping and shuffling. Warmstart = the pc10pad transplant."""
+    gene_pc_contacts(cfg); gene_gforce(cfg); gene_airtime(cfg)
+
+
+def gene_pc_plant(cfg):
+    """dr_all + the privileged feet + the PLANT the DR drew, as critic inputs (7 more, appended after the feet terms): gain scale (kp, kd),
+    friction, torso CoM offset (x, y), action lag, observation delay. The actor still sees only what the robot measures. Warmstart =
+    the pc17pad transplant (critic 120 -> 137). Not in: the push (the critic already sees base_lin_vel, which carries it)."""
+    gene_dr_all(cfg); gene_pc_contacts(cfg)
+    Cr = cfg.observations.critic
+    Cr.plant_gain_scale = ObsTerm(func=mdp.plant_gain_scale, params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint"])})
+    Cr.plant_friction = ObsTerm(func=mdp.plant_friction, params={"asset_cfg": SceneEntityCfg("robot")})
+    Cr.plant_com_offset = ObsTerm(func=mdp.plant_com_offset, params={"asset_cfg": SceneEntityCfg("robot", body_names=["torso_link"]), "scale": 10.0})
+    Cr.plant_action_lag = ObsTerm(func=mdp.plant_action_lag, params={"action_name": "JointPositionAction"})
+    Cr.plant_obs_delay = ObsTerm(func=mdp.plant_obs_delay)
