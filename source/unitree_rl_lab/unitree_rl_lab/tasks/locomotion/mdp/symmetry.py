@@ -51,6 +51,12 @@ _TERM_KIND = {
     "feet_xy_speed": ("pair", None),
     "feet_air_time_obs": ("pair", None),
     "gait_clock": ("clock", None),
+    # lm7e pc_plant: scalars that do not change under a left/right mirror, except the CoM y offset
+    "plant_gain_scale": ("signsn", (1.0, 1.0)),
+    "plant_friction": ("signsn", (1.0,)),
+    "plant_com_offset": ("signsn", (1.0, -1.0)),
+    "plant_action_lag": ("signsn", (1.0,)),
+    "plant_obs_delay": ("signsn", (1.0,)),
 }
 
 _cache: dict = {}
@@ -127,6 +133,10 @@ def _build(env) -> dict:
                 assert dim == 2, f"{name}: expected a (left, right) pair, got dim {dim}"
                 perm += [off + 1, off]
                 sign += [1.0, 1.0]
+            elif kind == "signsn":
+                assert dim == len(arg), f"{name}: expected dim {len(arg)}, got {dim}"
+                perm += [off + k for k in range(dim)]
+                sign += list(arg)
             elif kind == "clock":
                 assert dim == 2, f"{name}: expected (sin, cos), got dim {dim}"
                 perm += [off, off + 1]
