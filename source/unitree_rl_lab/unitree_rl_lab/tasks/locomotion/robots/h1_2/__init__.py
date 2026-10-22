@@ -643,3 +643,19 @@ gym.register(
         "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM4BMirror01PPORunnerCfg",
     },
 )
+
+
+# LM8 (2026-10-22): recipe transplants trained from SCRATCH on our body (lm8_env_cfg): #83 "Architecture Is All You Need", our ledger
+# inverted (walking-first), unitree_rl_gym's H1-2 walk, Menlo / Asimov, humanoid-gym. Each puts a gait clock and/or a frame history
+# in the observation, so no warmstart; LM8PPORunnerCfg = GuardedPPO without the mirror loss (the mirror map cannot flatten a history).
+for _tag, _cls in (("83", "83"), ("INVERSE", "Inverse"), ("UNITREE", "Unitree"), ("MENLO", "Menlo"), ("HGYM", "HGym")):
+    gym.register(
+        id=f"Unitree-H1_2-LM8-{_tag}",
+        entry_point="isaaclab.envs:ManagerBasedRLEnv",
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": f"{__name__}.lm8_env_cfg:RobotEnvCfgLM8_{_cls}",
+            "play_env_cfg_entry_point": f"{__name__}.lm8_env_cfg:RobotPlayEnvCfgLM8_{_cls}",
+            "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:LM8PPORunnerCfg",
+        },
+    )
