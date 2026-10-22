@@ -247,3 +247,14 @@ def gene_pc_plant(cfg):
     Cr.plant_com_offset = ObsTerm(func=mdp.plant_com_offset, params={"asset_cfg": SceneEntityCfg("robot", body_names=["torso_link"]), "scale": 10.0})
     Cr.plant_action_lag = ObsTerm(func=mdp.plant_action_lag, params={"action_name": "JointPositionAction"})
     Cr.plant_obs_delay = ObsTerm(func=mdp.plant_obs_delay)
+
+
+def gene_swingonly(cfg):
+    """The plain clearance (6 @ .15, pays 11.85 of 12 for a MOTIONLESS foot under any command -- the 10-09 probe's standing subsidy)
+    becomes the swing-only form at the same weight, target and gate (foot_clearance_swing_cmd: a foot earns only while it moves). On
+    parent A the swing bonus (3 @ .10) stays, so motion income is 9 and the standing subsidy under a command is 0; standing itself
+    keeps its zero-command incomes (standing_pose, upright). Operator 2026-10-22: 'standing earns at zero command only ... under any
+    command the foot terms pay for motion only'."""
+    t = cfg.rewards.feet_clearance
+    assert t.func is mdp.foot_clearance_reward_cmd and t.weight == 6.0 and t.params["target_height"] == 0.15, "[swingonly] from clear6 @ .15 (plain)"
+    t.func = mdp.foot_clearance_swing_cmd
