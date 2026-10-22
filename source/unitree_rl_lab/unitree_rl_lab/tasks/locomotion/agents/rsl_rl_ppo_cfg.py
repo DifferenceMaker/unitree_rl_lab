@@ -516,3 +516,27 @@ class GraspLcpRetrofitPPORunnerCfg(GraspNoEntropyFixedLRPPORunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class LM8PPORunnerCfg(WalkPPORunnerCfg):
+    """LM8 (2026-10-22): the scratch recipe transplants (lm8_env_cfg: #83, inverse ledger, unitree_rl_gym H1-2, Menlo, humanoid-gym).
+    GuardedPPO with the LM4BMirror01 hyper-parameters but NO mirror loss: these rows put a gait clock and/or a frame history in the
+    observation, and the mirror map (mdp/symmetry.py) is per-term, single-frame -- a history-flattened group fails its dim assert.
+    Clipped value loss on here (scratch; the walk warmstart rows pass use_clipped_value_loss=false on the command line)."""
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        class_name="unitree_rl_lab.tasks.locomotion.agents.guarded_ppo:GuardedPPO",
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )

@@ -43,6 +43,14 @@ _TERM_KIND = {
     "joint_vel_rel": ("joints_obs", None),
     "joint_effort": ("joints_obs", None),
     "last_action": ("joints_act", None),
+    # lm7e (2026-10-22): privileged critic feet terms (left, right) -> swap the pair; the gait clock (sin, cos of 2 pi phi):
+    # a left/right mirror is a half-period shift, sin(x + pi) = -sin x, cos(x + pi) = -cos x
+    "feet_contact_flags": ("pair", None),
+    "feet_force_z": ("pair", None),
+    "feet_height": ("pair", None),
+    "feet_xy_speed": ("pair", None),
+    "feet_air_time_obs": ("pair", None),
+    "gait_clock": ("clock", None),
 }
 
 _cache: dict = {}
@@ -115,6 +123,14 @@ def _build(env) -> dict:
                 assert dim == 3, f"{name}: expected dim 3, got {dim}"
                 perm += [off, off + 1, off + 2]
                 sign += list(arg)
+            elif kind == "pair":
+                assert dim == 2, f"{name}: expected a (left, right) pair, got dim {dim}"
+                perm += [off + 1, off]
+                sign += [1.0, 1.0]
+            elif kind == "clock":
+                assert dim == 2, f"{name}: expected (sin, cos), got dim {dim}"
+                perm += [off, off + 1]
+                sign += [-1.0, -1.0]
             else:
                 p, s = (perm_o, sign_o) if kind == "joints_obs" else (perm_a, sign_a)
                 assert dim == len(p), f"{name}: dim {dim} != joint map {len(p)}"
