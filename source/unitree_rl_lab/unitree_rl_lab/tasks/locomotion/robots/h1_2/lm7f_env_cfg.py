@@ -17,10 +17,12 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 
 from unitree_rl_lab.tasks.locomotion import mdp
 
-from .lm7e_env_cfg import gene_airtime, gene_angmom, gene_gforce, gene_kit, gene_posture, gene_resets, parent_A
+from .lm7e_env_cfg import (gene_airtime, gene_angmom, gene_dr_all, gene_gforce, gene_kit, gene_pc_contacts, gene_posture,
+                           gene_resets, parent_A)
 
 PARENT, IT = "lm7e_A_kit_2026-10-22", 98398
 BANK = "balance_p14g_hips_armfull_2026-09-23.pt"   # aspired-isaac-lab/assets/pose_banks/, recorded by scripts/tools/record_pose_bank.py
+PC10PAD = "lm7e_A_kit_pc10pad_2026-10-26"           # A_kit with the critic's first layer padded 120 -> 130 (lm7e/pad_critic.py)
 
 
 # ── parent ──
@@ -115,3 +117,20 @@ def gene_full(cfg): gene_gforce_resets(cfg); gene_angmom(cfg); gene_posture(cfg)
 def gene_gforce_airtime(cfg): gene_gforce(cfg); gene_airtime(cfg)
 def gene_gforce_activation(cfg): gene_gforce(cfg); gene_activation(cfg)
 def gene_gforce_bank(cfg): gene_gforce(cfg); gene_bank(cfg)
+
+
+# ── DR + privileged critic on A_kit (operator 2026-10-26: "keep the DR and privileged critic going ... Yes please, implement") ──
+def gene_pc_soft(cfg):
+    """pc_contacts with the SOFT LANDING: the lm7e pc_contacts / C_feet rows fell every episode right after the 300-it warm-up and
+    settled in alive-not-tracking (perfect turn in place, no walking). Two levers: critic warm-up 300 -> 1000 (TRAIN_ARGS; the std is
+    frozen with the actor during it) and the tracking ladder HELD at levels[0] = .15 for those 1000 iterations (hold_until_step), so
+    the actor unfreezes on a settled critic under the wide kernel instead of the .05 one it had climbed to inside the warm-up.
+    Warmstart = PC10PAD (zero columns for the 10 feet inputs, weights-only load)."""
+    gene_pc_contacts(cfg)
+    t = cfg.curriculum.track_std
+    assert t.params.get("hold_until_step", 0) == 0, "[pc_soft] no hold underneath"
+    t.params["hold_until_step"] = (IT + 1000) * 24
+
+
+def gene_gforce_drall(cfg): gene_gforce(cfg); gene_dr_all(cfg)
+def gene_gforce_pc_soft(cfg): gene_gforce(cfg); gene_pc_soft(cfg)

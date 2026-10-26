@@ -101,17 +101,22 @@ def tracking_std_levels(
     levels: tuple = (0.15, 0.10, 0.05),
     gate_term: str = "track_lin_vel_xy",
     gate_frac: float = 0.5,
+    hold_until_step: int = 0,
 ) -> torch.Tensor:
     """Tracking-kernel ladder, the trigger of lin_vel_cmd_levels: at an episode boundary, if the gate term's mean episode income per
     second of the resetting envs exceeds gate_frac x its weight, both tracking kernels tighten one level; never back. Performance-gated,
-    not step-based, so a warmstart (--resume_curriculum) starts at levels[0]. Returns the current std for the Curriculum/ log."""
+    not step-based, so a warmstart (--resume_curriculum) starts at levels[0]. Returns the current std for the Curriculum/ log.
+    hold_until_step (lm7f pc_soft, 2026-10-26): no climb while env.common_step_counter < hold_until_step -- with --resume_curriculum the
+    counter is the parent's iteration x 24, so (parent_it + N) x 24 holds the wide kernel for the first N iterations of a warmstart (the
+    padded-critic rows climbed to .05 inside the 300-it warm-up and fell out of the tracking basin for good when the actor unfroze)."""
     rm = env.reward_manager
     if not hasattr(env, "_track_std_level"):
         env._track_std_level = 0
         for n in reward_terms:
             rm.get_term_cfg(n).params["std"] = levels[0]
     n_ids = env.num_envs if isinstance(env_ids, slice) else len(env_ids)   # the resume path calls compute(env_ids=None) -> slice
-    if env._track_std_level < len(levels) - 1 and n_ids > 0 and env.common_step_counter % env.max_episode_length == 0:
+    if (env._track_std_level < len(levels) - 1 and n_ids > 0 and env.common_step_counter % env.max_episode_length == 0
+            and env.common_step_counter >= hold_until_step):
         income = torch.mean(rm._episode_sums[gate_term][env_ids]) / env.max_episode_length_s
         if income > rm.get_term_cfg(gate_term).weight * gate_frac:
             env._track_std_level += 1
