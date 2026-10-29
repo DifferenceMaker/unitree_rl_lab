@@ -98,7 +98,7 @@ def reset_from_pose_bank(
     pick = env_ids[torch.rand(len(env_ids), device=env.device) < prob]
     n = int(pick.numel())
     if n == 0:
-        return
+        return pick
     rows = torch.randint(0, B["n"], (n,), device=env.device)
     col, has = B["col"], B["col"] >= 0
     q = asset.data.default_joint_pos[pick].clone()
@@ -124,3 +124,4 @@ def reset_from_pose_bank(
     asset.write_root_pose_to_sim(torch.cat([pos, quat], dim=-1), env_ids=pick)
     asset.write_root_velocity_to_sim(torch.cat([v_w, w_w], dim=-1), env_ids=pick)
     asset.write_joint_state_to_sim(q, qd, env_ids=pick)
+    return pick   # lm7h: the handover hold wrapper needs the picked envs (the event manager ignores a return value)
