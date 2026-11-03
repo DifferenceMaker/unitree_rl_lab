@@ -317,3 +317,21 @@ def feet_yaw_hold_standing(env, asset_cfg: SceneEntityCfg, std: float = 0.1, com
     has gone flat. POSITIVE weight."""
     y = feet_yaw_rel_base(env, asset_cfg)
     return torch.exp(-y * y / (std * std)).mean(dim=1) * (~_walking(env, command_name, cmd_thr)).float()
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# group D (2026-11-03 evening): the clearance EMPHASIS rows + the floor-bump DR (robot 11-03: the left toe scuffed twice at 0.15 m/s on
+# lm7j_clear / combo_ff_clear while sim2sim walks clean; the real left foot carries 1-4 cm of height-belief error)
+# ---------------------------------------------------------------------------------------------------------------------------------
+def bumps_proof(env, env_ids) -> None:
+    """Startup event (JOB_VALIDITY 13 proof of the floor DR): how many envs spawn on a bump patch. A heightfield patch's origin z is its
+    centre height (isaaclab hf_terrains: origin_z = max of the centre region), a flat mesh patch's is 0, so env_origins[:, 2] > 0 marks
+    the bump envs; prints the share and the terrain grid."""
+    t = env.scene.terrain
+    z = t.env_origins[:, 2]
+    on = z > 1e-4
+    rows, cols = t.terrain_origins.shape[0], t.terrain_origins.shape[1]
+    zb = z[on]
+    print(f"[lm7j] bumps terrain: {int(on.sum())} / {env.num_envs} envs ({100.0 * float(on.float().mean()):.1f} %) spawn on bump patches "
+          f"(patch origin z {float(zb.min()) if len(zb) else 0:.3f}-{float(zb.max()) if len(zb) else 0:.3f} m), the rest on flat patches; "
+          f"terrain {rows} rows x {cols} cols, {int((t.terrain_origins[:, :, 2] > 1e-4).sum())} bump patches of {rows * cols}", flush=True)

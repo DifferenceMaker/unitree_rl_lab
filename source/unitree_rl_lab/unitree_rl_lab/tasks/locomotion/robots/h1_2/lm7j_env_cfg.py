@@ -46,11 +46,30 @@ the feet, the stop recoils; operator's genes 11-03):
             x 1.5, feet_yaw_hold_standing (std .1 rad) x 2. feet_too_near_split / feet_too_far_split / feet_crossed stay as they are.
 Rows: stack (combo + ffarms + roll + clear2 + stopramp2 + armsway + legs) | stack_base (combo + ffarms + roll + clear2 + stopramp2) |
       legs (combo + legs). Every row = combo (bit-identical, the parent's own genes) + its 2026-11-03 genes; the warmstart is PARENT2.
+
+Group D (2026-11-03 evening; robot 11-03: lm7j_clear / combo_ff_clear scuffed the LEFT toe twice at 0.15 m/s while sim2sim walks clean --
+the exam apex is 2.2-2.6 cm and the real left foot carries ~1-4 cm of height-belief error; operator: "really make an emphasis on the
+clearance; increase the weight if you need to", a stampeding leg accepted; + a floor-bump DR axis). Trunk = stack_base with clear2 REPLACED:
+  clear8    feet_swing target_height 0.08 FIXED (no 4 -> 8 curriculum), std .01 (sigma 10 cm), weight 12 (2 cm pays 12 x 0.70 = 8.4 vs 12 at
+            8 cm: the slope 2 -> 8 cm is 3.6 / step = 0.6 / cm, against the charges of a 6 cm higher swing (energy ~0.1-0.2, action_rate
+            ~0.03, joint_vel_reg ~0.05, torso kernels <= 0.3: <= 0.6 / step in all) -> 12 holds, kept at the operator's number), feet_clearance 0.
+  clear10   as clear8 with target 0.10 (aim 6-8 cm real after the sag): 2 cm pays 0.53 x 12 = 6.4, the slope 2 -> 10 cm 5.6 / step.
+  bumps     the scene's flat plane -> a TerrainGenerator (curriculum OFF, seed 1): 10 x 20 patches of 8 x 8 m, 75 % MeshPlaneTerrainCfg (flat,
+            z = 0) + 25 % HfRandomUniformTerrainCfg noise 0.5-2 cm (step 0.5 cm, heights drawn every 0.20 m and interpolated, mesh cells
+            0.10 m), a 10 m flat border; the same physics material (friction 1.0 / 1.0, restitution 0). Sub-terrains are drawn per PATCH by
+            proportion, env origins spread over the columns and random rows -> ~25 % of the envs on bumps, flat stays the default. Both
+            reset paths (reset_root_state_uniform, reset_from_pose_bank) add env_origins (a bump patch's origin z = its centre height);
+            the anchors are xy / yaw only; no height scan in the obs. mdp.bumps_proof (startup) prints the measured share.
+Rows: stack_clear8 (D1) | stack_clear10 (D2) | stack_bumps (D3 = stack_base + bumps) | stack_clear8_bumps (D4 = D1 + bumps) |
+      stack_full (E, operator 17:40 = row A with D4's clearance + bumps: ffarms + roll + stopramp2 + clear8 + armsway + legs + bumps).
 """
 import math
 
 from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
+import isaaclab.terrains as terrain_gen
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 
@@ -216,3 +235,52 @@ def gene_legs(cfg):
 def stack_base(cfg): combo(cfg); gene_ffarms(cfg); gene_roll(cfg); gene_clear2(cfg); gene_stopramp2(cfg)   # B: combo + 1 + 2 + 3 + 4
 def stack(cfg): stack_base(cfg); gene_armsway(cfg); gene_legs(cfg)                                          # A: + 5 + 6
 def legs(cfg): combo(cfg); gene_legs(cfg)                                                                   # C: combo + 6
+
+
+# ── group D genes ──
+BUMP_NOISE, BUMP_STEP, BUMP_PROP, BUMP_SAMPLE_M = (0.005, 0.02), 0.005, 0.25, 0.2   # the exam's stumble field: caps 0.4-2 cm on R 0.15 m spheres (unitree_mujoco stumble_field.py)
+
+
+def gene_clear_fixed(cfg, target, weight=12.0):
+    """clear8 / clear10: gene B's two kernels re-sized for EMPHASIS -- feet_swing std .01 (sigma 10 cm), a FIXED target, weight 12;
+    feet_clearance 0. No curriculum (the operator wants the margin from the first iteration)."""
+    R = cfg.rewards
+    c, sw = R.feet_clearance, R.feet_swing
+    assert c.func is mdp.foot_clearance_reward_cmd and c.weight == 9.0 and c.params["target_height"] == 0.08 and c.params["std"] == 0.05, \
+        "[clear_fixed] the parent's feet_clearance 9 (foot_clearance_reward_cmd, .08 / std .05)"
+    assert sw.func is mdp.foot_clearance_swing_cmd and sw.weight == 3.0 and sw.params["target_height"] == 0.08 and sw.params["std"] == 0.05 \
+        and sw.params["cmd_thr"] == 0.03, "[clear_fixed] the parent's feet_swing 3 (lm7u swing kernel, .08 / std .05, thr .03)"
+    assert getattr(cfg.curriculum, "swing_target", None) is None, "[clear_fixed] no swing-target curriculum (clear2 is REPLACED, not stacked)"
+    c.weight = 0.0
+    sw.params["std"] = SWING_STD
+    sw.params["target_height"] = float(target)
+    sw.weight = float(weight)
+
+
+def gene_bumps(cfg):
+    """The floor DR: 25 % of the envs on 0.5-2 cm random bumps, 75 % flat, same material; curriculum OFF; a startup proof event."""
+    T = cfg.scene.terrain
+    assert T.terrain_type == "plane" and T.terrain_generator is None and T.physics_material.static_friction == 1.0 \
+        and T.physics_material.dynamic_friction == 1.0 and T.physics_material.restitution == 0.0 and T.collision_group == -1, \
+        "[bumps] the parent's flat plane (friction 1.0 / 1.0, restitution 0)"
+    assert getattr(cfg.events, "bumps_proof", None) is None and getattr(cfg.curriculum, "terrain_levels", None) is None, "[bumps] no terrain curriculum / proof underneath"
+    gen = TerrainGeneratorCfg(
+        seed=1, curriculum=False, use_cache=False, size=(8.0, 8.0), border_width=10.0, num_rows=10, num_cols=20,
+        horizontal_scale=0.1, vertical_scale=0.005, slope_threshold=0.75, color_scheme="none",
+        sub_terrains={
+            "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=1.0 - BUMP_PROP),
+            "bumps": terrain_gen.HfRandomUniformTerrainCfg(proportion=BUMP_PROP, noise_range=BUMP_NOISE, noise_step=BUMP_STEP, downsampled_scale=BUMP_SAMPLE_M),
+        })
+    cfg.scene.terrain = TerrainImporterCfg(prim_path=T.prim_path, terrain_type="generator", terrain_generator=gen, collision_group=T.collision_group,
+                                           physics_material=T.physics_material, max_init_terrain_level=None, debug_vis=False)
+    cfg.events.bumps_proof = EventTerm(func=mdp.bumps_proof, mode="startup")
+    print(f"[lm7j] bumps terrain cfg: {gen.num_rows} x {gen.num_cols} patches of {gen.size} m, flat {1.0 - BUMP_PROP:.2f} / bumps {BUMP_PROP:.2f} "
+          f"(noise {BUMP_NOISE} m, step {BUMP_STEP}, sampled every {BUMP_SAMPLE_M} m, cells {gen.horizontal_scale} m), border {gen.border_width} m, curriculum off, seed {gen.seed}", flush=True)
+
+
+def _stack_base_noclear(cfg): combo(cfg); gene_ffarms(cfg); gene_roll(cfg); gene_stopramp2(cfg)   # trunk B without clear2 (replaced by a D clearance gene)
+def stack_clear8(cfg): _stack_base_noclear(cfg); gene_clear_fixed(cfg, 0.08, 12.0)                # D1
+def stack_clear10(cfg): _stack_base_noclear(cfg); gene_clear_fixed(cfg, 0.10, 12.0)               # D2
+def stack_bumps(cfg): stack_base(cfg); gene_bumps(cfg)                                              # D3 = B + the floor DR
+def stack_clear8_bumps(cfg): stack_clear8(cfg); gene_bumps(cfg)                                     # D4 = D1 + the floor DR (the deploy candidate)
+def stack_full(cfg): stack_clear8(cfg); gene_armsway(cfg); gene_legs(cfg); gene_bumps(cfg)                      # E = row A with D4's clearance + bumps
