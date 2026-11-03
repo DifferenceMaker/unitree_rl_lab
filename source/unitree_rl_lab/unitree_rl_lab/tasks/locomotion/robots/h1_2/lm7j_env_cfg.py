@@ -32,10 +32,25 @@ Rows: arms6 | arms10 | torso15 | stance | stopramp | combo (arms6 + torso15 + st
 Every row = lm7i_env_cfg.combo_soft + its gene. roll, ramp2, combo_roll = the 2026-11-02 additions (operator-accepted); torso15 stays as the
 kernel-width CONTROL (operator 11-02: "Control"). ffarms / clear / combo_ff / combo_ff_clear = the 2026-11-02 evening additions from the
 robot tests (HYPOTHESIS.md C15-C18).
+
+2026-11-03 rows on lm7j_combo @133393 (PARENT2; the Exam v3b re-land: every row but ffarms slides OUT after a walk, clear did not lift
+the feet, the stop recoils; operator's genes 11-03):
+  clear2    gene B re-formed: feet_swing std .001 -> .01 (sigma 3.2 -> 10 cm: a 2 cm swing pays exp(-(.06)^2 / .01) = 0.70 against the
+            8 cm target, 5 cm 0.91 -- a gradient where the robot lives; at .001 it paid 0.03 and the policy stepped less instead),
+            weight 6, feet_clearance 0, + a TARGET CURRICULUM: target_height 0.04 -> 0.08 m linear over RAMP_IT iterations starting
+            RAMP_START_IT after the parent's iteration (mdp.reward_param_ramp on absolute ticks).
+  stopramp2 gene_stopramp (dec 1.0 / 1.0 / 2.0, acc instant) + a curriculum on the deceleration: (1.0, 1.0, 2.0) -> (0.5, 0.5, 1.0)
+            over the same ramp (mdp.slew_dec_ramp): 0.8 m/s stops in 0.8 s at the start, 1.6 s at the end.
+  armsway   + arm_motion_walking (mdp.arm_motion_walking, the 8 upper-arm joint velocities squared while |cmd| > .05) x ARM_MOTION_W.
+  legs      + feet_width_hold_standing (std .03, w0 = the anchor at the spawn / the last stop) x 3, feet_width_walking (.30, std .06)
+            x 1.5, feet_yaw_hold_standing (std .1 rad) x 2. feet_too_near_split / feet_too_far_split / feet_crossed stay as they are.
+Rows: stack (combo + ffarms + roll + clear2 + stopramp2 + armsway + legs) | stack_base (combo + ffarms + roll + clear2 + stopramp2) |
+      legs (combo + legs). Every row = combo (bit-identical, the parent's own genes) + its 2026-11-03 genes; the warmstart is PARENT2.
 """
 import math
 
 from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 
@@ -44,9 +59,16 @@ from unitree_rl_lab.tasks.locomotion.mdp.commands.velocity_command import Corner
 
 from .lm7h_env_cfg import BANK_SW
 from .lm7i_env_cfg import combo_soft
+from .lm7u_env_cfg import _FEET
 
 PARENT, IT = "lm7i_combo_soft_2026-11-01", 126394
 BANK_SW_FF = "balance_p14h_stancewide_armdeploy_2026-10-29_ff_2026-11-02.pt"   # aspired-isaac-lab/assets/pose_banks/: BANK_SW re-recorded WITH the arm ff (gene A rows only)
+PARENT2, IT2 = "lm7j_combo_2026-11-02", 133393   # the 2026-11-03 rows' parent (the lm7j_combo milestone, Exam v3b 61.8 / v3 64.1)
+RAMP_START_IT, RAMP_IT = 300, 2000                # the curricula: flat through the 300-it critic warm-up, then 2000 it linear (48 000 ticks)
+RAMP_START, RAMP_STEPS = (IT2 + RAMP_START_IT) * 24, RAMP_IT * 24   # absolute common_step_counter ticks: 3 208 632 -> 3 256 632 = it 133 693 -> 135 693
+SWING_STD, SWING_T0, SWING_T1 = 0.01, 0.04, 0.08  # clear2: sigma 10 cm; the target ramps 4 -> 8 cm
+DEC0, DEC1 = (1.0, 1.0, 2.0), (0.5, 0.5, 1.0)     # stopramp2: the deceleration limit (vx, vy m/s^2; wz rad/s^2) at the ramp's start / end
+ARM_MOTION_W = -0.25                              # armsway: three upper-arm joints at 1 rad/s = 0.75 / step; one joint 0.25 / step
 ROLL_W = -15.0   # lm7j_roll: the parent's walking-gated mean wx^2 = 0.103 rad^2/s^2 (90-it liveness, full-episode scale) -> -15 x 0.103 = -1.55 / s (HYPOTHESIS.md)
 
 
@@ -140,3 +162,57 @@ def ffarms(cfg): combo_soft(cfg); gene_ffarms(cfg)                 # gene A alon
 def clear(cfg): combo_soft(cfg); gene_clear(cfg)                   # gene B alone
 def combo_ff(cfg): combo(cfg); gene_ffarms(cfg)                    # the combo row's gene set, bit-identical, + A
 def combo_ff_clear(cfg): combo(cfg); gene_ffarms(cfg); gene_clear(cfg)   # combo + A + B
+
+
+# ── 2026-11-03 genes (on lm7j_combo @133393) ──
+def gene_clear2(cfg):
+    """clear' = gene B with a sigma that has a gradient at a 2 cm swing (std .01) and the target ramped 4 -> 8 cm (mdp.reward_param_ramp)."""
+    R = cfg.rewards
+    c, sw = R.feet_clearance, R.feet_swing
+    assert c.func is mdp.foot_clearance_reward_cmd and c.weight == 9.0 and c.params["target_height"] == 0.08 and c.params["std"] == 0.05 \
+        and c.params["tanh_mult"] == 2.0, "[clear2] the parent's feet_clearance 9 (foot_clearance_reward_cmd, .08 / std .05 / tanh 2)"
+    assert sw.func is mdp.foot_clearance_swing_cmd and sw.weight == 3.0 and sw.params["target_height"] == 0.08 and sw.params["std"] == 0.05 \
+        and sw.params["tanh_mult"] == 2.0 and sw.params["cmd_thr"] == 0.03, "[clear2] the parent's feet_swing 3 (lm7u swing kernel, .08 / std .05 / tanh 2, thr .03)"
+    assert getattr(cfg.curriculum, "swing_target", None) is None, "[clear2] no swing-target curriculum underneath"
+    c.weight = 0.0
+    sw.params["std"] = SWING_STD
+    sw.params["target_height"] = SWING_T0   # the ramp's start value (the curriculum writes the same at its first call)
+    sw.weight = 6.0
+    cfg.curriculum.swing_target = CurrTerm(func=mdp.reward_param_ramp,
+                                           params={"reward_term_name": "feet_swing", "param": "target_height", "value_from": SWING_T0, "value_to": SWING_T1,
+                                                   "start_step": RAMP_START, "ramp_steps": RAMP_STEPS})
+
+
+def gene_stopramp2(cfg):
+    """stopramp' = the slew command (dec 1.0 / 1.0 / 2.0, acc instant) + the deceleration ramped to half (mdp.slew_dec_ramp)."""
+    gene_stopramp(cfg, dec=DEC0)
+    assert getattr(cfg.curriculum, "slew_dec", None) is None, "[stopramp2] no slew-dec curriculum underneath"
+    cfg.curriculum.slew_dec = CurrTerm(func=mdp.slew_dec_ramp,
+                                       params={"command_name": "base_velocity", "dec_from": DEC0, "dec_to": DEC1, "start_step": RAMP_START, "ramp_steps": RAMP_STEPS})
+
+
+def gene_armsway(cfg):
+    R = cfg.rewards
+    assert getattr(R, "arm_motion_walking", None) is None, "[armsway] no arm-motion price underneath"
+    assert R.joint_vel_reg.weight == -0.01 and R.joint_deviation_arms.weight == -6.0, "[armsway] the parent's joint_vel_reg -0.01 / joint_deviation_arms -6 (combo)"
+    R.arm_motion_walking = RewTerm(func=mdp.arm_motion_walking, weight=ARM_MOTION_W,
+                                   params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(mdp.ARM_MOTION_JOINTS)), "command_name": "base_velocity", "cmd_thr": 0.05})
+
+
+def gene_legs(cfg):
+    R = cfg.rewards
+    for n in ("feet_width_hold_standing", "feet_width_walking", "feet_yaw_hold_standing"):
+        assert getattr(R, n, None) is None, f"[legs] no {n} underneath"
+    assert R.feet_too_near.func.__name__ == "feet_too_near_split" and R.feet_too_near.params["threshold_stand"] == 0.28 and R.feet_too_near.params["threshold_walk"] == 0.24 \
+        and R.feet_too_far.func.__name__ == "feet_too_far_split" and R.feet_too_far.params["threshold_stand"] == 0.38 and R.feet_crossed.weight == -8.0, \
+        "[legs] the walls stay: feet_too_near .28 / .24, feet_too_far .38 / .60, feet_crossed -8 (combo's stance gene)"
+    E = cfg.events
+    assert E.reanchor_on_stop.func is mdp.reanchor_on_stop and E.capture_spawn_state.func is mdp.capture_spawn_state, "[legs] the anchor events (the feet anchor rides on them)"
+    R.feet_width_hold_standing = RewTerm(func=mdp.feet_width_hold_standing, weight=3.0, params={"asset_cfg": _FEET, "std": 0.03, "command_name": "base_velocity", "cmd_thr": 0.03})
+    R.feet_width_walking = RewTerm(func=mdp.feet_width_walking, weight=1.5, params={"asset_cfg": _FEET, "target": 0.30, "std": 0.06, "command_name": "base_velocity", "cmd_thr": 0.03})
+    R.feet_yaw_hold_standing = RewTerm(func=mdp.feet_yaw_hold_standing, weight=2.0, params={"asset_cfg": _FEET, "std": 0.1, "command_name": "base_velocity", "cmd_thr": 0.03})
+
+
+def stack_base(cfg): combo(cfg); gene_ffarms(cfg); gene_roll(cfg); gene_clear2(cfg); gene_stopramp2(cfg)   # B: combo + 1 + 2 + 3 + 4
+def stack(cfg): stack_base(cfg); gene_armsway(cfg); gene_legs(cfg)                                          # A: + 5 + 6
+def legs(cfg): combo(cfg); gene_legs(cfg)                                                                   # C: combo + 6

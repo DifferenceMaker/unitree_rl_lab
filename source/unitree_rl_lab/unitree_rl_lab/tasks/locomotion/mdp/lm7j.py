@@ -28,6 +28,21 @@ implement this kind of deceleration for stopping in training too? instead of har
                         recomputed at the current pose at 200 Hz (the robot: 30 Hz). Source: root_physx_view.get_gravity_compensation_forces()
                         -- (count, max_dofs + 6) for a floating base (6 root columns FIRST), (count, max_dofs) for a fixed base; the
                         joint columns are found by shape at construction. Proof: scripts/tools/check_arm_gravity_ff.py (aspired-isaac-lab).
+
+2026-11-03 (lm7j_stack / lm7j_stack_base / lm7j_legs on lm7j_combo @133393; operator's genes after the Exam v3b re-land: every row but
+ffarms slides OUT after a walk, clear did not lift the feet, the stop recoils):
+  slew_dec_ramp         curriculum: SlewVelocityCommand's deceleration limit ramped linearly between two absolute common_step_counter
+                        ticks, (1.0, 1.0, 2.0) -> (0.5, 0.5, 1.0): a 0.8 m/s stop takes 0.8 s at the start and 1.6 s at the end.
+  arm_motion_walking    L2 of the 8 upper-arm joint velocities (shoulder pitch / roll / yaw + elbow pitch, both arms) while walking
+                        (|cmd| > cmd_thr, the observed command). The elbow_roll / wrist_pitch / wrist_yaw DOFs are EXCLUDED: the
+                        explicit-PD wrist group is a plant limit cycle (elbow_roll +-9.5 rad/s at 19 Nm in every policy, the 09-08
+                        armature bake, see wrist-actuator-chatter) -- pricing it would price the plant, not the sway.
+  feet_width_hold_standing   exp(-(w - w0)^2 / std^2) at a zero command, w = the lateral foot separation in the base frame (left y -
+                        right y), w0 = the separation at the spawn / the LAST STOP (events.capture_spawn_state / reanchor_on_stop now
+                        carry env.spawn_feet_width). The post-walk slide-out priced from where the feet landed.
+  feet_width_walking    exp(-(w - target)^2 / std^2) under a command: the walking width toward 0.30 m (the legs-in walk at 22-27 cm).
+  feet_yaw_hold_standing   mean over the feet of exp(-(yaw_foot - yaw_base)^2 / std^2) at a zero command, std 0.1 rad: live at 3-9 deg
+                        where feet_yaw_bonus (L1, sigma 3 deg) has already gone flat (lm7d's footyaw L2 was flat at 0).
 """
 from __future__ import annotations
 
@@ -41,6 +56,8 @@ from isaaclab.envs.mdp.actions.actions_cfg import JointPositionActionCfg
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_apply_inverse
+
+from .events import feet_lateral_sep_b, feet_yaw_rel_base
 
 from .commands.velocity_command import CornerVelocityCommand, UniformLevelVelocityCommandCfg
 
@@ -76,6 +93,11 @@ class SlewVelocityCommand(CornerVelocityCommand):
         extras = super().reset(env_ids)
         self._jump[slice(None) if env_ids is None else env_ids] = True
         return extras
+
+    def set_dec(self, dec) -> None:
+        """The deceleration limit per axis (slew_dec_ramp curriculum, 2026-11-03); the cfg mirrors it for a reader of the term."""
+        self._dec[:] = torch.tensor([float(x) for x in dec], device=self.device)
+        self.cfg.slew_dec = tuple(float(x) for x in dec)
 
     def _resample_command(self, env_ids: Sequence[int]):
         out_prev = self.vel_command_b[env_ids].clone()
@@ -227,3 +249,71 @@ def arm_gravity_ff_action_cfg(a) -> ArmGravityFFJointPositionActionCfg:
     """An ArmGravityFFJointPositionActionCfg carrying every field of the existing JointPositionActionCfg `a` (scale, offset, clip, joints)."""
     kw = {f.name: getattr(a, f.name) for f in dataclasses.fields(a) if f.name != "class_type"}
     return ArmGravityFFJointPositionActionCfg(**kw)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# 2026-11-03 rows: lm7j_stack / lm7j_stack_base / lm7j_legs (see the module docstring)
+# ---------------------------------------------------------------------------------------------------------------------------------
+ARM_MOTION_JOINTS = (".*_shoulder_pitch_joint", ".*_shoulder_roll_joint", ".*_shoulder_yaw_joint", ".*_elbow_pitch_joint")   # 8 DOFs; NOT elbow_roll / wrist_* (the chatter group)
+
+
+def slew_dec_ramp(env, env_ids, command_name: str = "base_velocity", dec_from: tuple = (1.0, 1.0, 2.0), dec_to: tuple = (0.5, 0.5, 1.0),
+                  start_step: int = 0, ramp_steps: int = 48000) -> torch.Tensor:
+    """Curriculum: the SlewVelocityCommand's deceleration limit, linear from dec_from (tick <= start_step) to dec_to (tick >= start_step +
+    ramp_steps) on ABSOLUTE env.common_step_counter ticks (curriculums.reward_param_ramp's convention: a --resume_curriculum row anchors
+    the ramp at (parent_it + N) x 24). The stop window T = |v0| / a_dec grows with the ramp: 0.8 m/s -> 0.8 s at the start, 1.6 s at
+    the end. Returns the vx limit for the Curriculum/<name> log; a proof line at the first call, per 2400 ticks until the end, at the end."""
+    term = env.command_manager.get_term(command_name)
+    assert isinstance(term, SlewVelocityCommand), f"[slew_dec_ramp] {command_name} is {type(term).__name__}, not SlewVelocityCommand"
+    step = int(env.common_step_counter)
+    u = 0.0 if step <= int(start_step) else min(1.0, (step - int(start_step)) / float(max(1, int(ramp_steps))))
+    dec = [float(a) + u * (float(b) - float(a)) for a, b in zip(dec_from, dec_to)]
+    term.set_dec(dec)
+    st = getattr(env, "_slew_dec_ramp", None)
+    if st is None or (not st["done"] and (step - st["step"] >= 2400 or u >= 1.0)):   # every 100 it until the end; the resume jump re-prints
+        print(f"[lm7j] slew dec ramp: {tuple(round(x, 4) for x in dec)} (u {u:.3f}; tick {step}, ramp {int(start_step)} -> {int(start_step) + int(ramp_steps)} "
+              f"= it {int(start_step) // 24} -> {(int(start_step) + int(ramp_steps)) // 24}); 0.8 m/s stops in {0.8 / dec[0]:.2f} s", flush=True)
+        env._slew_dec_ramp = {"step": step, "done": u >= 1.0}
+    return torch.tensor(dec[0], device=env.device)
+
+
+def _walking(env, command_name: str, cmd_thr: float) -> torch.Tensor:
+    return torch.linalg.norm(env.command_manager.get_command(command_name), dim=1) > cmd_thr
+
+
+def arm_motion_walking(env, asset_cfg: SceneEntityCfg, command_name: str = "base_velocity", cmd_thr: float = 0.05) -> torch.Tensor:
+    """Sum over asset_cfg.joint_ids (the 8 upper-arm DOFs) of joint_vel^2 while |cmd| > cmd_thr (the observed command, Bible rule 32).
+    An L2 price (no kernel, no flat region): at weight -0.25 one joint at 1 rad/s costs 0.25 / step, three joints 0.75 / step. NEGATIVE
+    weight. The standing side is already priced by joint_vel_reg (-0.01, all joints) and joint_deviation_arms (L1 to default, -6)."""
+    asset = env.scene[asset_cfg.name]
+    v = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    return torch.sum(v * v, dim=1) * _walking(env, command_name, cmd_thr).float()
+
+
+def feet_width_hold_standing(env, asset_cfg: SceneEntityCfg, std: float = 0.03, command_name: str = "base_velocity", cmd_thr: float = 0.03) -> torch.Tensor:
+    """exp(-(w - w0)^2 / std^2) at a zero command: w = the lateral foot separation in the base frame, w0 = env.spawn_feet_width (the
+    separation at the spawn, re-captured at EVERY stop by events.reanchor_on_stop). std 0.03: 1 cm of slide pays 0.90, 3 cm 0.37,
+    6 cm 0.02; the gradient peaks at 2.1 cm = where the post-walk slide starts (the walls feet_too_near / _far catch the rest).
+    POSITIVE weight; 0 until the anchor exists."""
+    if not hasattr(env, "spawn_feet_width"):
+        return torch.zeros(env.num_envs, device=env.device)
+    w = feet_lateral_sep_b(env, asset_cfg)
+    e = w - env.spawn_feet_width
+    return torch.exp(-e * e / (std * std)) * (~_walking(env, command_name, cmd_thr)).float()
+
+
+def feet_width_walking(env, asset_cfg: SceneEntityCfg, target: float = 0.30, std: float = 0.06, command_name: str = "base_velocity",
+                       cmd_thr: float = 0.03) -> torch.Tensor:
+    """exp(-(w - target)^2 / std^2) under a command: the lateral separation toward target while walking (the parent walks at 22-27 cm
+    and the stand is 32: the narrow walk is where the legs go inward). std 0.06: 24 cm pays 0.37, 27 cm 0.78. POSITIVE weight."""
+    w = feet_lateral_sep_b(env, asset_cfg)
+    e = w - target
+    return torch.exp(-e * e / (std * std)) * _walking(env, command_name, cmd_thr).float()
+
+
+def feet_yaw_hold_standing(env, asset_cfg: SceneEntityCfg, std: float = 0.1, command_name: str = "base_velocity", cmd_thr: float = 0.03) -> torch.Tensor:
+    """Mean over the feet of exp(-(yaw_foot - yaw_base)^2 / std^2) at a zero command (ceiling 1.0). std 0.1 rad: a foot 4 deg out
+    pays 0.61, 5.7 deg 0.37, 10 deg 0.05 -- live where feet_yaw_bonus (L1, sigma 3 deg: 5.7 deg pays 0.15, 10 deg 0.04 for ONE foot)
+    has gone flat. POSITIVE weight."""
+    y = feet_yaw_rel_base(env, asset_cfg)
+    return torch.exp(-y * y / (std * std)).mean(dim=1) * (~_walking(env, command_name, cmd_thr)).float()

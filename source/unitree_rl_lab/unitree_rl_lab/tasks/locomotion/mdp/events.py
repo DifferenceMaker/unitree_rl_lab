@@ -14,6 +14,48 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+# ── the feet anchor (lm7j_legs 2026-11-03): the lateral separation and the per-foot yaw at the spawn / the last stop ──────────
+def feet_lateral_sep_b(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Signed LATERAL foot separation in the base frame, left y - right y (num_envs,): positive = the normal stance, negative =
+    crossed. The planar distance (feet_too_near / _far) is dominated by the fore-aft stagger mid-stride; the legs-in / legs-out
+    question is this one number. The left foot is found by name once (asset.body_names at the resolved ids) and cached on the env."""
+    asset = env.scene[asset_cfg.name]
+    ids = asset_cfg.body_ids
+    d = asset.data.body_pos_w[:, ids, :3] - asset.data.root_pos_w[:, :3].unsqueeze(1)
+    n = d.shape[1]
+    q = asset.data.root_quat_w.unsqueeze(1).expand(-1, n, -1).reshape(-1, 4)
+    yb = math_utils.quat_apply_inverse(q, d.reshape(-1, 3)).reshape(-1, n, 3)[..., 1]
+    key = "_feet_left_first_" + "_".join(str(i) for i in ids)
+    if not hasattr(env, key):
+        names = [asset.body_names[i] for i in ids]
+        left_first = not (n == 2 and names[1].startswith("left") and not names[0].startswith("left"))   # a [right, left] order flips the sign
+        print(f"[feet anchor] feet {names}: lateral separation = {'first' if left_first else 'second'} - {'second' if left_first else 'first'} (left - right)", flush=True)
+        setattr(env, key, left_first)
+    return (yb[:, 0] - yb[:, 1]) if getattr(env, key) else (yb[:, 1] - yb[:, 0])
+
+
+def feet_yaw_rel_base(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Per-foot yaw relative to the base heading, wrapped (num_envs, n_feet) -- lm7e._foot_rpy's yaw."""
+    asset = env.scene[asset_cfg.name]
+    fq = asset.data.body_quat_w[:, asset_cfg.body_ids, :]
+    n = fq.shape[1]
+    y = math_utils.euler_xyz_from_quat(fq.reshape(-1, 4))[2].reshape(-1, n)
+    base_yaw = math_utils.euler_xyz_from_quat(asset.data.root_quat_w)[2]
+    return math_utils.wrap_to_pi(y - base_yaw.unsqueeze(1))
+
+
+def _capture_feet_anchor(env, asset_cfg: SceneEntityCfg, ids) -> None:
+    """env.spawn_feet_width (num_envs,) + env.spawn_feet_yaw (num_envs, 2): captured with the base anchor at the spawn
+    (capture_spawn_state) and at every stop (reanchor_on_stop), read by feet_width_hold_standing (lm7j). Privileged: rewards only."""
+    if asset_cfg.body_ids is None or len(asset_cfg.body_ids) != 2:
+        return
+    if not hasattr(env, "spawn_feet_width"):
+        env.spawn_feet_width = torch.zeros(env.num_envs, device=env.device)
+        env.spawn_feet_yaw = torch.zeros((env.num_envs, 2), device=env.device)
+    env.spawn_feet_width[ids] = feet_lateral_sep_b(env, asset_cfg)[ids]
+    env.spawn_feet_yaw[ids] = feet_yaw_rel_base(env, asset_cfg)[ids]
+
+
 
 def apply_sustained_external_force(
     env: "ManagerBasedRLEnv",
@@ -169,6 +211,7 @@ def capture_spawn_state(
     if asset_cfg.body_ids is not None and len(asset_cfg.body_ids) == 2:
         foot_pos = asset.data.body_pos_w[env_ids][:, asset_cfg.body_ids, :2]
         env.spawn_foot_pos[env_ids] = foot_pos
+    _capture_feet_anchor(env, asset_cfg, env_ids)   # lm7j_legs 2026-11-03: the lateral separation + per-foot yaw at the spawn
 
 def resample_reach_point(
     env: "ManagerBasedRLEnv",
@@ -372,7 +415,9 @@ def reanchor_on_stop(
     """lm3: re-capture the spawn buffers at the moment the velocity command
     drops to ~zero, so the standing-gated hold terms anchor to WHERE THE ROBOT
     STOPPED instead of its birth position. Runs every step (interval mode);
-    detects the moving->standing edge per env."""
+    detects the moving->standing edge per env.
+    lm7j_legs (2026-11-03): the same edge also re-captures the feet anchor (env.spawn_feet_width = the lateral separation in the
+    base frame, env.spawn_feet_yaw) so feet_width_hold_standing holds the width the robot STOPPED at, not its birth width."""
     import torch as _t
     cmd = env.command_manager.get_command(command_name)
     standing = _t.linalg.norm(cmd, dim=1) < threshold
@@ -393,6 +438,7 @@ def reanchor_on_stop(
     )
     if hasattr(env, "spawn_foot_pos") and asset_cfg.body_ids is not None:
         env.spawn_foot_pos[ids] = asset.data.body_pos_w[ids][:, asset_cfg.body_ids, :2]
+    _capture_feet_anchor(env, asset_cfg, ids)        # lm7j_legs 2026-11-03: w0 = the lateral separation at THIS stop
 
 
 def push_by_setting_velocity_stamped(

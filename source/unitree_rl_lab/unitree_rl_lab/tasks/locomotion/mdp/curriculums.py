@@ -576,3 +576,37 @@ def reward_schedule_curriculum(
             term.params[k] = float(v0) + u * (float(v1) - float(v0))
     out = term.weight if (weight_from is not None and weight_to is not None) else u
     return torch.tensor(float(out), device=env.device)
+
+
+def reward_param_ramp(
+    env: "ManagerBasedRLEnv",
+    env_ids: "Sequence[int]",
+    reward_term_name: str,
+    param: str,
+    value_from: float,
+    value_to: float,
+    start_step: int,
+    ramp_steps: int,
+) -> "torch.Tensor":
+    """Ramp ONE numeric param of a reward term linearly from value_from to value_to between two ABSOLUTE env.common_step_counter
+    ticks: value_from while step <= start_step, value_to from start_step + ramp_steps on (lm7j 2026-11-03: feet_swing.target_height
+    0.04 -> 0.08 m).
+
+    Absolute ticks like push_velocity_curriculum, NOT a first-call latch (reward_schedule_curriculum latches t0 at construction, before
+    train.py applies the --resume_curriculum offset -- Bible rule 29's bug): with --resume_curriculum the counter starts at the
+    parent's iteration x 24, so a row anchors the ramp at (parent_it + N) x 24 the way lm7f's hold_until_step does, and the ramp
+    survives a resume of the row itself (the counter is the row's own iteration x 24 again). Ticks = 24 per PPO iteration at
+    num_steps_per_env 24: ramp_steps 48000 = 2000 iterations. Returns the current value for the Curriculum/<name> log.
+    Proof of life: one line at the first call (the wrapper's reset, tick 0), one per 2400 ticks (100 it) until the ramp ends -- so the
+    --resume_curriculum jump re-prints it at the parent's tick -- and one at the end."""
+    step = int(env.common_step_counter)
+    u = 0.0 if step <= int(start_step) else min(1.0, (step - int(start_step)) / float(max(1, int(ramp_steps))))
+    v = float(value_from) + u * (float(value_to) - float(value_from))
+    env.reward_manager.get_term_cfg(reward_term_name).params[param] = v
+    key = f"_reward_param_ramp_{reward_term_name}_{param}"
+    st = getattr(env, key, None)
+    if st is None or (not st["done"] and (step - st["step"] >= 2400 or u >= 1.0)):   # every 100 it until the end; the resume jump (0 -> parent x 24) re-prints
+        print(f"[curriculum] {reward_term_name}.{param} = {v:.4f} (u {u:.3f}; tick {step}, ramp {int(start_step)} -> {int(start_step) + int(ramp_steps)} "
+              f"= it {int(start_step) // 24} -> {(int(start_step) + int(ramp_steps)) // 24})", flush=True)
+        setattr(env, key, {"step": step, "done": u >= 1.0})
+    return torch.tensor(v, device=env.device)
