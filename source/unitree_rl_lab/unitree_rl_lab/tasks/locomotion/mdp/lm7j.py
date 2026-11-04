@@ -335,3 +335,23 @@ def bumps_proof(env, env_ids) -> None:
     print(f"[lm7j] bumps terrain: {int(on.sum())} / {env.num_envs} envs ({100.0 * float(on.float().mean()):.1f} %) spawn on bump patches "
           f"(patch origin z {float(zb.min()) if len(zb) else 0:.3f}-{float(zb.max()) if len(zb) else 0:.3f} m), the rest on flat patches; "
           f"terrain {rows} rows x {cols} cols, {int((t.terrain_origins[:, :, 2] > 1e-4).sum())} bump patches of {rows * cols}", flush=True)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# lm7k (2026-11-04): the standing lateral-torque price -- "don't push the pinned feet sideways"
+# ---------------------------------------------------------------------------------------------------------------------------------
+LATERAL_JOINTS = (".*_hip_roll_joint", ".*_hip_yaw_joint", ".*_ankle_roll_joint")   # the lateral chain, both legs (6 joints)
+
+
+def lateral_torque_l2_standing(env, asset_cfg: SceneEntityCfg, command_name: str = "base_velocity", cmd_thr: float = 0.03,
+                               scale_nm: float = 100.0) -> torch.Tensor:
+    """Robot 2026-11-04 (lm7j_stack_clear10 / ramp2 / stack_base, rt/lowstate recorded): standing under the walk, the real hip rolls
+    pushed the pinned feet sideways at 41-54 Nm each (sign flipping run to run: out, then in) with 18-26 Nm on the ankles, and the body
+    settled 4.4 deg forward / 2.2 deg back and never corrected; the same policy on the rig stands at 1-25 Nm and 0-1 deg, p14h on the
+    same robot at 0-6 Nm. In sim the same lateral push MOVES the feet (the exam's post-walk slide-out), so the policy never learned to
+    stand on feet that do not give. Sum over the lateral chain (hip roll, hip yaw, ankle roll, both legs) of (tau / scale)^2 at a zero
+    command: one hip roll at 50 Nm = 0.25 per step, the sim's 10 Nm = 0.01. A price, no kernel (Bible rule 31); gated on the observed
+    command only (rule 32)."""
+    asset = env.scene[asset_cfg.name]
+    tau = asset.data.applied_torque[:, asset_cfg.joint_ids] / scale_nm
+    return torch.sum(tau * tau, dim=1) * (~_walking(env, command_name, cmd_thr)).float()
