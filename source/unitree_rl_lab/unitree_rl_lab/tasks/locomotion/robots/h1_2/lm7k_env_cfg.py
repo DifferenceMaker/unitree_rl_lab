@@ -30,6 +30,7 @@ Genes (scripts/queue/lm7k/HYPOTHESIS.md; every row = stack_clear10's gene chain 
             micro-push dither cost torso stillness (dp8 sway); here it is a CONTROL against squeeze / legs: does a policy that is
             disturbed every 1-3 s learn to correct a lean it would otherwise accept. p14h_stancewide HAS this event (events.micro_push,
             +-0.15 m/s every 1-3 s); the walk line never had it.
+  micro_legs_ramp2  micropush + legs + ramp2 (operator 2026-11-04: "clear10 + micropushes + the fix for the inward leg movement and ramp2")
   micro_legs_squeeze  micropush + legs + squeeze: the disturbance axis composed with the stand fix (rule 36: read against the three singles)
 """
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -120,4 +121,5 @@ def lm7k_ramp2(cfg): c10(cfg); gene_acc(cfg)
 def lm7k_armsway(cfg): c10(cfg); gene_armsway(cfg)
 def lm7k_straight(cfg): c10(cfg); gene_straight(cfg)
 def lm7k_micropush(cfg): c10(cfg); gene_micropush(cfg)
+def lm7k_micro_legs_ramp2(cfg): c10(cfg); gene_micropush(cfg); gene_legs(cfg); gene_acc(cfg)   # operator 2026-11-04: "clear10 + micropushes + the fix for the inward leg movement and ramp2"
 def lm7k_micro_legs_squeeze(cfg): c10(cfg); gene_micropush(cfg); gene_legs(cfg); gene_squeeze(cfg)   # the micro-push axis composed with the stand fix (operator 2026-11-04)
