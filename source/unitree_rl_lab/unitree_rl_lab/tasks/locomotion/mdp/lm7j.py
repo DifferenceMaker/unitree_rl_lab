@@ -355,3 +355,17 @@ def lateral_torque_l2_standing(env, asset_cfg: SceneEntityCfg, command_name: str
     asset = env.scene[asset_cfg.name]
     tau = asset.data.applied_torque[:, asset_cfg.joint_ids] / scale_nm
     return torch.sum(tau * tau, dim=1) * (~_walking(env, command_name, cmd_thr)).float()
+
+
+def foot_lateral_vel_l2_walking(env, asset_cfg: SceneEntityCfg, command_name: str = "base_velocity", cmd_thr: float = 0.03) -> torch.Tensor:
+    """lm7k_straight (operator 2026-11-04: "It makes sort of these outer motions with its legs when traversing one in front of the other.
+    That needs to be fixed"): the LATERAL (base-frame y) velocity of each foot, squared and summed, while walking. The swing kernel pays
+    tanh(2 |v_xy|) for ANY planar foot speed, so an outward arc earns as much as a straight swing; this prices the sideways part of it
+    directly. A price, no kernel (rule 31); gated on the observed command only (rule 32). Sized by the 90-it liveness."""
+    asset = env.scene[asset_cfg.name]
+    ids = asset_cfg.body_ids
+    v = asset.data.body_lin_vel_w[:, ids, :3] - asset.data.root_lin_vel_w[:, :3].unsqueeze(1)
+    n = v.shape[1]
+    q = asset.data.root_quat_w.unsqueeze(1).expand(-1, n, -1).reshape(-1, 4)
+    vy = quat_apply_inverse(q, v.reshape(-1, 3)).reshape(-1, n, 3)[..., 1]
+    return torch.sum(vy * vy, dim=1) * _walking(env, command_name, cmd_thr).float()
