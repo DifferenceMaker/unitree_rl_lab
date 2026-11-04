@@ -74,13 +74,30 @@ class GuardedPPO(PPO):
     def update(self) -> dict[str, float]:
         self._nonfinite_skips_window = 0
         critic_only = self._updates_done < self.critic_warmup_updates
+        # THE POD LR RATCHET (2026-11-04, 13/13 lm7j H200 warmstarts detonated at +301): rsl_rl's adaptive schedule
+        # multiplies the learning rate by 1.5 after every mini-batch whose KL is below desired_kl / 2 but above 0.
+        # While the actor is frozen the KL is an artefact of float noise -- exactly 0 on the RTX 5090 (no change),
+        # ~1e-6 on the H200 (x1.5 per mini-batch, capped at 1e-2 within the first iteration) -- and the first actor
+        # update after the warm-up then runs at ten times the loaded rate. The KL says nothing about the actor during
+        # the warm-up, so the schedule is held FIXED for its duration and restored at the unfreeze; the rate itself
+        # stays at the loaded value (Loss/learning_rate in the log must read the loaded value through the warm-up).
+        if critic_only and self.schedule == "adaptive":
+            self._schedule_held = "adaptive"
+            self.schedule = "fixed"
         loss_dict = super().update()
         loss_dict["nonfinite_skips"] = float(self._nonfinite_skips_window)
         loss_dict["critic_only"] = 1.0 if critic_only else 0.0
         self._updates_done += 1
+        if critic_only and (self._updates_done == 1 or self._updates_done % 100 == 0):
+            # the proof line: the rate through the warm-up (the ratchet showed 1e-2 here on the H200 within the first update)
+            print(f"[GuardedPPO] critic warm-up {self._updates_done}/{self.critic_warmup_updates}: lr {self.learning_rate:.2e} "
+                  f"(schedule {self.schedule}; adaptive held until the unfreeze)", flush=True)
         if critic_only and self._updates_done == self.critic_warmup_updates:
-            print(f"[GuardedPPO] critic warm-up complete after {self._updates_done} iterations -- actor unfrozen",
-                  flush=True)
+            if getattr(self, "_schedule_held", None):
+                self.schedule = self._schedule_held
+                self._schedule_held = None
+            print(f"[GuardedPPO] critic warm-up complete after {self._updates_done} iterations -- actor unfrozen "
+                  f"(adaptive lr schedule resumed at lr {self.learning_rate:.2e})", flush=True)
         return loss_dict
 
 
