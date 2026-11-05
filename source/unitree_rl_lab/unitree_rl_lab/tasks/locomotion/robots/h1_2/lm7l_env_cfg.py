@@ -13,7 +13,10 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
             lift income; tanh saturates near 1 m/s so a lunge pays no more than a stride; a pure turn (|v_cmd| < 0.05) keeps the old factor.
   armsway   lm7j gene 5: arm_motion_walking (8 upper-arm DOFs' joint_vel^2 while walking) x -0.25 -- authored here on the new parent so the
             arm axis rides with the arch; the lm7k_armsway row on clear10 (H200) reads the same lever on the old parent.
-  arch_armsway  both.
+  arch_add  the same along-command factor as a SECOND term beside the unchanged feet_swing: + swing_along = foot_clearance_swing_along_cmd
+            (target .10, std .01, tanh 2, lin_thr .05) x 6 (operator 2026-11-05: "a 2 axis run ... 2 separate runs to test this theory" --
+            replace vs add: the added term leaves every swing its 12 and pays up to 6 more for the along-command part)
+  arch_armsway  both (arch + armsway).
 """
 from isaaclab.managers import RewardTermCfg as RewTerm
 
@@ -24,6 +27,7 @@ from .lm7k_env_cfg import lm7k_micro_legs_squeeze
 
 PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 for the colleague's server; the latest clean window
 ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
+ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 (a perfect along-command swing earns 18, an arc 12)
 
 
 def parent(cfg):
@@ -39,6 +43,14 @@ def gene_arch(cfg):
     s.params["lin_thr"] = ARCH_LIN_THR
 
 
+def gene_arch_add(cfg):
+    R = cfg.rewards
+    assert getattr(R, "swing_along", None) is None and R.feet_swing.func is mdp.foot_clearance_swing_cmd, "[arch_add] the parent's feet_swing untouched, no swing_along underneath"
+    R.swing_along = RewTerm(func=mdp.foot_clearance_swing_along_cmd, weight=ARCH_ADD_W,
+                            params={**{k: v for k, v in R.feet_swing.params.items()}, "lin_thr": ARCH_LIN_THR})
+
+
 def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
+def lm7l_arch_add(cfg): parent(cfg); gene_arch_add(cfg)
 def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
 def lm7l_arch_armsway(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg)
