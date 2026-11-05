@@ -17,13 +17,17 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
             (target .10, std .01, tanh 2, lin_thr .05) x 6 (operator 2026-11-05: "a 2 axis run ... 2 separate runs to test this theory" --
             replace vs add: the added term leaves every swing its 12 and pays up to 6 more for the along-command part)
   arch_armsway  both (arch + armsway).
+  slide     lm7k keeper (operator 2026-11-05: "It slides a lot less ... This is a keeper. This goes into the next batch."): feet_slide -2 -> -8
+  ramp2     lm7k ramp2 ("controlled and easy ... worth carrying over as a separate axis run on top of the next one"): slew_acc (0.5, 0.5, 1.0)
+  upright6  lm7k upright6 ("I like it ... worth as an axis on the next parent of the greenlit policies"): upright_bonus 3 -> 6
+  kit       armsway + slide + ramp2 (the three the operator wants carried; rule 36: read against the singles)
 """
 from isaaclab.managers import RewardTermCfg as RewTerm
 
 from unitree_rl_lab.tasks.locomotion import mdp
 
 from .lm7j_env_cfg import gene_armsway
-from .lm7k_env_cfg import lm7k_micro_legs_squeeze
+from .lm7k_env_cfg import lm7k_micro_legs_squeeze, gene_slide, gene_acc, gene_upright6
 
 PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 for the colleague's server; the latest clean window
 ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
@@ -54,3 +58,7 @@ def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
 def lm7l_arch_add(cfg): parent(cfg); gene_arch_add(cfg)
 def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
 def lm7l_arch_armsway(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg)
+def lm7l_slide(cfg): parent(cfg); gene_slide(cfg)
+def lm7l_ramp2(cfg): parent(cfg); gene_acc(cfg)
+def lm7l_upright6(cfg): parent(cfg); gene_upright6(cfg)
+def lm7l_kit(cfg): parent(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg)
