@@ -21,6 +21,8 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
   ramp2     lm7k ramp2 ("controlled and easy ... worth carrying over as a separate axis run on top of the next one"): slew_acc (0.5, 0.5, 1.0)
   upright6  lm7k upright6 ("I like it ... worth as an axis on the next parent of the greenlit policies"): upright_bonus 3 -> 6
   kit       armsway + slide + ramp2 (the three the operator wants carried; rule 36: read against the singles)
+  full      arch + armsway + slide + ramp2 + upright6 (operator 2026-11-05: "I propose arch + armsway + slide + ramp2 + upright. Basically the
+            full combo. One extra run."; rule 36: the largest stack of the wave = the likeliest detonation, read against kit and the singles)
 """
 from isaaclab.managers import RewardTermCfg as RewTerm
 
@@ -62,3 +64,4 @@ def lm7l_slide(cfg): parent(cfg); gene_slide(cfg)
 def lm7l_ramp2(cfg): parent(cfg); gene_acc(cfg)
 def lm7l_upright6(cfg): parent(cfg); gene_upright6(cfg)
 def lm7l_kit(cfg): parent(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg)
+def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
