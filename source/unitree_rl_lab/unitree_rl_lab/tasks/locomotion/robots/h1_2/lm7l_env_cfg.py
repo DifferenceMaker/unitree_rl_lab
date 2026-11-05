@@ -1,0 +1,44 @@
+"""lm7l (2026-11-05): the swing ARCH + the arm sway, on lm7k_micro_legs_squeeze @146200 (authored; NOT enqueued -- operator: "don't enqueue anything").
+
+Operator 2026-11-05 sim2sim of lm7k_micro_legs_squeeze ("Looks really good. Looks stable too with almost no swaying. Tracks fine. No immediate
+defects besides the arms." GREENLIT): "the legs get raised upwards, instead of upwards and forward if walking forward or upwards and backwards
+when walking backwards ... Reward it for following the vector of velocity with feet? So that there is a nice, natural arch to the next step
+... we don't want the arch to be too excessive and lunge forward." and "We will definitely want the arms swaying and being like pendulums gone."
+
+Genes (scripts/queue/lm7l/HYPOTHESIS.md); every row = lm7k_env_cfg.lm7k_micro_legs_squeeze (the parent's chain: combo + ffarms + roll +
+stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
+  arch      feet_swing.func foot_clearance_swing_cmd -> mdp.foot_clearance_swing_along_cmd (same target .10, std .01, tanh_mult 2, w 12):
+            the speed factor tanh(2 |v_xy|) -> tanh(2 max(0, v_foot . u_cmd)), u = the commanded planar direction in the base frame. ONE term,
+            not two: the swing reward itself pays only the along-command part of the swing, so an outward arc or a backward kick earns no
+            lift income; tanh saturates near 1 m/s so a lunge pays no more than a stride; a pure turn (|v_cmd| < 0.05) keeps the old factor.
+  armsway   lm7j gene 5: arm_motion_walking (8 upper-arm DOFs' joint_vel^2 while walking) x -0.25 -- authored here on the new parent so the
+            arm axis rides with the arch; the lm7k_armsway row on clear10 (H200) reads the same lever on the old parent.
+  arch_armsway  both.
+"""
+from isaaclab.managers import RewardTermCfg as RewTerm
+
+from unitree_rl_lab.tasks.locomotion import mdp
+
+from .lm7j_env_cfg import gene_armsway
+from .lm7k_env_cfg import lm7k_micro_legs_squeeze
+
+PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 for the colleague's server; the latest clean window
+ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
+
+
+def parent(cfg):
+    """The parent's gene chain, bit-identical (JOB_VALIDITY 3)."""
+    lm7k_micro_legs_squeeze(cfg)
+
+
+def gene_arch(cfg):
+    s = cfg.rewards.feet_swing
+    assert s.func is mdp.foot_clearance_swing_cmd and s.weight == 12.0 and s.params["target_height"] == 0.10 and s.params["std"] == 0.01 \
+        and s.params["tanh_mult"] == 2.0 and s.params["cmd_thr"] == 0.03, "[arch] the parent's feet_swing = foot_clearance_swing_cmd target .10 std .01 tanh 2 w 12"
+    s.func = mdp.foot_clearance_swing_along_cmd
+    s.params["lin_thr"] = ARCH_LIN_THR
+
+
+def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
+def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
+def lm7l_arch_armsway(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg)

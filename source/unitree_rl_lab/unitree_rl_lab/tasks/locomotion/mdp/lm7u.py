@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import torch
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import euler_xyz_from_quat, wrap_to_pi
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse, wrap_to_pi
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -161,3 +161,42 @@ def feet_yaw_l2_turn_gated(
     wz = env.command_manager.get_command(command_name)[:, 2].abs()
     gate = 1.0 - (wz / wz_ref).clamp(max=1.0)
     return torch.sum(d * d, dim=1) * gate
+
+
+def foot_clearance_swing_along_cmd(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg,
+    target_height: float,
+    std: float,
+    tanh_mult: float,
+    command_name: str = "base_velocity",
+    cmd_thr: float = 0.03,
+    lin_thr: float = 0.05,
+) -> torch.Tensor:
+    """lm7l 'arch' (operator 2026-11-05: "the legs get raised upwards, instead of upwards and forward if walking forward or upwards and
+    backwards when walking backwards ... reward it for following the vector of velocity with feet ... a nice, natural arch to the next step
+    ... we don't want the arch to be too excessive and lunge forward"): foot_clearance_swing_cmd with its speed factor tanh(tanh_mult |v_xy|)
+    -- which pays a swing in ANY planar direction, so the outward arcs earned like a straight stride -- replaced by tanh(tanh_mult x
+    max(0, v_foot . u)), u = the commanded planar velocity direction in the base frame: a foot moving along the command earns the lift
+    kernel, a foot moving backward or sideways against it earns nothing. tanh saturates at ~1 m/s of along-command speed, so a lunge pays
+    no more than a stride (the cap the operator asked for; the step-length prices stay). Under a pure turn (|v_cmd_xy| < lin_thr) u is
+    undefined: the old speed factor applies, so the turn's clearance is unchanged. One term, not two -- the modified swing reward IS the
+    arch reward (no competition between a lift term and a direction term). Command-gated as before (rule 32)."""
+    asset = env.scene[asset_cfg.name]
+    ids = asset_cfg.body_ids
+    z = asset.data.body_pos_w[:, ids, 2]
+    v_w = asset.data.body_lin_vel_w[:, ids, :3]
+    n = v_w.shape[1]
+    q = asset.data.root_quat_w.unsqueeze(1).expand(-1, n, -1).reshape(-1, 4)
+    v_b = quat_apply_inverse(q, v_w.reshape(-1, 3)).reshape(-1, n, 3)[..., :2]      # planar foot velocity in the base frame
+    cmd = env.command_manager.get_command(command_name)
+    cmd_xy = cmd[:, :2]
+    cmd_n = torch.linalg.norm(cmd_xy, dim=1)
+    u = cmd_xy / cmd_n.clamp(min=1e-6).unsqueeze(1)
+    along = torch.sum(v_b * u.unsqueeze(1), dim=2).clamp(min=0.0)                      # (envs, feet) speed along the command
+    speed = torch.linalg.norm(v_b, dim=2)
+    has_dir = (cmd_n > lin_thr).unsqueeze(1)
+    factor = torch.tanh(tanh_mult * torch.where(has_dir, along, speed))
+    per_foot = factor * torch.exp(-torch.square(z - target_height) / std)
+    gate = torch.linalg.norm(cmd, dim=1) > cmd_thr
+    return per_foot.max(dim=1).values * gate.float()
