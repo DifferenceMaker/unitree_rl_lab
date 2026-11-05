@@ -23,8 +23,18 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
   kit       armsway + slide + ramp2 (the three the operator wants carried; rule 36: read against the singles)
   full      arch + armsway + slide + ramp2 + upright6 (operator 2026-11-05: "I propose arch + armsway + slide + ramp2 + upright. Basically the
             full combo. One extra run."; rule 36: the largest stack of the wave = the likeliest detonation, read against kit and the singles)
+  comy25 / comy50  LATERAL CoM DR (operator 2026-11-05, after both greenlit rows walked with a RIGHT lean + right drift on the robot against a
+            max-left command while the stand showed nothing: "Maybe we don't need to hunt for the com but maybe we can domain randomize it?
+            Worth an axis test ... the lateral com is fine, it is the angular com that we perhaps don't know ... side-to-side"): a per-env
+            startup y shift of the torso_link CoM (isaaclab randomize_rigid_body_com, uniform), torso +-0.073 m = whole-body +-2.5 cm
+            (comy25) / torso +-0.146 m = whole-body +-5.0 cm (comy50); the torso carries 26.493 of 77.268 kg so a torso shift moves the
+            whole-body CoM by 0.3429 x it. Dose: the robot's walking lean reads 3-5 deg by eye = a slope-equivalent of 0.9 m x tan(4 deg)
+            = 6 cm of CoM, so +-5 cm covers it, +-2.5 cm is the gentle row. The policy observes no linear velocity: it can only infer the
+            hidden offset from the tilt it causes (projected gravity) and the stance it forces -- the axis tests whether that is enough.
 """
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 
 from unitree_rl_lab.tasks.locomotion import mdp
 
@@ -34,6 +44,7 @@ from .lm7k_env_cfg import lm7k_micro_legs_squeeze, gene_slide, gene_acc, gene_up
 PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 for the colleague's server; the latest clean window
 ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
 ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 (a perfect along-command swing earns 18, an arc 12)
+COMY_TORSO = {"comy25": 0.073, "comy50": 0.146}   # torso_link CoM y shift (m) = whole-body +-2.5 / +-5.0 cm (torso/whole-body mass 0.3429)
 
 
 def parent(cfg):
@@ -56,6 +67,13 @@ def gene_arch_add(cfg):
                             params={**{k: v for k, v in R.feet_swing.params.items()}, "lin_thr": ARCH_LIN_THR})
 
 
+def gene_comy(cfg, torso_dy):
+    E = cfg.events
+    assert getattr(E, "com_y", None) is None and E.add_base_mass.params["asset_cfg"].body_names == "torso_link", "[comy] no com_y underneath; the torso mass DR is on torso_link"
+    E.com_y = EventTerm(func=mdp.randomize_rigid_body_com, mode="startup",
+                        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link"), "com_range": {"y": (-torso_dy, torso_dy)}})
+
+
 def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
 def lm7l_arch_add(cfg): parent(cfg); gene_arch_add(cfg)
 def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
@@ -64,4 +82,6 @@ def lm7l_slide(cfg): parent(cfg); gene_slide(cfg)
 def lm7l_ramp2(cfg): parent(cfg); gene_acc(cfg)
 def lm7l_upright6(cfg): parent(cfg); gene_upright6(cfg)
 def lm7l_kit(cfg): parent(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg)
+def lm7l_comy25(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy25"])
+def lm7l_comy50(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy50"])
 def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
