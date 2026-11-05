@@ -37,6 +37,9 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
             sums, table C's per-side split unknown); the policy observes q + offset (mdp.joint_pos_rel_encoder), its target lands at
             target - offset (mdp/lm7l.py ArmGravityFFEncJointPositionAction = the arm-ff term + the subtraction); the critic keeps the true
             angles (same widths, warmstart-compatible). 4 roll joints only: p16_dr's 13-joint enc03/enc05 bands spiked the critic.
+  enc05     the same band at +-0.01 rad (0.57 deg, p16_dr's enc01 size): the dose axis under enc. Authored after the 90-it liveness of enc
+            (upright income 0.49 -> 0.00, tracking 5.8 -> 1.9 at 256 envs x 90 it: a 1.5 deg zero error on the roll joints costs the
+            warmstart its whole upright kernel at once) -- the smaller step a warmstart can absorb.
 """
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -51,7 +54,8 @@ PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 
 ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
 ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 (a perfect along-command swing earns 18, an arc 12)
 ROLL_JOINTS = [".*_hip_roll_joint", ".*_ankle_roll_joint"]   # the 4 joints whose zero errors the stop tests measured (hip roll pair +2.3, ankle roll -1.5 deg)
-ENC_HALF = 0.026      # rad = 1.5 deg per joint per episode, uniform
+ENC_HALF = 0.026      # rad = 1.5 deg per joint per episode, uniform (lm7l_enc)
+ENC05_HALF = 0.01     # rad = 0.57 deg: p16_dr's enc01 band ("the residual after table C"); the gentle dose (lm7l_enc05) after the 90-it read of enc
 COMY_TORSO = {"comy25": 0.073, "comy50": 0.146}   # torso_link CoM y shift (m) = whole-body +-2.5 / +-5.0 cm (torso/whole-body mass 0.3429)
 
 
@@ -82,7 +86,7 @@ def gene_comy(cfg, torso_dy):
                         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link"), "com_range": {"y": (-torso_dy, torso_dy)}})
 
 
-def gene_enc(cfg):
+def gene_enc(cfg, half=ENC_HALF):
     A = cfg.actions.JointPositionAction
     assert type(A).__name__ == "ArmGravityFFJointPositionActionCfg" and A.scale == 0.25 and A.arm_gravity_ff is True, "[enc] the parent's arm-ff action term underneath"
     assert cfg.observations.policy.joint_pos_rel.func is mdp.joint_pos_rel and cfg.observations.critic.joint_pos_rel.func is mdp.joint_pos_rel, "[enc] clean joint_pos_rel underneath"
@@ -90,7 +94,7 @@ def gene_enc(cfg):
     cfg.actions.JointPositionAction = mdp.arm_gravity_ff_enc_action_cfg(A)
     cfg.observations.policy.joint_pos_rel.func = mdp.joint_pos_rel_encoder      # the policy sees the encoder frame; the critic the true one
     cfg.events.encoder_offset = EventTerm(func=mdp.randomize_encoder_offset, mode="reset",
-                                          params={"offset_range": (-ENC_HALF, ENC_HALF), "asset_cfg": SceneEntityCfg("robot", joint_names=ROLL_JOINTS)})
+                                          params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=ROLL_JOINTS)})
 
 
 def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
@@ -104,4 +108,5 @@ def lm7l_kit(cfg): parent(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg
 def lm7l_comy25(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy25"])
 def lm7l_comy50(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy50"])
 def lm7l_enc(cfg): parent(cfg); gene_enc(cfg)
+def lm7l_enc05(cfg): parent(cfg); gene_enc(cfg, ENC05_HALF)
 def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
