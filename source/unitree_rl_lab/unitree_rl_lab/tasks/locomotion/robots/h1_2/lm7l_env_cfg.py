@@ -31,6 +31,12 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
             whole-body CoM by 0.3429 x it. Dose: the robot's walking lean reads 3-5 deg by eye = a slope-equivalent of 0.9 m x tan(4 deg)
             = 6 cm of CoM, so +-5 cm covers it, +-2.5 cm is the gentle row. The policy observes no linear velocity: it can only infer the
             hidden offset from the tilt it causes (projected gravity) and the stance it forces -- the axis tests whether that is enough.
+  enc       LEG-ROLL ENCODER-OFFSET DR (operator 2026-11-05: "the answer lays in one of these in priority: 1. CoM. 2. Some encoder error ...
+            Yes lets test this. Author and smoke it."): the p16_dr mechanism on the walk line -- per episode each hip_roll / ankle_roll joint
+            draws a constant offset uniform in +-0.026 rad (1.5 deg; the robot's measured pair residuals: hip roll +2.3, ankle roll -1.5 deg
+            sums, table C's per-side split unknown); the policy observes q + offset (mdp.joint_pos_rel_encoder), its target lands at
+            target - offset (mdp/lm7l.py ArmGravityFFEncJointPositionAction = the arm-ff term + the subtraction); the critic keeps the true
+            angles (same widths, warmstart-compatible). 4 roll joints only: p16_dr's 13-joint enc03/enc05 bands spiked the critic.
 """
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -44,6 +50,8 @@ from .lm7k_env_cfg import lm7k_micro_legs_squeeze, gene_slide, gene_acc, gene_up
 PARENT, IT = "lm7k_micro_legs_squeeze_2026-11-05", 146200   # stopped at 146216 for the colleague's server; the latest clean window
 ARCH_LIN_THR = 0.05   # |v_cmd_xy| below this = a pure turn: the old any-direction speed factor applies (the turn's clearance unchanged)
 ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 (a perfect along-command swing earns 18, an arc 12)
+ROLL_JOINTS = [".*_hip_roll_joint", ".*_ankle_roll_joint"]   # the 4 joints whose zero errors the stop tests measured (hip roll pair +2.3, ankle roll -1.5 deg)
+ENC_HALF = 0.026      # rad = 1.5 deg per joint per episode, uniform
 COMY_TORSO = {"comy25": 0.073, "comy50": 0.146}   # torso_link CoM y shift (m) = whole-body +-2.5 / +-5.0 cm (torso/whole-body mass 0.3429)
 
 
@@ -74,6 +82,17 @@ def gene_comy(cfg, torso_dy):
                         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link"), "com_range": {"y": (-torso_dy, torso_dy)}})
 
 
+def gene_enc(cfg):
+    A = cfg.actions.JointPositionAction
+    assert type(A).__name__ == "ArmGravityFFJointPositionActionCfg" and A.scale == 0.25 and A.arm_gravity_ff is True, "[enc] the parent's arm-ff action term underneath"
+    assert cfg.observations.policy.joint_pos_rel.func is mdp.joint_pos_rel and cfg.observations.critic.joint_pos_rel.func is mdp.joint_pos_rel, "[enc] clean joint_pos_rel underneath"
+    assert getattr(cfg.events, "encoder_offset", None) is None, "[enc] no encoder event underneath"
+    cfg.actions.JointPositionAction = mdp.arm_gravity_ff_enc_action_cfg(A)
+    cfg.observations.policy.joint_pos_rel.func = mdp.joint_pos_rel_encoder      # the policy sees the encoder frame; the critic the true one
+    cfg.events.encoder_offset = EventTerm(func=mdp.randomize_encoder_offset, mode="reset",
+                                          params={"offset_range": (-ENC_HALF, ENC_HALF), "asset_cfg": SceneEntityCfg("robot", joint_names=ROLL_JOINTS)})
+
+
 def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
 def lm7l_arch_add(cfg): parent(cfg); gene_arch_add(cfg)
 def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
@@ -84,4 +103,5 @@ def lm7l_upright6(cfg): parent(cfg); gene_upright6(cfg)
 def lm7l_kit(cfg): parent(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg)
 def lm7l_comy25(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy25"])
 def lm7l_comy50(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy50"])
+def lm7l_enc(cfg): parent(cfg); gene_enc(cfg)
 def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
