@@ -37,6 +37,13 @@ stopramp2 + clear10 + micro_push + legs + squeeze) + its lever:
             sums, table C's per-side split unknown); the policy observes q + offset (mdp.joint_pos_rel_encoder), its target lands at
             target - offset (mdp/lm7l.py ArmGravityFFEncJointPositionAction = the arm-ff term + the subtraction); the critic keeps the true
             angles (same widths, warmstart-compatible). 4 roll joints only: p16_dr's 13-joint enc03/enc05 bands spiked the critic.
+  legsout   THE INWARD WALK (operator 2026-11-05: "What we need to kill is the inward leg movement ... I really want the inward leg movement
+            to be gone, alongside armsway and leaning"): (1) foot_stance_tracking nominal_walk y +-0.10 -> +-0.15 (the 3.0 kernel pulled the
+            walking feet to 20 cm while feet_width_walking w 1.5 pulled to 30: the summed ledger peaked at 20 cm = the inward walk was the
+            optimum); (2) + feet_lateral_width (mdp/lm7l.py feet_lateral_width_hinge_walking: hinge (0.26 - lateral width)+ under a command,
+            w -15) -- a wall on the LATERAL width itself (feet_too_near hinges on the planar distance, which the stride's stagger inflates).
+  full_legs full + legsout (operator: "lm7l_full is basically what i wanted. Can we implement another combo which addresses the legs
+            moving inward while walking?").
   enc05     the same band at +-0.01 rad (0.57 deg, p16_dr's enc01 size): the dose axis under enc. Authored after the 90-it liveness of enc
             (upright income 0.49 -> 0.00, tracking 5.8 -> 1.9 at 256 envs x 90 it: a 1.5 deg zero error on the roll joints costs the
             warmstart its whole upright kernel at once) -- the smaller step a warmstart can absorb.
@@ -56,6 +63,8 @@ ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 
 ROLL_JOINTS = [".*_hip_roll_joint", ".*_ankle_roll_joint"]   # the 4 joints whose zero errors the stop tests measured (hip roll pair +2.3, ankle roll -1.5 deg)
 ENC_HALF = 0.026      # rad = 1.5 deg per joint per episode, uniform (lm7l_enc)
 ENC05_HALF = 0.01     # rad = 0.57 deg: p16_dr's enc01 band ("the residual after table C"); the gentle dose (lm7l_enc05) after the 90-it read of enc
+LEGSOUT_NOMINAL_WALK = [[0.0, 0.15], [0.0, -0.15]]   # (lists, as the parent stores them) foot_stance_tracking's walking nominal: 30 cm, = feet_width_walking's target
+LEGSOUT_W_MIN, LEGSOUT_W = 0.26, -15.0               # the lateral-width wall under a command
 COMY_TORSO = {"comy25": 0.073, "comy50": 0.146}   # torso_link CoM y shift (m) = whole-body +-2.5 / +-5.0 cm (torso/whole-body mass 0.3429)
 
 
@@ -97,6 +106,19 @@ def gene_enc(cfg, half=ENC_HALF):
                                           params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=ROLL_JOINTS)})
 
 
+def gene_legsout(cfg):
+    R = cfg.rewards
+    st, ww = R.foot_stance_tracking, R.feet_width_walking
+    assert st.func.__name__ == "foot_stance_tracking_split" and st.weight == 3.0 and st.params["std"] == 0.08 \
+        and tuple(map(tuple, st.params["nominal_walk"])) == ((0.0, 0.10), (0.0, -0.10)) and tuple(map(tuple, st.params["nominal_stand"])) == ((0.01, 0.16), (0.01, -0.16)), \
+        "[legsout] the parent's foot_stance_tracking 3.0 @ .08, walk nominal +-0.10, stand +-0.16"
+    assert ww.func is mdp.feet_width_walking and ww.weight == 1.5 and ww.params["target"] == 0.30 and R.feet_too_near.params["threshold_walk"] == 0.24 \
+        and getattr(R, "feet_lateral_width", None) is None, "[legsout] feet_width_walking 1.5 @ .30, feet_too_near walk .24, no lateral wall underneath"
+    st.params["nominal_walk"] = LEGSOUT_NOMINAL_WALK
+    R.feet_lateral_width = RewTerm(func=mdp.feet_lateral_width_hinge_walking, weight=LEGSOUT_W,
+                                   params={"asset_cfg": ww.params["asset_cfg"], "w_min": LEGSOUT_W_MIN, "command_name": "base_velocity", "cmd_thr": 0.03})
+
+
 def lm7l_arch(cfg): parent(cfg); gene_arch(cfg)
 def lm7l_arch_add(cfg): parent(cfg); gene_arch_add(cfg)
 def lm7l_armsway(cfg): parent(cfg); gene_armsway(cfg)
@@ -110,3 +132,5 @@ def lm7l_comy50(cfg): parent(cfg); gene_comy(cfg, COMY_TORSO["comy50"])
 def lm7l_enc(cfg): parent(cfg); gene_enc(cfg)
 def lm7l_enc05(cfg): parent(cfg); gene_enc(cfg, ENC05_HALF)
 def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
+def lm7l_legsout(cfg): parent(cfg); gene_legsout(cfg)
+def lm7l_full_legs(cfg): lm7l_full(cfg); gene_legsout(cfg)
