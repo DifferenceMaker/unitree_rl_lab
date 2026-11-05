@@ -64,3 +64,12 @@ def feet_lateral_width_hinge_walking(env, asset_cfg: SceneEntityCfg, w_min: floa
     working wall's income is the residual violation)."""
     w = feet_lateral_sep_b(env, asset_cfg)
     return (w_min - w).clamp(min=0.0) * _walking(env, command_name, cmd_thr).float()
+
+
+def rng_draw_noop(env, env_ids, n: int = 27):
+    """DIAGNOSTIC reset-mode event (2026-11-05): draws len(env_ids) x n uniforms on the env device and discards them -- the same GPU RNG
+    consumption as randomize_encoder_offset, no state touched. Used to show that the 90-it frozen-actor smoke numbers depend on the RNG
+    realisation (the zero-band encoder event changed upright 0.50 -> 0.06 with nothing else changed). Never a training lever."""
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    torch.empty(len(env_ids), n, device=env.device).uniform_(0.0, 1.0)
