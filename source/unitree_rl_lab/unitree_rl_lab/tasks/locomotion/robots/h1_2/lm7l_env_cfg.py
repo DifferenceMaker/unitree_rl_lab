@@ -63,6 +63,10 @@ ARCH_ADD_W = 6.0      # the added along-command bonus: half the swing term's 12 
 ROLL_JOINTS = [".*_hip_roll_joint", ".*_ankle_roll_joint"]   # the 4 joints whose zero errors the stop tests measured (hip roll pair +2.3, ankle roll -1.5 deg)
 ENC_HALF = 0.026      # rad = 1.5 deg per joint per episode, uniform (lm7l_enc)
 ENC05_HALF = 0.01     # rad = 0.57 deg: p16_dr's enc01 band ("the residual after table C"); the gentle dose (lm7l_enc05) after the 90-it read of enc
+# 2026-11-06 BALANCE VICTORY: p16c_sw_enc01 (the stancewide recipe + THIS band, nothing else) "fixed everything" on the robot; its band =
+# balance_env_cfg_hipsarm_dr.DR_LEG_JOINTS at +-0.01 rad (every leg joint + the torso). lm7l_enc05 (roll joints only) was retargeted to it.
+SW_ENC01_JOINTS = [".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", "torso_joint"]   # == DR_LEG_JOINTS (13 joints)
+SW_ENC01_HALF = 0.01  # rad = 0.57 deg per joint per episode, uniform
 LEGSOUT_NOMINAL_WALK = [[0.0, 0.15], [0.0, -0.15]]   # (lists, as the parent stores them) foot_stance_tracking's walking nominal: 30 cm, = feet_width_walking's target
 LEGSOUT_W_MIN, LEGSOUT_W = 0.26, -15.0               # the lateral-width wall under a command
 COMY_TORSO = {"comy25": 0.073, "comy50": 0.146}   # torso_link CoM y shift (m) = whole-body +-2.5 / +-5.0 cm (torso/whole-body mass 0.3429)
@@ -95,7 +99,7 @@ def gene_comy(cfg, torso_dy):
                         params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link"), "com_range": {"y": (-torso_dy, torso_dy)}})
 
 
-def gene_enc(cfg, half=ENC_HALF):
+def gene_enc(cfg, half=ENC_HALF, joints=ROLL_JOINTS):
     A = cfg.actions.JointPositionAction
     assert type(A).__name__ == "ArmGravityFFJointPositionActionCfg" and A.scale == 0.25 and A.arm_gravity_ff is True, "[enc] the parent's arm-ff action term underneath"
     assert cfg.observations.policy.joint_pos_rel.func is mdp.joint_pos_rel and cfg.observations.critic.joint_pos_rel.func is mdp.joint_pos_rel, "[enc] clean joint_pos_rel underneath"
@@ -103,7 +107,13 @@ def gene_enc(cfg, half=ENC_HALF):
     cfg.actions.JointPositionAction = mdp.arm_gravity_ff_enc_action_cfg(A)
     cfg.observations.policy.joint_pos_rel.func = mdp.joint_pos_rel_encoder      # the policy sees the encoder frame; the critic the true one
     cfg.events.encoder_offset = EventTerm(func=mdp.randomize_encoder_offset, mode="reset",
-                                          params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=ROLL_JOINTS)})
+                                          params={"offset_range": (-half, half), "asset_cfg": SceneEntityCfg("robot", joint_names=list(joints))})
+
+
+def gene_sw_enc01(cfg):
+    """p16c_sw_enc01's exact band on the walk: +-0.01 rad on every leg joint + the torso, drawn per reset; policy sees q + offset,
+    the target lands at target - offset (the arm-ff Enc action), the critic keeps the true angles -- same mechanism as gene_enc."""
+    gene_enc(cfg, SW_ENC01_HALF, SW_ENC01_JOINTS)
 
 
 def gene_legsout(cfg):
@@ -134,3 +144,7 @@ def lm7l_enc05(cfg): parent(cfg); gene_enc(cfg, ENC05_HALF)
 def lm7l_full(cfg): parent(cfg); gene_arch(cfg); gene_armsway(cfg); gene_slide(cfg); gene_acc(cfg); gene_upright6(cfg)
 def lm7l_legsout(cfg): parent(cfg); gene_legsout(cfg)
 def lm7l_full_legs(cfg): lm7l_full(cfg); gene_legsout(cfg)
+# 2026-11-06: the balance victory's band on the walk (operator: "take only the band ... A combo run with our new dr")
+def lm7l_enc01(cfg): parent(cfg); gene_sw_enc01(cfg)                       # replaces lm7l_enc05 in the queue (same dose, all 13 joints)
+def lm7l_kit_enc01(cfg): lm7l_kit(cfg); gene_sw_enc01(cfg)
+def lm7l_full_legs_enc01(cfg): lm7l_full_legs(cfg); gene_sw_enc01(cfg)    # THE combo + the band
