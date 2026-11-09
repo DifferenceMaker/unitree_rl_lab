@@ -41,19 +41,46 @@ def encoder_offset_buffer(env: ManagerBasedEnv, asset_name: str = "robot") -> to
     return buf
 
 
+def _encoder_half_vec(env: ManagerBasedEnv, asset: Articulation, per_joint: dict) -> torch.Tensor:
+    """(num_joints,) half-widths for `offset_range_per_joint` = {joint-name regex: half-width rad}; joints matched by no key stay 0.
+    Resolved once per (env, table) and cached on the env (a reset event runs every episode)."""
+    cache = getattr(env, "_encoder_half_vec_cache", None)
+    if cache is None:
+        cache = env._encoder_half_vec_cache = {}
+    key = tuple(sorted((str(k), float(v)) for k, v in per_joint.items()))
+    if key not in cache:
+        half = torch.zeros(asset.num_joints, device=env.device)
+        for expr, h in per_joint.items():
+            ids, _ = asset.find_joints(expr)
+            half[torch.as_tensor(ids, device=env.device)] = float(h)
+        cache[key] = half
+    return cache[key]
+
+
 def randomize_encoder_offset(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,
-    offset_range: tuple[float, float],
+    offset_range: tuple[float, float] = (0.0, 0.0),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    offset_range_per_joint: dict | None = None,
 ):
     """Reset-mode event: draw a constant per-joint encoder offset (rad) for each env in env_ids, uniform in offset_range,
-    for the joints in asset_cfg (the others stay 0)."""
+    for the joints in asset_cfg (the others stay 0).
+
+    offset_range_per_joint (2026-11-09, the Optuna study's enc_scale lever): {joint-name regex: half-width rad} -- each matched
+    joint draws uniform in +-its own half-width (the robot's measured per-joint residuals x a scale) instead of one band for all;
+    `offset_range` is ignored when it is given. Same draw count as the one-band form (len(env_ids) x num_joints uniforms), so the
+    GPU RNG stream is the one the smoke-liveness rule compares on."""
     buf = encoder_offset_buffer(env, asset_cfg.name)
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device)
-    lo, hi = float(offset_range[0]), float(offset_range[1])
-    samples = torch.empty(len(env_ids), buf.shape[1], device=env.device).uniform_(lo, hi)
+    if offset_range_per_joint:
+        asset: Articulation = env.scene[asset_cfg.name]
+        half = _encoder_half_vec(env, asset, offset_range_per_joint)
+        samples = torch.empty(len(env_ids), buf.shape[1], device=env.device).uniform_(-1.0, 1.0) * half
+    else:
+        lo, hi = float(offset_range[0]), float(offset_range[1])
+        samples = torch.empty(len(env_ids), buf.shape[1], device=env.device).uniform_(lo, hi)
     if asset_cfg.joint_ids != slice(None):
         mask = torch.zeros(buf.shape[1], dtype=torch.bool, device=env.device)
         mask[torch.as_tensor(asset_cfg.joint_ids, device=env.device)] = True
