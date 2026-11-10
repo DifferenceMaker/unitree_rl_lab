@@ -408,6 +408,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
 
+    # 2026-11-10 EXIT WATCHDOG: on the aspired server all four s1_pilot rows saved their last checkpoint and synced wandb at 02:07-02:18,
+    # then the Isaac shutdown below hung until 08:36 -- four queue slots and 15 GB of GPU each held for 6 h. Everything worth keeping is
+    # on disk once learn() returns, so the shutdown gets EXIT_GRACE_S and then the process leaves hard with exit 0 (the queue runner
+    # reaps exit 0 as DONE). A daemon timer: it never keeps a clean exit waiting.
+    import threading
+    _grace = float(os.environ.get("TRAIN_EXIT_GRACE_S", "300"))
+    _wd = threading.Timer(_grace, lambda: (print(f"[train] shutdown still running after {_grace:.0f} s -> os._exit(0)", flush=True), os._exit(0)))
+    _wd.daemon = True
+    _wd.start()
+
     # close the simulator
     env.close()
 
