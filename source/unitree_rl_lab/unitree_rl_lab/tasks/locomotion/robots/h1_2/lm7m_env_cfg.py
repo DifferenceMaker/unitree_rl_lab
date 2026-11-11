@@ -10,7 +10,9 @@ Gene (scripts/queue/lm7m/HYPOTHESIS.md):
               curriculum.enc_ladder = mdp.encoder_offset_ladder: rungs (0.003, 0.005, 0.007, 0.010) rad, promotion when >= 90 % of the
               ended episodes timed out (no fall) AND track_lin_vel_xy's mean income per second > 0.5 x its weight (the std ladder's gate),
               after >= 300 iterations on the rung (7200 env steps); no promotion before parent_it + 300 + 100 (the critic warm-up + 100).
-              Reaching 0.010 takes >= 3 x 300 iterations after the hold: the earliest full band is at ~+1300 of 7000.
+              Checks happen only at the 60 s episode boundary (3000 env steps = 125 iterations; the resumed counter puts the first boundary
+              at +51, then +176, +301, +426 ...), so a rung is held 375 iterations in practice: earliest 0.005 at +426, 0.007 at +801,
+              0.010 at +1176 of 7000; a window = the ~3 episodes per env of the hold.
 """
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 
@@ -22,7 +24,7 @@ from .lm7u_env_cfg import LM7U_LADDER_GATE
 PARENT, IT = "lm7l_arch_armsway_2026-11-05", 153199
 ENC_LADDER = (0.003, 0.005, 0.007, 0.010)   # rad: 0.17 / 0.29 / 0.40 / 0.57 deg per joint per episode, uniform; the top = p16c_sw_enc01's band
 ENC_SURVIVE = 0.90                          # operator: "survive ... for 90% of the robot runs"
-ENC_HOLD_ITERS = 300                        # iterations on a rung before the next check (one window of ~7 episodes per env)
+ENC_HOLD_ITERS = 300                        # iterations on a rung before the next check; the 125-it episode boundary rounds it to 375 (~3 episodes per env)
 ENC_WARMUP_ITERS = 300 + 100                # --critic_warmup_iters 300 + 100: the actor must walk the first rung before any promotion
 STEPS_PER_IT = 24
 
