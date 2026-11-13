@@ -126,3 +126,60 @@ def study_s1(cfg, track_w=20.0, track_err_w=-2.0, std_floor=0.05, guard_w=0.0, y
     gene_yaw_err_w(cfg, yaw_err_w)
     if float(enc_scale) > 0.0:
         gene_enc_resid(cfg, enc_scale)
+
+
+# ══ study s2 (2026-11-13) ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+# Operator 2026-11-13: "First train the winner of the study with the encoders AND then put it as the next study's parent and make a
+# study to find what we did with s1 but now with vy and wz too" / "we shouldn't be too cautious about the hyperparameter limits".
+# s2 = the PARENT's cfg (an lm7p row: study_s1 levers + the encoder band) with
+#   * the band HELD at +-0.010 rad in every trial (no ladder: the parent already walks at the top rung; the exam cannot be allowed to
+#     trade the band away, so it is not a lever),
+#   * three s1 levers that ended ON a bound of the pilot's range, searched again in a wider range: track_w, track_err_w, yaw_err_w,
+#   * std_floor and guard_w FIXED at the parent's values (std_floor had a flat interior optimum, the guard only cost),
+#   * three new levers for the axes s1 could not move (walks_vy >= 0.9 in 2 / 36 trials, walks_wz in 0 / 36):
+#       vy_err_w   + track_vy = mdp.track_vy_err_l2, the lateral L2 price (0 = absent)
+#       spin_prob  the command sampler's share of pure in-place turns (vx = vy = 0, |wz| >= 0.2): cfg default 0
+#       slow_prob  its share of small linear commands, vx / vy redrawn inside +-S2_SLOW_BAND (wz kept): cfg default 0
+# The parent is plugged in by S2_PARENT (its fixed values) + the space file's center (its milestone and lever values).
+from .lm7l_env_cfg import SW_ENC01_JOINTS, gene_enc   # noqa: E402
+
+S2_BAND = 0.010          # rad: p16c_sw_enc01's band = the ladder's top rung, held
+S2_SLOW_BAND = 0.15      # m/s: slow_prob redraws vx / vy inside +-0.15 = the exam's weak zone (the 0.05-0.15 rungs)
+S2_PARENTS = {           # the lm7p rows (aspired-isaac-lab scripts/queue/lm7p): what stays FIXED from each
+    "t21":  dict(std_floor=0.0912, guard_w=0.9392),
+    "t36":  dict(std_floor=0.1147, guard_w=0.0),
+    "t37":  dict(std_floor=0.0794, guard_w=0.0),
+    "best": dict(std_floor=0.0817, guard_w=0.0),
+}
+S2_PARENT = "best"       # PLACEHOLDER until the lm7p rows land (operator picks); space_s2.yaml's center must name the same row
+
+
+def gene_vy_err(cfg, vy_err_w: float):
+    R = cfg.rewards
+    assert getattr(R, "track_vy", None) is None and vy_err_w < 0, "[s2] no track_vy underneath; a price (negative); 0 = absent"
+    R.track_vy = RewTerm(func=mdp.track_vy_err_l2, weight=float(vy_err_w), params={"command_name": "base_velocity"})
+
+
+def gene_cmd_mix(cfg, spin_prob: float, slow_prob: float):
+    """the command sampler's buckets (mdp/commands/velocity_command.py: one draw, exclusive: corner, then slow, then spin)."""
+    c = cfg.commands.base_velocity
+    assert (c.spin_prob or 0.0) == 0.0 and (c.slow_prob or 0.0) == 0.0 and c.spin_min == 0.2, "[s2] the parent samples no spin / slow commands"
+    assert 0.0 <= spin_prob and 0.0 <= slow_prob and (c.corner_prob or 0.0) + spin_prob + slow_prob <= 1.0, "[s2] the buckets fit in one draw"
+    c.spin_prob = float(spin_prob)
+    c.slow_prob = float(slow_prob)
+    if slow_prob > 0.0:
+        c.slow_band = S2_SLOW_BAND
+
+
+def study_s2(cfg, track_w=10.0, track_err_w=-1.4473, yaw_err_w=-12.0, vy_err_w=0.0, spin_prob=0.0, slow_prob=0.0, parent=None):
+    """the parent's chain (study_s1 at its levers, the fixed ones from S2_PARENTS) + the band held at S2_BAND + the s2 levers. At the
+    space's center (the parent's own track_w / track_err_w / yaw_err_w, the three new levers at 0) the cfg equals the parent
+    milestone's except for the band: a fixed +-0.010 event instead of the ladder that climbed to it."""
+    fixed = S2_PARENTS[parent or S2_PARENT]
+    study_s1(cfg, track_w=track_w, track_err_w=track_err_w, std_floor=fixed["std_floor"], guard_w=fixed["guard_w"], yaw_err_w=yaw_err_w)
+    gene_enc(cfg, S2_BAND, SW_ENC01_JOINTS)
+    assert getattr(cfg.curriculum, "enc_ladder", None) is None and cfg.events.encoder_offset.params["offset_range"] == (-S2_BAND, S2_BAND), "[s2] a held band, no ladder"
+    if float(vy_err_w) < 0.0:
+        gene_vy_err(cfg, vy_err_w)
+    if float(spin_prob) > 0.0 or float(slow_prob) > 0.0:
+        gene_cmd_mix(cfg, spin_prob, slow_prob)

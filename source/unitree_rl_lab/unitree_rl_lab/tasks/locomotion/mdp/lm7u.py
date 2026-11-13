@@ -94,6 +94,21 @@ def track_yaw_err_l2(
     return torch.square(cmd[:, 2] - asset.data.root_ang_vel_b[:, 2])
 
 
+def track_vy_err_l2(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """(vy_cmd - vy)^2 alone, body frame (study s2, 2026-11-13) -- track_yaw_err_l2's twin for the lateral axis. s1_pilot: 2 of 36
+    trials reach walks_vy >= 0.9; track_err lumps the lateral error with the forward and yaw errors, and on a +-0.3 m/s axis next to
+    a 1.2 m/s one the forward term dominates the sum. This gives sidestepping its own slope: d/de (w e^2) = 2 w e, at e = 0.1 m/s
+    and w = -10 that is -2.0 per m/s. Not gated (a price on an error of the COMMANDED axis; at a zero vy command it prices lateral
+    drift, which is wanted)."""
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    return torch.square(cmd[:, 1] - asset.data.root_lin_vel_b[:, 1])
+
+
 def tracking_std_levels(
     env: "ManagerBasedRLEnv",
     env_ids,
