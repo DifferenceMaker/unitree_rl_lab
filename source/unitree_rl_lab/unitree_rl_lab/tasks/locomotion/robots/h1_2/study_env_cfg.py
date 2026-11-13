@@ -159,7 +159,7 @@ S2_PARENTS = {           # the lm7p rows (aspired-isaac-lab scripts/queue/lm7p):
     "t37":  dict(std_floor=0.0794, guard_w=0.0,    track_err_w=-0.5,    yaw_err_w=-12.0),
     "best": dict(std_floor=0.0817, guard_w=0.0,    track_err_w=-1.4473, yaw_err_w=-12.0),
 }
-S2_PARENT = "best"       # PLACEHOLDER until the lm7p rows land (operator picks); space_s2.yaml's center must name the same row
+S2_PARENT = "best"       # = lm7p_enc_best_2026-11-13 @163650 (operator 2026-11-13 after the robot test); space_s2.yaml's center names it
 
 
 def gene_err_split(cfg, vx_err_w: float, vy_err_w: float, yaw_err_w: float):
