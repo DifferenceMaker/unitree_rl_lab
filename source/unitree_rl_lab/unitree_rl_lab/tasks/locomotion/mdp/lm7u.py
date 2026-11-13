@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import torch
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse, wrap_to_pi
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply, quat_apply_inverse, wrap_to_pi, yaw_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -107,6 +107,69 @@ def track_vy_err_l2(
     asset = env.scene[asset_cfg.name]
     cmd = env.command_manager.get_command(command_name)
     return torch.square(cmd[:, 1] - asset.data.root_lin_vel_b[:, 1])
+
+
+def track_vx_err_l2(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """(vx_cmd - vx)^2 alone, body frame (study s2, 2026-11-13). With track_vy_err_l2 and track_yaw_err_l2 it SPLITS track_err
+    (track_vel_err_l2 = the sum of the three) into one price per axis -- operator: "isn't this the same problem we had with
+    torso_stability_bonus? When we diverged [it] into two terms it was more fruitful. Shouldn't we do the same with vx, vy and wz".
+    At equal weights w the three terms pay exactly what track_err paid at w."""
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    return torch.square(cmd[:, 0] - asset.data.root_lin_vel_b[:, 0])
+
+
+def track_lin_err_l1(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """|v_xy cmd - v_xy| (the length of the planar velocity error, body frame), study s2 2026-11-13. WHY an absolute-error price:
+    the s1 top trials track above a threshold and STAND below it (vx / vy +-0.05 and +-0.10 measured 0.00). A squared price has slope
+    2 w e, which vanishes exactly there: at e = 0.10 m/s and w = -20 it costs 0.2 /s. This one has the same slope at every error
+    size: at w = -10 the same standing error costs 1.0 /s, comparable with what standing collects from the kernel (2.0-4.7 /s at the
+    s1 floors) and the torso stillness bonus (1.1 /s). Ungated price on the commanded axes."""
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    return torch.linalg.norm(cmd[:, :2] - asset.data.root_lin_vel_b[:, :2], dim=1)
+
+
+def track_yaw_err_l1(
+    env: "ManagerBasedRLEnv",
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """|wz_cmd - wz|, study s2 2026-11-13: track_lin_err_l1's twin for the turn. The s1 top trials do not turn below ~0.3 rad/s
+    (measured 0.00-0.05 at a 0.20-0.30 command); track_yaw's squared price at e = 0.2 and w = -12 is 0.48 /s, this one at w = -10
+    is 2.0 /s."""
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    return torch.abs(cmd[:, 2] - asset.data.root_ang_vel_b[:, 2])
+
+
+def torso_stability_lin_rel(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="torso_link"),
+    std_lin: float = 0.15,
+    command_name: str = "base_velocity",
+    lin_rel: float = 1.0,
+) -> torch.Tensor:
+    """exp(-|v_torso_xy - lin_rel x v_cmd_xy|^2 / std_lin^2): torso_stability_lin with the torso's planar velocity scored RELATIVE to
+    the commanded velocity (study s2, 2026-11-13). The parent's term (rewards.torso_stability_bonus, std_lin .15, std_ang 1e6) scores
+    the ABSOLUTE torso speed -- its command_name only makes the YAW rate relative -- so a perfect 0.10 m/s walk earns exp(-(0.10 /
+    0.15)^2) = 0.64 of the weight 3 and standing earns all of it: 1.1 /s paid for standing under that command. lin_rel = 1 pays a
+    smooth walk at the commanded speed in full and still prices sway and wobble about it (operator: "we don't want to sacrifice torso
+    stillness"); lin_rel = 0 is the parent's term. The command is in the yaw frame, the torso velocity in the world frame: rotate."""
+    asset = env.scene[asset_cfg.name]
+    v_w = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2].squeeze(1)
+    cmd = env.command_manager.get_command(command_name)
+    c_b = torch.cat([cmd[:, :2], torch.zeros_like(cmd[:, :1])], dim=1)
+    c_w = quat_apply(yaw_quat(asset.data.root_quat_w), c_b)[:, :2]
+    return torch.exp(-torch.sum(torch.square(v_w - float(lin_rel) * c_w), dim=1) / (std_lin ** 2))
 
 
 def tracking_std_levels(

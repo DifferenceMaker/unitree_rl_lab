@@ -130,56 +130,91 @@ def study_s1(cfg, track_w=20.0, track_err_w=-2.0, std_floor=0.05, guard_w=0.0, y
 
 # ══ study s2 (2026-11-13) ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
 # Operator 2026-11-13: "First train the winner of the study with the encoders AND then put it as the next study's parent and make a
-# study to find what we did with s1 but now with vy and wz too" / "we shouldn't be too cautious about the hyperparameter limits".
-# s2 = the PARENT's cfg (an lm7p row: study_s1 levers + the encoder band) with
-#   * the band HELD at +-0.010 rad in every trial (no ladder: the parent already walks at the top rung; the exam cannot be allowed to
-#     trade the band away, so it is not a lever),
-#   * three s1 levers that ended ON a bound of the pilot's range, searched again in a wider range: track_w, track_err_w, yaw_err_w,
-#   * std_floor and guard_w FIXED at the parent's values (std_floor had a flat interior optimum, the guard only cost),
-#   * three new levers for the axes s1 could not move (walks_vy >= 0.9 in 2 / 36 trials, walks_wz in 0 / 36):
-#       vy_err_w   + track_vy = mdp.track_vy_err_l2, the lateral L2 price (0 = absent)
-#       spin_prob  the command sampler's share of pure in-place turns (vx = vy = 0, |wz| >= 0.2): cfg default 0
-#       slow_prob  its share of small linear commands, vx / vy redrawn inside +-S2_SLOW_BAND (wz kept): cfg default 0
+# study to find what we did with s1 but now with vy and wz too" / "this is purely hyperparameter hunt for a profitable reward arithmetic
+# for walking at low speeds vs standing" / "We need to be surgical" / "we shouldn't be too cautious about the hyperparameter limits".
+# The s1 top trials track above a threshold and STAND below it (vx, vy +-0.05 / +-0.10; |wz| <= 0.25-0.35 rad/s). s2 = the PARENT's
+# cfg (an lm7p row: study_s1 levers + the encoder band) with
+#   * the band HELD at +-0.010 rad in every trial (no ladder; not a lever),
+#   * std_floor and guard_w FIXED at the parent's values,
+#   * EIGHT levers:
+#       track_w     track_lin_vel_xy weight (s1 ended on its lower bound)
+#       vx_err_w    } track_err (the squared price on the SUM of the vx, vy, wz errors) SPLIT into one price per axis:
+#       vy_err_w    } track_vx / track_vy = mdp.track_vx_err_l2 / track_vy_err_l2, and the yaw part goes into track_yaw
+#       yaw_err_w   track_yaw weight (the existing squared yaw price, now carrying track_err's yaw share too)
+#       lin_l1_w    + track_lin_l1 = mdp.track_lin_err_l1, the absolute-error price on the planar velocity (0 = absent)
+#       yaw_l1_w    + track_yaw_l1 = mdp.track_yaw_err_l1, the absolute-error price on the turn rate (0 = absent)
+#       feet_yaw_w  feet_yaw_bonus weight: it pays feet parallel to the body and fades out only at a 0.5 rad/s turn command, so at
+#                   a 0.2 rad/s command it is 60 % on and pays AGAINST stepping round (the turn deadband ends where it fades out)
+#       torso_rel   torso_stability_lin scored relative to the command: 0 = the parent's absolute torso speed (a perfect 0.10 m/s
+#                   walk forfeits 36 % of the bonus), 1 = only the speed that differs from the command (mdp.torso_stability_lin_rel)
+# At the center (vx_err_w = vy_err_w = the parent's track_err_w, yaw_err_w = the parent's yaw_err_w + its track_err_w, the L1 prices
+# 0, feet_yaw_w 3, torso_rel 0) every step pays exactly what the parent's cfg pays; the terms are split, the totals are not changed.
 # The parent is plugged in by S2_PARENT (its fixed values) + the space file's center (its milestone and lever values).
 from .lm7l_env_cfg import SW_ENC01_JOINTS, gene_enc   # noqa: E402
 
 S2_BAND = 0.010          # rad: p16c_sw_enc01's band = the ladder's top rung, held
-S2_SLOW_BAND = 0.15      # m/s: slow_prob redraws vx / vy inside +-0.15 = the exam's weak zone (the 0.05-0.15 rungs)
-S2_PARENTS = {           # the lm7p rows (aspired-isaac-lab scripts/queue/lm7p): what stays FIXED from each
-    "t21":  dict(std_floor=0.0912, guard_w=0.9392),
-    "t36":  dict(std_floor=0.1147, guard_w=0.0),
-    "t37":  dict(std_floor=0.0794, guard_w=0.0),
-    "best": dict(std_floor=0.0817, guard_w=0.0),
+S2_PARENTS = {           # the lm7p rows (aspired-isaac-lab scripts/queue/lm7p): what stays FIXED from each, and its own s1 levers
+    "t21":  dict(std_floor=0.0912, guard_w=0.9392, track_err_w=-1.5077, yaw_err_w=-12.0),
+    "t36":  dict(std_floor=0.1147, guard_w=0.0,    track_err_w=-0.5,    yaw_err_w=-12.0),
+    "t37":  dict(std_floor=0.0794, guard_w=0.0,    track_err_w=-0.5,    yaw_err_w=-12.0),
+    "best": dict(std_floor=0.0817, guard_w=0.0,    track_err_w=-1.4473, yaw_err_w=-12.0),
 }
 S2_PARENT = "best"       # PLACEHOLDER until the lm7p rows land (operator picks); space_s2.yaml's center must name the same row
 
 
-def gene_vy_err(cfg, vy_err_w: float):
+def gene_err_split(cfg, vx_err_w: float, vy_err_w: float, yaw_err_w: float):
+    """track_err (one weight on vx^2 + vy^2 + wz^2) -> track_vx, track_vy, and its yaw share folded into track_yaw."""
     R = cfg.rewards
-    assert getattr(R, "track_vy", None) is None and vy_err_w < 0, "[s2] no track_vy underneath; a price (negative); 0 = absent"
+    assert R.track_err.func is mdp.track_vel_err_l2 and R.track_yaw.func is mdp.track_yaw_err_l2, "[s2] the parent's track_err + track_yaw underneath"
+    assert getattr(R, "track_vx", None) is None and getattr(R, "track_vy", None) is None, "[s2] no per-axis prices underneath"
+    assert vx_err_w < 0 and vy_err_w < 0 and yaw_err_w < 0, "[s2] prices (negative)"
+    R.track_err = None
+    R.track_vx = RewTerm(func=mdp.track_vx_err_l2, weight=float(vx_err_w), params={"command_name": "base_velocity"})
     R.track_vy = RewTerm(func=mdp.track_vy_err_l2, weight=float(vy_err_w), params={"command_name": "base_velocity"})
+    R.track_yaw.weight = float(yaw_err_w)
 
 
-def gene_cmd_mix(cfg, spin_prob: float, slow_prob: float):
-    """the command sampler's buckets (mdp/commands/velocity_command.py: one draw, exclusive: corner, then slow, then spin)."""
-    c = cfg.commands.base_velocity
-    assert (c.spin_prob or 0.0) == 0.0 and (c.slow_prob or 0.0) == 0.0 and c.spin_min == 0.2, "[s2] the parent samples no spin / slow commands"
-    assert 0.0 <= spin_prob and 0.0 <= slow_prob and (c.corner_prob or 0.0) + spin_prob + slow_prob <= 1.0, "[s2] the buckets fit in one draw"
-    c.spin_prob = float(spin_prob)
-    c.slow_prob = float(slow_prob)
-    if slow_prob > 0.0:
-        c.slow_band = S2_SLOW_BAND
+def gene_l1(cfg, lin_l1_w: float, yaw_l1_w: float):
+    R = cfg.rewards
+    assert getattr(R, "track_lin_l1", None) is None and getattr(R, "track_yaw_l1", None) is None, "[s2] no absolute-error prices underneath"
+    if lin_l1_w < 0:
+        R.track_lin_l1 = RewTerm(func=mdp.track_lin_err_l1, weight=float(lin_l1_w), params={"command_name": "base_velocity"})
+    if yaw_l1_w < 0:
+        R.track_yaw_l1 = RewTerm(func=mdp.track_yaw_err_l1, weight=float(yaw_l1_w), params={"command_name": "base_velocity"})
 
 
-def study_s2(cfg, track_w=10.0, track_err_w=-1.4473, yaw_err_w=-12.0, vy_err_w=0.0, spin_prob=0.0, slow_prob=0.0, parent=None):
-    """the parent's chain (study_s1 at its levers, the fixed ones from S2_PARENTS) + the band held at S2_BAND + the s2 levers. At the
-    space's center (the parent's own track_w / track_err_w / yaw_err_w, the three new levers at 0) the cfg equals the parent
-    milestone's except for the band: a fixed +-0.010 event instead of the ladder that climbed to it."""
-    fixed = S2_PARENTS[parent or S2_PARENT]
-    study_s1(cfg, track_w=track_w, track_err_w=track_err_w, std_floor=fixed["std_floor"], guard_w=fixed["guard_w"], yaw_err_w=yaw_err_w)
+def gene_feet_yaw_w(cfg, feet_yaw_w: float):
+    t = cfg.rewards.feet_yaw_bonus
+    assert t.func is mdp.feet_yaw_bonus_turn_faded and t.weight == 3.0 and t.params["wz_ref"] == 0.5 and feet_yaw_w >= 0, "[s2] the parent's feet_yaw_bonus: turn-faded at 0.5 rad/s, weight 3"
+    t.weight = float(feet_yaw_w)
+
+
+def gene_torso_rel(cfg, torso_rel: float):
+    """torso_stability_lin (torso_stability_bonus, std_lin .15, std_ang 1e6 = the linear half of the split) -> the command-relative
+    twin at the same weight and std; only swapped at torso_rel > 0, so torso_rel 0 leaves the parent's term in place."""
+    t = cfg.rewards.torso_stability_lin
+    assert t.func is mdp.torso_stability_bonus and t.weight == 3.0 and t.params["std_lin"] == 0.15 and t.params["std_ang"] >= 1e5 \
+        and 0.0 < torso_rel <= 1.0, "[s2] the parent's torso_stability_lin = the linear half (std_lin .15) at weight 3"
+    cfg.rewards.torso_stability_lin = RewTerm(func=mdp.torso_stability_lin_rel, weight=t.weight,
+                                              params={"asset_cfg": t.params["asset_cfg"], "std_lin": t.params["std_lin"],
+                                                      "command_name": "base_velocity", "lin_rel": float(torso_rel)})
+
+
+def study_s2(cfg, track_w=10.0, vx_err_w=None, vy_err_w=None, yaw_err_w=None, lin_l1_w=0.0, yaw_l1_w=0.0, feet_yaw_w=3.0, torso_rel=0.0,
+             parent=None):
+    """the parent's chain (study_s1 at its levers) + the band held at S2_BAND + the s2 levers. A lever left at None takes the parent's
+    value (vx_err_w / vy_err_w = its track_err_w; yaw_err_w = its yaw_err_w + its track_err_w = track_err's yaw share folded in)."""
+    P = S2_PARENTS[parent or S2_PARENT]
+    study_s1(cfg, track_w=track_w, track_err_w=P["track_err_w"], std_floor=P["std_floor"], guard_w=P["guard_w"], yaw_err_w=P["yaw_err_w"])
     gene_enc(cfg, S2_BAND, SW_ENC01_JOINTS)
     assert getattr(cfg.curriculum, "enc_ladder", None) is None and cfg.events.encoder_offset.params["offset_range"] == (-S2_BAND, S2_BAND), "[s2] a held band, no ladder"
-    if float(vy_err_w) < 0.0:
-        gene_vy_err(cfg, vy_err_w)
-    if float(spin_prob) > 0.0 or float(slow_prob) > 0.0:
-        gene_cmd_mix(cfg, spin_prob, slow_prob)
+    gene_err_split(cfg,
+                   P["track_err_w"] if vx_err_w is None else vx_err_w,
+                   P["track_err_w"] if vy_err_w is None else vy_err_w,
+                   (P["yaw_err_w"] + P["track_err_w"]) if yaw_err_w is None else yaw_err_w)
+    if float(lin_l1_w) < 0.0 or float(yaw_l1_w) < 0.0:
+        gene_l1(cfg, float(lin_l1_w), float(yaw_l1_w))
+    if abs(float(feet_yaw_w) - 3.0) > 1e-9:
+        gene_feet_yaw_w(cfg, feet_yaw_w)
+    if float(torso_rel) > 0.0:
+        gene_torso_rel(cfg, torso_rel)
