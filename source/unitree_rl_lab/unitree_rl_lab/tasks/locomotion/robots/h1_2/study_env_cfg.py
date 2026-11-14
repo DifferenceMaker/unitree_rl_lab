@@ -285,13 +285,17 @@ def study_s3(cfg, track_w=10.0, vx_err_w=-1.4473, vy_err_w=-1.4473, yaw_err_w=-1
                  still zeroes a quarter of them downstream.                                             OFF = 0.0 (t1)
     corner_frac  the corner bucket's share of the NON-single resamples: corner_prob = corner_frac x (1 - single_prob).
                                                                                                          t1 = 0.25
-    cref_lin     track_lin_vel_xy's command-relative width for moving envs (|cmd| >= 0.03):
+    cref_lin     track_lin_vel_xy's command-relative width, ONLY for a small nonzero own command 0.03 <= |(vx, vy)_cmd| < cref_lin:
                      sigma_eff = sigma x clamp(|(vx, vy)_cmd| / cref_lin, fmin, 1),  sigma = the ladder's current std
                  e.g. sigma 0.0817, cref 0.16, standing under vy 0.05: sigma_eff 0.0255, income exp(-(0.05/0.0255)^2) = 0.022 of the
-                 weight instead of 0.687. The standing branch (std_stand 0.5) is unchanged.             OFF = 0.0 (t1)
-    cref_ang     the same on track_ang_vel_z with |wz_cmd|; standing envs (|cmd| < 0.03) keep sigma.   OFF = 0.0 (t1)
-                 NB both widths narrow to sigma x fmin when the term's OWN command component is 0 while the env moves: a pure
-                 turn prices planar drift at 0.0204 m/s, a straight walk prices yaw-rate wobble at 0.0204 rad/s (fmin 0.25).
+                 weight instead of 0.687. Standing (std_stand 0.5), a pure turn (|(vx, vy)_cmd| < 0.03) and |(vx, vy)_cmd| >= cref
+                 keep the old value bit-for-bit.                                                          OFF = 0.0 (t1)
+    cref_ang     the same on track_ang_vel_z with |wz_cmd| (0.03 <= |wz_cmd| < cref_ang); standing, a straight walk and heading
+                 envs near alignment (|wz_cmd| < 0.03) keep isaaclab's value bit-for-bit.                OFF = 0.0 (t1)
+                 Where the robot stands on the kernel: standing still under fmin cref <= |c| <= cref, e = |c| and
+                 sigma_eff = sigma |c| / cref, so e / sigma_eff = cref / sigma whatever |c| -> income exp(-(cref/sigma)^2): cref 0.16 at
+                 sigma 0.0817 -> 1.96 sigma, 0.022 earned (the kernel's tail, local slope 3x below today's); the kernel is
+                 steepest at cref = 0.71 sigma, earns 37 % at cref = sigma. s3 searches cref in [0, 0.15] for both terms.
     wz_max       wz range +-wz_max (ranges and limit_ranges).                                            t1 = 0.8
     fmin         0.25, fixed (not a lever).
     Ranges (not levers): vx [-0.5, 0.8] (t1 [-0.8, 1.2]), vy [-0.3, 0.3] (t1's).

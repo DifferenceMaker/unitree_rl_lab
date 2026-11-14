@@ -261,10 +261,20 @@ def main():
     a_st_rel = float(new_k.track_ang_vel_z_exp_rel(e, std=0.0817, command_name="base_velocity", cref=0.25))
     a_st_old = float(isaac_ang(e, std=0.0817, command_name="base_velocity"))
     print(f"   ang standing env (cmd 0), yaw rate 0.05: cref 0.25 {a_st_rel:.5f} == isaaclab {a_st_old:.5f} (standing branch unchanged)")
-    e = env_of(torch.tensor([[0.5, 0.0, 0.0]], device=dev), z, torch.tensor([0.05], device=dev), q)
-    a_w = float(new_k.track_ang_vel_z_exp_rel(e, std=0.0817, command_name="base_velocity", cref=0.25))
-    print(f"   ang straight walk vx 0.5 (wz cmd 0), yaw wobble 0.05: cref 0.25 {a_w:.5f} (sigma x fmin 0.0204) vs cref 0 {math.exp(-(0.05 / 0.0817) ** 2):.4f}")
     ok &= _chk(abs(a_st_rel - a_st_old) == 0.0, 261)
+    # (3) straight walk: own wz command 0 < cmd_thr -> isaaclab's value exactly
+    e = env_of(torch.tensor([[0.5, 0.0, 0.0]], device=dev), z, torch.tensor([0.05], device=dev), q)
+    a_w = float(new_k.track_ang_vel_z_exp_rel(e, std=0.0817, command_name="base_velocity", cref=0.12))
+    a_w_old = float(isaac_ang(e, std=0.0817, command_name="base_velocity"))
+    print(f"   ang straight walk cmd (0.5, 0, 0), wz_body 0.05, cref 0.12: {a_w!r} vs old track_ang {a_w_old!r} (exact: {a_w == a_w_old})")
+    ok &= _chk(a_w == a_w_old, 3)
+    # (4) pure turn: own planar command 0 < cmd_thr -> the old split value exactly
+    e = env_of(torch.tensor([[0.0, 0.0, 0.3]], device=dev), torch.tensor([[0.05, 0.0, 0.0]], device=dev), torch.zeros(1, device=dev), q)
+    l_t = float(new_k.track_lin_vel_xy_split(e, std=0.0817, cref=0.12))
+    l_t_old = float(old_k.track_lin_vel_xy_split(e, std=0.0817))
+    print(f"   lin pure turn cmd (0, 0, 0.3), planar vel 0.05, cref 0.12: {l_t!r} vs old track_lin {l_t_old!r} (exact: {l_t == l_t_old}; "
+          f"exp(-(0.05/0.0817)^2) = {math.exp(-(0.05 / 0.0817) ** 2):.4f})")
+    ok &= _chk(l_t == l_t_old, 4)
 
     # cref 0 == old functions on random inputs, max abs diff
     g = torch.Generator(device=dev).manual_seed(3)
@@ -272,6 +282,8 @@ def main():
     cmd = torch.rand(n, 3, device=dev, generator=g) * 2 - 1
     cmd[: n // 4] = 0.0                                   # standing rows
     cmd[n // 4: n // 2] *= 0.05                           # small commands around the gate
+    cmd[n // 2: 5 * n // 8, :2] *= 0.02                   # turns with a near-zero planar command (own lin < cmd_thr)
+    cmd[5 * n // 8: 3 * n // 4, 2] *= 0.02                # walks with a near-zero turn command (own wz < cmd_thr)
     v_w = (torch.rand(n, 3, device=dev, generator=g) * 2 - 1) * 1.5
     wz_b = (torch.rand(n, device=dev, generator=g) * 2 - 1) * 1.5
     quat = torch.nn.functional.normalize(torch.randn(n, 4, device=dev, generator=g), dim=1)
@@ -288,19 +300,26 @@ def main():
         print(f"   cref 0 vs old, {n} random rows, std {std}: lin max|diff| {d_lin} (params absent) / {d_lin_explicit} (cref 0, fmin .25 given); "
               f"ang vs isaaclab track_ang_vel_z_exp {d_ang}; torch.equal {eq}")
         ok &= _chk(d_lin == 0.0 and d_lin_explicit == 0.0 and d_ang == 0.0 and eq, 284)
-    # cref > 0: rows the narrowing does not touch (standing, or the term's command component >= cref) equal the old kernel exactly
+    # cref > 0: only moving rows with a small NONZERO own component (cmd_thr <= own < cref) are narrowed; every other row equals the
+    # old kernel exactly -- in particular (1) own < cmd_thr
     std = 0.0817
-    nl = new_k.track_lin_vel_xy_split(e, std=std, cref=0.16, fmin=0.25)
+    nl = new_k.track_lin_vel_xy_split(e, std=std, cref=0.12, fmin=0.25)
     ol = old_k.track_lin_vel_xy_split(e, std=std)
     mov = torch.linalg.norm(cmd, dim=1) >= 0.03
-    touched_l = mov & (torch.linalg.norm(cmd[:, :2], dim=1) < 0.16)
-    na = new_k.track_ang_vel_z_exp_rel(e, std=std, command_name="base_velocity", cref=0.25, fmin=0.25)
+    own_l, own_a = torch.linalg.norm(cmd[:, :2], dim=1), cmd[:, 2].abs()
+    touched_l = mov & (own_l >= 0.03) & (own_l < 0.12)
+    na = new_k.track_ang_vel_z_exp_rel(e, std=std, command_name="base_velocity", cref=0.12, fmin=0.25)
     oa = isaac_ang(e, std=std, command_name="base_velocity")
-    touched_a = mov & (cmd[:, 2].abs() < 0.25)
+    touched_a = mov & (own_a >= 0.03) & (own_a < 0.12)
+    small_l, small_a = mov & (own_l < 0.03), mov & (own_a < 0.03)
+    dsl, dsa = float((nl - ol)[small_l].abs().max()), float((na - oa)[small_a].abs().max())
+    print(f"   (1) cref 0.12, moving rows with own < cmd_thr: lin max|diff| {dsl} over {int(small_l.sum())} rows, ang max|diff| {dsa} over "
+          f"{int(small_a.sum())} rows")
     dl, da = float((nl - ol)[~touched_l].abs().max()), float((na - oa)[~touched_a].abs().max())
-    print(f"   cref>0 (lin .16, ang .25): untouched rows max|diff| vs old: lin {dl} over {int((~touched_l).sum())} rows, ang {da} over "
+    print(f"   cref 0.12: all untouched rows max|diff| vs old: lin {dl} over {int((~touched_l).sum())} rows, ang {da} over "
           f"{int((~touched_a).sum())} rows; narrowed rows: lin {int(touched_l.sum())} (all <= old: {bool((nl[touched_l] <= ol[touched_l]).all())}), "
           f"ang {int(touched_a.sum())} (all <= old: {bool((na[touched_a] <= oa[touched_a]).all())})")
+    ok &= _chk(dsl == 0.0 and dsa == 0.0 and int(small_l.sum()) > 0 and int(small_a.sum()) > 0, 1)
     ok &= _chk(dl == 0.0 and da == 0.0, 0)
     # composition with the ladder: the width follows the std passed at call time
     widths = [float(new_k.cmd_relative_std(s, torch.tensor(0.05), 0.16, 0.25)) for s in (0.15, 0.1, 0.0817)]
