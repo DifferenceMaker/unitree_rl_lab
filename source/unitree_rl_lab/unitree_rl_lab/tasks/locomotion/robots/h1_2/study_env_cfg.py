@@ -218,3 +218,88 @@ def study_s2(cfg, track_w=10.0, vx_err_w=None, vy_err_w=None, yaw_err_w=None, li
         gene_feet_yaw_w(cfg, feet_yaw_w)
     if float(torso_rel) > 0.0:
         gene_torso_rel(cfg, torso_rel)
+
+
+# ══ study s3 (2026-11-14) ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+# Exam: every trained policy STANDS at small single-axis commands (vy +-0.05 / +-0.10 m/s, wz +-0.10..+-0.30 rad/s) = a learned
+# deadband. Two causes, one lever family each:
+#   (1) the sampler almost never draws a small single-axis command (each axis uniform and independent: (0, 0.05, 0) ~ 0.15 % of draws)
+#   (2) the exp kernel pays standing still most of the income under a small command: exp(-(0.05 / 0.0817)^2) = 0.687 at the ladder's end
+# Parent = t1 = milestone s2_center_s2_2026-11-13 (model_166649) = study_s2 at its centre levers on S2_PARENT "best".
+S3_T1_PARENT = "best"
+S3_T1 = dict(track_w=10.0, vx_err_w=-1.4473, vy_err_w=-1.4473, yaw_err_w=-13.4473, lin_l1_w=0.0, yaw_l1_w=0.0, feet_yaw_w=3.0, torso_rel=0.0)
+S3_PARENT_RANGES = dict(lin_vel_x=(-0.8, 1.2), lin_vel_y=(-0.3, 0.3), ang_vel_z=(-0.8, 0.8))   # t1's ranges == limit_ranges
+S3_VX, S3_VY = (-0.5, 0.8), (-0.3, 0.3)
+S3_SINGLE_MIN = (0.03, 0.03, 0.05)       # vx m/s, vy m/s, wz rad/s
+S3_FMIN = 0.25
+
+
+def gene_cmd_ranges(cfg, wz_max: float):
+    """ranges AND limit_ranges (the curricula lin_vel_cmd_levels / ang_vel_cmd_levels widen ranges up to limit_ranges, so both are
+    set): vx S3_VX, vy S3_VY, wz +-wz_max. Heading range untouched."""
+    c = cfg.commands.base_velocity
+    for R in (c.ranges, c.limit_ranges):
+        for k, v in S3_PARENT_RANGES.items():
+            assert tuple(getattr(R, k)) == v, f"[s3] t1's {k} {v} underneath, got {getattr(R, k)}"
+    assert wz_max > S3_SINGLE_MIN[2], "[s3] wz_max above the single bucket's wz floor"
+    for R in (c.ranges, c.limit_ranges):
+        R.lin_vel_x, R.lin_vel_y, R.ang_vel_z = tuple(S3_VX), tuple(S3_VY), (-float(wz_max), float(wz_max))
+
+
+def gene_single(cfg, single_prob: float, corner_frac: float):
+    """the sampler's single-axis bucket: single_prob of the resamples; the corner bucket keeps corner_frac of the REST, so
+    corner_prob = corner_frac x (1 - single_prob) (corner_frac 0.25, single_prob 0 = t1's corner_prob 0.25)."""
+    c = cfg.commands.base_velocity
+    assert type(c).__name__ == "SlewVelocityCommandCfg" and c.corner_prob == 0.25 and c.slow_prob == 0.0 and c.spin_prob == 0.0 \
+        and c.single_prob == 0.0, "[s3] t1's sampler underneath: slew command, corner 0.25, no slow / spin / single"
+    assert 0.0 <= single_prob < 1.0 and 0.0 <= corner_frac <= 1.0, "[s3] single_prob in [0, 1), corner_frac in [0, 1]"
+    c.single_prob = float(single_prob)
+    c.corner_prob = float(corner_frac) * (1.0 - float(single_prob))
+    c.single_min = tuple(S3_SINGLE_MIN)
+
+
+def gene_kernel_rel(cfg, cref_lin: float, cref_ang: float, fmin: float = S3_FMIN):
+    """the command-relative kernel on both tracking terms: params cref / fmin on track_lin_vel_xy (track_lin_vel_xy_split) and
+    track_ang_vel_z (isaaclab's track_ang_vel_z_exp -> its twin mdp.track_ang_vel_z_exp_rel, the same ops at cref 0). The
+    tracking_std_levels ladder keeps mutating params['std'] of both; the kernels read it at call time."""
+    R = cfg.rewards
+    assert R.track_lin_vel_xy.func is mdp.track_lin_vel_xy_split and "cref" not in R.track_lin_vel_xy.params, "[s3] t1's split kernel"
+    assert R.track_ang_vel_z.func is mdp.track_ang_vel_z_exp and set(R.track_ang_vel_z.params) == {"command_name", "std"}, "[s3] t1's ang kernel"
+    assert cref_lin >= 0.0 and cref_ang >= 0.0 and 0.0 < fmin <= 1.0, "[s3] cref >= 0 (0 = off), fmin in (0, 1]"
+    R.track_lin_vel_xy.params["cref"], R.track_lin_vel_xy.params["fmin"] = float(cref_lin), float(fmin)
+    R.track_ang_vel_z.func = mdp.track_ang_vel_z_exp_rel
+    R.track_ang_vel_z.params["cref"], R.track_ang_vel_z.params["fmin"] = float(cref_ang), float(fmin)
+
+
+def study_s3(cfg, track_w=10.0, vx_err_w=-1.4473, vy_err_w=-1.4473, yaw_err_w=-13.4473, lin_l1_w=0.0, yaw_l1_w=0.0, feet_yaw_w=3.0,
+             torso_rel=0.0, single_prob=0.0, corner_frac=0.25, cref_lin=0.0, cref_ang=0.0, wz_max=0.8):
+    """t1's chain = study_s2 on S2_PARENTS[S3_T1_PARENT] (pinned) with the eight s2 levers passed through (defaults = S3_T1 = t1's
+    centre: all eight at their defaults reproduce t1's cfg) + the s3 command ranges + the s3 levers below. study_s2's lever
+    meanings are in its section above; their "off" values are the defaults (lin_l1_w / yaw_l1_w 0 = absent, feet_yaw_w 3 = the
+    parent's, torso_rel 0 = the parent's absolute torso term).
+
+    single_prob  the sampler's single-axis bucket share (velocity_command.sample_command_buckets): one axis of (vx, vy, wz), the
+                 other two exactly 0, sign 50/50, |c| log-uniform on [single_min[a], range edge]:
+                     |c_a| = exp(ln m_a + u (ln E - ln m_a)),  u ~ U[0, 1),  m = (0.03 m/s, 0.03 m/s, 0.05 rad/s)
+                 so P(0.03 <= |vy| <= 0.10) = ln(0.10/0.03) / ln(0.3/0.03) = 0.52. Non-heading (wz kept); rel_standing_envs 0.25
+                 still zeroes a quarter of them downstream.                                             OFF = 0.0 (t1)
+    corner_frac  the corner bucket's share of the NON-single resamples: corner_prob = corner_frac x (1 - single_prob).
+                                                                                                         t1 = 0.25
+    cref_lin     track_lin_vel_xy's command-relative width for moving envs (|cmd| >= 0.03):
+                     sigma_eff = sigma x clamp(|(vx, vy)_cmd| / cref_lin, fmin, 1),  sigma = the ladder's current std
+                 e.g. sigma 0.0817, cref 0.16, standing under vy 0.05: sigma_eff 0.0255, income exp(-(0.05/0.0255)^2) = 0.022 of the
+                 weight instead of 0.687. The standing branch (std_stand 0.5) is unchanged.             OFF = 0.0 (t1)
+    cref_ang     the same on track_ang_vel_z with |wz_cmd|; standing envs (|cmd| < 0.03) keep sigma.   OFF = 0.0 (t1)
+                 NB both widths narrow to sigma x fmin when the term's OWN command component is 0 while the env moves: a pure
+                 turn prices planar drift at 0.0204 m/s, a straight walk prices yaw-rate wobble at 0.0204 rad/s (fmin 0.25).
+    wz_max       wz range +-wz_max (ranges and limit_ranges).                                            t1 = 0.8
+    fmin         0.25, fixed (not a lever).
+    Ranges (not levers): vx [-0.5, 0.8] (t1 [-0.8, 1.2]), vy [-0.3, 0.3] (t1's).
+    All defaults = t1's reward and sampler exactly (cref 0 and single_prob 0 are bit-identical paths); the env.yaml then differs
+    from t1's only in the ranges, the new sampler fields and the cref / fmin params (+ track_ang_vel_z's func = the cref-capable
+    twin). The s3 levers are plain values: a design that FIXES the draw passes constants."""
+    study_s2(cfg, track_w=track_w, vx_err_w=vx_err_w, vy_err_w=vy_err_w, yaw_err_w=yaw_err_w, lin_l1_w=lin_l1_w, yaw_l1_w=yaw_l1_w,
+             feet_yaw_w=feet_yaw_w, torso_rel=torso_rel, parent=S3_T1_PARENT)
+    gene_cmd_ranges(cfg, wz_max)
+    gene_single(cfg, single_prob, corner_frac)
+    gene_kernel_rel(cfg, cref_lin, cref_ang)
