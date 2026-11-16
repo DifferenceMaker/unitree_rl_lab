@@ -307,3 +307,84 @@ def study_s3(cfg, track_w=10.0, vx_err_w=-1.4473, vy_err_w=-1.4473, yaw_err_w=-1
     gene_cmd_ranges(cfg, wz_max)
     gene_single(cfg, single_prob, corner_frac)
     gene_kernel_rel(cfg, cref_lin, cref_ang)
+
+
+# ══ study s4_body_care (2026-11-16) ═════════════════════════════════════════════════════════════════════════════════════════════════
+# Operator 2026-11-16: theme "body care", "no worse than the parent and feasible"; studies are named s<N>_<word>. s3 ended on t57
+# (milestone s3_t57_2026-11-15 @169648): Exam #3 rev 3 63.5 with stability 21.7/30 and tracking 13.5/20 strong, gait & body care
+# 3.2/10 and homing 3.5/10 weak, arm self-contact 16.4 s = the worst of 53. s4 = t57's cfg (study_s3 at the values its job file
+# passed) + NINE reward-WEIGHT levers. No new term and no formula change: every lever is the weight of a term t57 already carries.
+S4_PARENT_MILESTONE, S4_PARENT_IT = "s3_t57_2026-11-15", 169648
+S4_T57 = dict(vy_err_w=-0.01, yaw_err_w=-30.7727, yaw_l1_w=-15.0, feet_yaw_w=2.4509, torso_rel=0.9136, cref_lin=0.1005, cref_ang=0.0857,
+              single_prob=0.35, corner_frac=0.23, wz_max=0.6, lin_l1_w=0.0, vx_err_w=-1.4473)   # s3_t57.job's edit_raw, to the digit
+S4_PRICES = {            # lever -> (reward term, t57's weight = the lever's default)
+    "arm_dev_w":     ("joint_deviation_arms",      -6.0),
+    "arm_motion_w":  ("arm_motion_walking",        -0.25),
+    "force_cap_w":   ("feet_force_cap",            -0.01),
+    "action_rate_w": ("action_rate",               -0.6),
+    "joint_acc_w":   ("joint_acc",                 -1e-6),
+    "step_price_w":  ("feet_step_price",           -1.0),
+    "spawn_hold_w":  ("base_pos_xy_l2_from_spawn", -0.75),
+    "contact_w":     ("undesired_contacts",        -0.75),
+}
+
+
+def gene_price_w(cfg, lever: str, weight: float):
+    """one s4 lever = the WEIGHT of a price term t57 already has (S4_PRICES). Loud on a term the cfg does not carry (a silently
+    absent term = a dead lever), on a term that is not at t57's weight underneath (then the chain is not t57's) and on a weight
+    that is not negative (these are prices; 0 would drop the term)."""
+    term, w57 = S4_PRICES[lever]
+    t = getattr(cfg.rewards, term, None)
+    assert t is not None, f"[s4] rewards.{term} is missing from the cfg: {lever} would be a dead lever"
+    assert t.weight == w57, f"[s4] t57's {term} = {w57} underneath, got {t.weight}"
+    assert float(weight) < 0.0, f"[s4] {lever} is a price (negative), got {weight}"
+    t.weight = float(weight)
+
+
+def study_s4(cfg, track_w=15.0, arm_dev_w=-6.0, arm_motion_w=-0.25, force_cap_w=-0.01, action_rate_w=-0.6, joint_acc_w=-1e-6,
+             step_price_w=-1.0, spawn_hold_w=-0.75, contact_w=-0.75):
+    """t57's chain = study_s3 at S4_T57 (study_s3 pins S3_T1_PARENT itself, so s4 is s3's cfg at t57's point and only the warmstart
+    checkpoint differs) + the nine weight levers below. All defaults = t57's weights, so all defaults reproduce t57's env exactly
+    (the centre replica's env.yaml == the milestone's). "pays" = t57's final Episode_Reward per second (the time-mean of weight x
+    term); "grip" = Spearman rho over 28 s3 trials between the term's training income and the exam metric (a grip below ~0.4 =
+    training does not see what the exam measures: the lever is EXPLORATORY).
+
+    track_w        track_lin_vel_xy.weight: w x exp(-|v_cmd - v|^2 / sigma_eff^2) (the s3 split kernel, cref_lin 0.1005).
+                   pays +7.30 /s at 15. Measured by track_vx and arm_sway: in s3 a stronger weight went with BOTH (rho +0.88
+                   track_vx, +0.84 arm_sway), so this lever trades arm sway against vx tracking.           t57 = 15.0
+    arm_dev_w      joint_deviation_arms: w x sum_j |q_j - q_j_default| over the 14 arm joints (shoulder x3, elbow x2, wrist x2).
+                   pays -4.21 /s at -6 = 0.70 rad of summed deviation. Measured by arm_dev_mean (grip -0.72; also sc_dur, the
+                   arm self-contact time).                                                                  t57 = -6.0
+    arm_motion_w   arm_motion_walking: w x sum_j qd_j^2 over the 8 upper-arm joints while |cmd| > 0.05.
+                   pays -1.58 /s at -0.25 = 6.3 rad^2/s^2. Measured by arm_sway (grip -0.72).               t57 = -0.25
+    force_cap_w    feet_force_cap: w x sum over the two feet of max(|F| - 1000 N, 0). Body weight 77.27 kg x 9.81 = 758 N, so
+                   the 1000 N threshold = 1.32 BW (unchanged). pays -0.39 /s at -0.01 = 39 N of mean excess. Measured by
+                   impact (grip -0.45).                                                                     t57 = -0.01
+    action_rate_w  action_rate: w x sum over the 27 actions of (a_t - a_{t-1})^2. pays -11.01 /s at -0.6, of which ~90 % is
+                   exploration noise: 2 sigma^2 N |w| = 2 x 0.55^2 x 27 x 0.6 = 9.8. EXPLORATORY (no grip: -0.13 vs smooth);
+                   measured by smooth / enc_smooth.                                                         t57 = -0.6
+    joint_acc_w    joint_acc: w x sum_j qdd_j^2 over the 13 leg + torso joints. pays -0.21 /s at -1e-6 = 2.1e5 rad^2/s^4.
+                   EXPLORATORY; measured by smooth / enc_smooth.                                            t57 = -1e-6
+    step_price_w   feet_step_price: w x 0.4 per touchdown under a zero command (feet_step_price_standing). pays -0.0024 /s at
+                   -1 = one touchdown per 167 s. EXPLORATORY (no grip: -0.05 vs the stand lifts -- the after-walk lifts exist
+                   in the MuJoCo exam, not in Isaac); measured by stand_quiet (lifts).                      t57 = -1.0
+    spawn_hold_w   base_pos_xy_l2_from_spawn: w x |p_xy - p_anchor|^2 under a zero command (base_pos_xy_hold_standing; the
+                   anchor is re-captured at every stop). pays -0.14 /s at -0.75. EXPLORATORY (no grip: -0.15 vs wstand_drift);
+                   measured by wstand_drift.                                                                t57 = -0.75
+    contact_w      undesired_contacts: w x the number of torso / hip / knee links with a contact force > 1 N (the arms and
+                   hands are not in the body set). pays -0.0029 /s at -0.75. EXPLORATORY (no grip: -0.21 vs sc_dur); measured
+                   by sc_dur (the study's recorded constraint arm_contact).                                 t57 = -0.75
+
+    Bible pre-flight (weights only, so gates and kernels are t57's): the income shift a warmstart sees at a range's costly end,
+    at unchanged behaviour, is pays x (w / w_t57 - 1): arm_motion_w -1.0 -> -4.74 /s, force_cap_w -0.12 -> -4.32, arm_dev_w -12
+    -> -4.21, action_rate_w -0.8 -> -3.67 (-0.3 -> +5.5), track_w 9 -> -2.92, joint_acc_w -1e-5 -> -1.89, spawn_hold_w -4 ->
+    -0.61, the other two below 0.02. Every lever at its costly end at once = -22.4 /s against t57's net +23.13 /s: the ranges
+    are sized so that this corner still nets a positive reward at the parent's behaviour (operator 2026-11-16; the budget is in
+    space_s4_body_care.yaml's header). It is still a level shift the critic meets at iteration 0 = the detonation watch (critic
+    spike + rising std -> FAIL); the procedure's 300-iteration critic warm-up is what absorbs it."""
+    assert float(track_w) > 0.0, f"[s4] track_w is an income weight (positive), got {track_w}"
+    study_s3(cfg, track_w=track_w, **S4_T57)
+    assert cfg.rewards.feet_force_cap.params["threshold"] == 1000.0, "[s4] t57's feet_force_cap threshold 1000 N underneath"
+    for lever, w in (("arm_dev_w", arm_dev_w), ("arm_motion_w", arm_motion_w), ("force_cap_w", force_cap_w), ("action_rate_w", action_rate_w),
+                     ("joint_acc_w", joint_acc_w), ("step_price_w", step_price_w), ("spawn_hold_w", spawn_hold_w), ("contact_w", contact_w)):
+        gene_price_w(cfg, lever, w)
