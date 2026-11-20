@@ -20,9 +20,11 @@ Levers (centre = the parent; "pays" = the parent's final Episode_Reward per seco
   flat_orient_w    flat_orientation_l2 = |g_xy|^2 of the pelvis' projected gravity, ungated (-0.013)            parent -4.5
   torso_roll_w     torso_roll_walk = torso roll rate^2 while |cmd| >= 0.03 (lm7j, -0.498)                        parent -15.0
   torso_angvel_w   torso_ang_vel = torso |omega|^2 while STANDING (body_ang_vel_l2_standing, -0.112)             parent -2.0
-  torso_pitch_w    NEW torso_pitch = mdp.torso_pitch_bonus exp(-(theta / sigma)^2), INCOME, ungated            parent 0 (absent)
+  torso_pitch_w    NEW torso_pitch = mdp.torso_pitch_bonus exp(-|theta| / 3 deg) (laplace), INCOME, ungated      parent 0 (absent)
   arm_adduct_w     NEW arm_adduct = mdp.arm_adduct_hinge sum_{L,R} max(0, q_in - q_safe), HINGE, ungated        parent 0 (absent)
-  arm_side_sway_w  NEW arm_side_sway = mdp.arm_side_sway_walking sum roll + yaw qd^2 while |cmd| > 0.05         parent 0 (absent)
+  arm_side_sway_w  NEW arm_side_sway = mdp.arm_side_sway_walking (roll + yaw qd^2 walking): NOT a lever of the space (operator
+                   2026-11-20 ~18:40 "Won't this be overengineering the problem?" -- arm_motion_walking already prices every upper-arm
+                   axis); the gene keeps it at 0 = absent                                                     parent 0 (absent)
   arm_dev_w        joint_deviation_arms = sum |q - q_default| over the 14 arm DOFs, ungated (study_s4's lever, -4.91)   parent -8.5399
   arm_motion_w     arm_motion_walking = sum qd^2 over the 8 upper-arm DOFs while |cmd| > 0.05 (study_s4's, -3.00)  parent -0.8474
   (operator 2026-11-20 ~18:25: "I would much rather have frozen arms" -- frozen > front-back pitch swing > sideways, never inward: the
@@ -52,12 +54,16 @@ S5_PARENT_WEIGHTS = {      # lever -> (reward term, the parent's weight = the le
 }
 # torso_pitch's kernel width (Rule 31): sized from the parent's measured torso pitch in Isaac -- see the s5 HYPOTHESIS (aspired-isaac-lab
 # scripts/queue/s5/HYPOTHESIS.md) for the distribution, the earned fraction and the slope table.
-# Rule 31 (2026-11-20, aspired-isaac-lab scripts/queue/s5/probe_s5.py, 2048 envs x 2400 steps = 4.9 M env-steps per rollout kind): the
-# parent's torso pitch in Isaac is walking +1.35 +- 2.73 deg, standing -0.07 +- 2.34 (the mean action); the training rollouts (its own
-# per-action std) +1.31 +- 2.92 / +0.22 +- 2.43. The ungated kernel at sigma 1.15 deg earns 0.370 (mean action) / 0.367 (training)
-# of its ceiling = Rule 31's ~37 % (walking 0.33, standing 0.50).
+# Shape + width (2026-11-20, aspired-isaac-lab scripts/queue/s5/probe_s5.py --hist_out, 2048 envs x 2400 steps = 4.9 M env-steps per kind;
+# the parent's pitch: walking +1.35 +- 2.73 deg, standing -0.07 +- 2.34, mean |theta| 1.94 (the mean action; training rollouts 2.02)):
+#   gauss   sigma 1.16 earns 37 % (Rule 31) but its slope is 0 at upright and 0.7 % / 0 / 0 of its peak at 3 / 5 / 8 deg;
+#   laplace sigma 1.19 earns 37 %, slope 100 / 19 / 8 / 1.5 / 0.1 % of its peak at 0 / 2 / 3 / 5 / 8 deg;
+#   laplace sigma 3.0  earns 61 % (det 0.609, train 0.603), slope 100 / 51 / 37 / 19 / 6.9 % at 0 / 2 / 3 / 5 / 8 deg.
+# Chosen: laplace sigma 3.0. The Laplace slope at the parent's typical |theta| (~2 deg) is (1/sigma) exp(-2/sigma): best at sigma 2
+# (0.184 /deg), only 7 % lower at sigma 3 (0.171), so the gradient stays where the robot lives (Rule 31's intent) while the 5-8 deg start
+# lean the operator held keeps a pull (0.063 / 0.023 /deg per unit weight; the Gaussian at 1.16: 0). The higher earned share is the price.
 TORSO_PITCH_SHAPE = "laplace"    # operator 2026-11-20 ~18:25: "doesn't necessarily have to be a kernel. It can be what works the best"
-TORSO_PITCH_SIGMA_DEG = 1.15
+TORSO_PITCH_SIGMA_DEG = 3.0
 TORSO_PITCH_THETA0_DEG = 0.0     # the kernel's centre (upright); the knob for the Isaac (+1.4 walking) vs MuJoCo (-1.6) pitch gap, not moved
 TORSO_PITCH_CMD_THR = 0.03       # the proof line's walking / standing split only (the reward is ungated)
 # arm_adduct's thresholds (rad, measured INWARD = toward the torso; MEASURED 2026-11-20 in the exam's MuJoCo model, scripts
