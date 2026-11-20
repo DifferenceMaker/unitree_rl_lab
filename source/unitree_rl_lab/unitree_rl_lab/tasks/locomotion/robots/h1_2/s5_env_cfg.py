@@ -64,7 +64,11 @@ S5_PARENT_WEIGHTS = {      # lever -> (reward term, the parent's weight = the le
 # lean the operator held keeps a pull (0.063 / 0.023 /deg per unit weight; the Gaussian at 1.16: 0). The higher earned share is the price.
 TORSO_PITCH_SHAPE = "laplace"    # operator 2026-11-20 ~18:25: "doesn't necessarily have to be a kernel. It can be what works the best"
 TORSO_PITCH_SIGMA_DEG = 3.0
-TORSO_PITCH_THETA0_DEG = 0.0     # the kernel's centre (upright); the knob for the Isaac (+1.4 walking) vs MuJoCo (-1.6) pitch gap, not moved
+TORSO_PITCH_THETA0_DEG = 1.35    # the kernel's centre = the PARENT's own Isaac walking pitch (det +1.35 deg nose-down), not 0: the parent walks
+                                 # +1.35 in Isaac but -1.60 in the exam's MuJoCo and -2.1 on the robot (back), so a centre at 0 would pull Isaac
+                                 # back by ~1.4 deg and could deepen the robot's back-lean (HYPOTHESIS flag F1). Centred on the parent the term
+                                 # leaves the walking mean where it is and pays for a smaller pitch SPREAD (the operator's fore-aft "anti-sway",
+                                 # 2026-11-20), and pulls the standing pitch (-0.07 in Isaac; the robot leans back after stops) ~1.4 deg forward.
 TORSO_PITCH_CMD_THR = 0.03       # the proof line's walking / standing split only (the reward is ungated)
 # arm_adduct's thresholds (rad, measured INWARD = toward the torso; MEASURED 2026-11-20 in the exam's MuJoCo model, scripts
 # mj_shoulder_torso_onset.py / mesh_vs_hull_onset.py): the shoulder_roll_link convex hull touches the torso mesh at 0.102-0.108 rad inward
