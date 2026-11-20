@@ -7,13 +7,17 @@ torso's volume, >= 116 mm from shoulder_roll_link over the whole joint grid), so
 parent's env bit for bit.
 
   torso_pitch_bonus      INCOME, an attractor (RL Bible Law 2 corollary: name the wanted state as a bounded positive kernel instead of
-                         taxing the unwanted one):  r = exp(-((theta - theta0) / sigma)^2) in [0, 1], theta0 = 0 (upright) in s5,
+                         taxing the unwanted one), e = theta - theta0 (theta0 = 0 = upright in s5), r in [0, 1]:
+                           shape "laplace" (s5's choice, operator 2026-11-20 ~18:25: "doesn't necessarily have to be a kernel. It can be
+                           what works the best"): r = exp(-|e| / sigma) -- slope 1/sigma at the centre (it pulls right AT upright) and
+                           (1/sigma) exp(-|e|/sigma) beyond, never flat where the robot leans 5-8 deg at a start (Rule 31's
+                           linear-exponent kernel: widening by k turns an earned Y into Y^(1/k));
+                           shape "gauss": r = exp(-(e / sigma)^2) -- flat at the centre AND beyond ~2.5 sigma (the flaw the operator named),
                          theta = torso_link pitch about the body y axis from the torso's projected gravity g_b = R^T (0, 0, -1):
                          theta = asin(g_x) = the ZYX-Euler pitch an IMU reports (R = Rz Ry Rx gives g_x = sin(pitch) whatever the
                          roll), POSITIVE = nose down (forward lean), negative = the back-lean the robot shows (the H1-2's IMU sits on
                          the torso: imu_link is merged into torso_link). UNGATED on purpose: the starts and stops
                          are where the robot leans back. sigma is sized from the parent's measured pitch (Rule 31, ~37 % earned).
-                         Slope d r / d theta = -2 theta / sigma^2 exp(-(theta / sigma)^2): steepest at |theta| = sigma / sqrt(2).
   arm_adduct_hinge       HINGE PRICE (Law 2: a well-behaved robot pays ~0; Rule 33: judge it by where the angle SETTLES, not by its
                          income):  r = sum_{L,R} max(0, q_in - q_safe_side),  q_in = the shoulder roll angle measured INWARD (toward
                          the torso): left q_in = -q (limit [-0.38, 3.4], inward is negative), right q_in = +q (limit [-3.4, 0.38]).
@@ -46,7 +50,9 @@ if TYPE_CHECKING:
 __all__ = ["torso_pitch", "torso_pitch_bonus", "shoulder_roll_inward", "arm_adduct_hinge", "arm_side_sway_walking", "S5_SIDE_JOINTS"]
 
 PROOF_FAST, PROOF_FAST_N, PROOF_EVERY = 240, 10, 2400            # env steps (24 per PPO iteration)
-SIGMA_PROBE_DEG = (1.0, 1.15, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0)        # the earned fraction E[exp(-(theta/s)^2)] the proof prints per candidate
+SIGMA_PROBE_DEG = (1.0, 1.15, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0)        # the earned fraction E[exp(-(e/s)^2)] the proof prints per candidate
+LAPLACE_PROBE_DEG = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0)                 # ... and E[exp(-|e|/s)]
+PITCH_SHAPES = ("laplace", "gauss")
 PITCH_BINS = (-20.0, 20.0, 0.25)                                  # deg: histogram for the percentiles (lo, hi, bin width)
 QIN_BINS = (-1.5, 0.5, 0.01)                                      # rad
 ROLL_JOINTS = ("left_shoulder_roll_joint", "right_shoulder_roll_joint")
@@ -109,25 +115,30 @@ def _pct(h: torch.Tensor, bins: tuple, qs=(0.05, 0.5, 0.95)) -> list:
 
 
 # ── torso_pitch_bonus ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-def torso_pitch_bonus(env: "ManagerBasedRLEnv", sigma: float, theta0: float = 0.0,
+def torso_pitch_bonus(env: "ManagerBasedRLEnv", sigma: float, theta0: float = 0.0, shape: str = "laplace",
                       asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="torso_link"), command_name: str = "base_velocity",
                       cmd_thr: float = 0.03) -> torch.Tensor:
-    """exp(-((theta - theta0) / sigma)^2) with theta = torso_link pitch (rad, see torso_pitch), UNGATED. POSITIVE weight (an income,
-    ceiling 1/step). theta0 = the kernel's centre (rad; 0 = upright; s5 2026-11-20 keeps 0 -- Isaac's parent walks +1.4 deg nose down
-    where the exam's MuJoCo shows -1.6, so a centre offset is the knob for that sim2sim gap). command_name / cmd_thr only split the proof
-    line into walking (|cmd| >= cmd_thr) and standing; they do not gate the reward."""
+    """e = theta - theta0 with theta = torso_link pitch (rad, see torso_pitch); shape "laplace": exp(-|e| / sigma), "gauss":
+    exp(-(e / sigma)^2). UNGATED. POSITIVE weight (an income, ceiling 1/step). theta0 = the centre (rad; 0 = upright; s5 keeps 0 --
+    Isaac's parent walks +1.4 deg nose down where the exam's MuJoCo shows -1.6, so a centre offset is the knob for that sim2sim gap).
+    command_name / cmd_thr only split the proof line into walking (|cmd| >= cmd_thr) and standing; they do not gate the reward."""
+    assert shape in PITCH_SHAPES, f"[s5] torso_pitch_bonus shape {shape!r} not in {PITCH_SHAPES}"
     th = torso_pitch(env, asset_cfg)
-    r = torch.nan_to_num(torch.exp(-torch.square((th - float(theta0)) / float(sigma))), nan=0.0)
-    _torso_pitch_proof(env, th, r, float(sigma), command_name, cmd_thr, float(theta0))
+    e = (th - float(theta0)) / float(sigma)
+    k = torch.exp(-torch.abs(e)) if shape == "laplace" else torch.exp(-torch.square(e))
+    r = torch.nan_to_num(k, nan=0.0)
+    _torso_pitch_proof(env, th, r, float(sigma), command_name, cmd_thr, float(theta0), shape)
     return r
 
 
-def _torso_pitch_proof(env, th, r, sigma, command_name, cmd_thr, theta0=0.0):
+def _torso_pitch_proof(env, th, r, sigma, command_name, cmd_thr, theta0=0.0, shape="laplace"):
     st = _proof_state(env, "torso_pitch")
     walk = _cmd_norm(env, command_name) >= cmd_thr
     deg = torch.rad2deg(torch.nan_to_num(th, nan=0.0)).to(torch.float64)
     r64 = r.to(torch.float64)
-    sig = torch.exp(-torch.square((deg - math.degrees(theta0)).unsqueeze(1) / torch.tensor(SIGMA_PROBE_DEG, dtype=torch.float64, device=deg.device)))
+    ed = (deg - math.degrees(theta0)).unsqueeze(1)
+    sig = torch.exp(-torch.square(ed / torch.tensor(SIGMA_PROBE_DEG, dtype=torch.float64, device=deg.device)))
+    lap = torch.exp(-torch.abs(ed) / torch.tensor(LAPLACE_PROBE_DEG, dtype=torch.float64, device=deg.device))
     for tag, m in (("walk", walk), ("stand", ~walk)):
         w = m.to(torch.float64)
         _acc(st, f"{tag}_n", w.sum())
@@ -136,6 +147,8 @@ def _torso_pitch_proof(env, th, r, sigma, command_name, cmd_thr, theta0=0.0):
         _acc(st, f"{tag}_r", (r64 * w).sum())
         _acc(st, f"{tag}_h", _hist(deg, PITCH_BINS, w))
         _acc(st, f"{tag}_sig", (sig * w.unsqueeze(1)).sum(dim=0))
+        _acc(st, f"{tag}_lap", (lap * w.unsqueeze(1)).sum(dim=0))
+        _acc(st, f"{tag}_abs", (ed.squeeze(1).abs() * w).sum())
     if not _proof_due(st, int(env.common_step_counter)):
         return
     a, parts = st["acc"], []
@@ -147,10 +160,11 @@ def _torso_pitch_proof(env, th, r, sigma, command_name, cmd_thr, theta0=0.0):
         mu = float(a[f"{tag}_s1"]) / n
         sd = math.sqrt(max(float(a[f"{tag}_s2"]) / n - mu * mu, 0.0))
         p5, p50, p95 = _pct(a[f"{tag}_h"], PITCH_BINS)
-        fr = (a[f"{tag}_sig"] / n).tolist()
-        parts.append(f"{tag} n {int(n)}: pitch mean {mu:+.2f} sd {sd:.2f} p5/50/95 {p5:+.1f}/{p50:+.1f}/{p95:+.1f} deg, earned "
-                     f"{float(a[f'{tag}_r']) / n:.3f} at sigma {math.degrees(sigma):.2f} deg; at sigma "
-                     + " ".join(f"{s:g}:{f:.2f}" for s, f in zip(SIGMA_PROBE_DEG, fr)))
+        fr, fl = (a[f"{tag}_sig"] / n).tolist(), (a[f"{tag}_lap"] / n).tolist()
+        parts.append(f"{tag} n {int(n)}: pitch mean {mu:+.2f} sd {sd:.2f} |e| {float(a[f'{tag}_abs']) / n:.2f} p5/50/95 {p5:+.1f}/{p50:+.1f}/{p95:+.1f} deg, "
+                     f"earned {float(a[f'{tag}_r']) / n:.3f} ({shape}, sigma {math.degrees(sigma):.2f} deg); gauss "
+                     + " ".join(f"{s:g}:{f:.2f}" for s, f in zip(SIGMA_PROBE_DEG, fr)) + "; laplace "
+                     + " ".join(f"{s:g}:{f:.2f}" for s, f in zip(LAPLACE_PROBE_DEG, fl)))
     print(f"[s5] torso_pitch (+ = nose down) window to tick {int(env.common_step_counter)}: " + " | ".join(parts), flush=True)
     st["acc"] = {}
 

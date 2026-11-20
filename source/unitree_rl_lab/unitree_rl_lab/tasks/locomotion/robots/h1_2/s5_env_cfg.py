@@ -23,9 +23,12 @@ Levers (centre = the parent; "pays" = the parent's final Episode_Reward per seco
   torso_pitch_w    NEW torso_pitch = mdp.torso_pitch_bonus exp(-(theta / sigma)^2), INCOME, ungated            parent 0 (absent)
   arm_adduct_w     NEW arm_adduct = mdp.arm_adduct_hinge sum_{L,R} max(0, q_in - q_safe), HINGE, ungated        parent 0 (absent)
   arm_side_sway_w  NEW arm_side_sway = mdp.arm_side_sway_walking sum roll + yaw qd^2 while |cmd| > 0.05         parent 0 (absent)
-Everything else FIXED at the parent's values: t28's nine weights (arm_motion_walking -0.8474 and joint_deviation_arms -8.5399 among
-them, so a roll / yaw arm motion only gets dearer than a shoulder-pitch swing), the pushes (push_velocity / sustained_push curricula,
-resumed at the top 1.5 m/s / 50 N by --resume_curriculum), the band +-0.015.
+  arm_dev_w        joint_deviation_arms = sum |q - q_default| over the 14 arm DOFs, ungated (study_s4's lever, -4.91)   parent -8.5399
+  arm_motion_w     arm_motion_walking = sum qd^2 over the 8 upper-arm DOFs while |cmd| > 0.05 (study_s4's, -3.00)  parent -0.8474
+  (operator 2026-11-20 ~18:25: "I would much rather have frozen arms" -- frozen > front-back pitch swing > sideways, never inward: the
+  two s4 arm prices (grip -0.72 each in s3 / s4) join as levers; arm_side_sway keeps the sideways premium on top of arm_motion_walking.)
+Everything else FIXED at the parent's values: t28's other six s4 weights, the pushes (push_velocity / sustained_push curricula, resumed
+at the top 1.5 m/s / 50 N by --resume_curriculum), the band +-0.015.
 """
 import math
 import os
@@ -49,9 +52,11 @@ S5_PARENT_WEIGHTS = {      # lever -> (reward term, the parent's weight = the le
 }
 # torso_pitch's kernel width (Rule 31): sized from the parent's measured torso pitch in Isaac -- see the s5 HYPOTHESIS (aspired-isaac-lab
 # scripts/queue/s5/HYPOTHESIS.md) for the distribution, the earned fraction and the slope table.
-# Rule 31 (2026-11-20, probe_s5 + the training-rollout proof, 4.4-4.9 M env-steps each): the parent's torso pitch in Isaac is walking
-# +1.36 +- 2.74 deg, standing -0.04 +- 2.34 deg (deterministic; the stochastic training rollouts +1.33 +- 2.80 / +0.24 +- 2.27), and
-# the ungated kernel earns 0.330 at sigma 1.0 deg, 0.457 at 1.5 -> 37 % at sigma 1.15 deg (both rollout kinds agree to 0.01).
+# Rule 31 (2026-11-20, aspired-isaac-lab scripts/queue/s5/probe_s5.py, 2048 envs x 2400 steps = 4.9 M env-steps per rollout kind): the
+# parent's torso pitch in Isaac is walking +1.35 +- 2.73 deg, standing -0.07 +- 2.34 (the mean action); the training rollouts (its own
+# per-action std) +1.31 +- 2.92 / +0.22 +- 2.43. The ungated kernel at sigma 1.15 deg earns 0.370 (mean action) / 0.367 (training)
+# of its ceiling = Rule 31's ~37 % (walking 0.33, standing 0.50).
+TORSO_PITCH_SHAPE = "laplace"    # operator 2026-11-20 ~18:25: "doesn't necessarily have to be a kernel. It can be what works the best"
 TORSO_PITCH_SIGMA_DEG = 1.15
 TORSO_PITCH_THETA0_DEG = 0.0     # the kernel's centre (upright); the knob for the Isaac (+1.4 walking) vs MuJoCo (-1.6) pitch gap, not moved
 TORSO_PITCH_CMD_THR = 0.03       # the proof line's walking / standing split only (the reward is ungated)
@@ -91,12 +96,12 @@ def gene_parent_weight(cfg, lever: str, weight: float):
     t.weight = float(weight)
 
 
-def gene_torso_pitch(cfg, weight: float, sigma_deg: float = TORSO_PITCH_SIGMA_DEG):
+def gene_torso_pitch(cfg, weight: float, sigma_deg: float = TORSO_PITCH_SIGMA_DEG, shape: str = TORSO_PITCH_SHAPE):
     """+ rewards.torso_pitch = mdp.torso_pitch_bonus at `weight` (> 0, an income), sigma in rad in the cfg"""
     assert getattr(cfg.rewards, "torso_pitch", None) is None, "[s5] no torso_pitch term underneath"
     assert float(weight) > 0.0 and float(sigma_deg) > 0.0, f"[s5] torso_pitch is an income (w > 0), got w {weight}, sigma {sigma_deg} deg"
     cfg.rewards.torso_pitch = RewTerm(func=mdp.torso_pitch_bonus, weight=float(weight),
-                                      params={"sigma": math.radians(float(sigma_deg)), "theta0": math.radians(TORSO_PITCH_THETA0_DEG),
+                                      params={"sigma": math.radians(float(sigma_deg)), "theta0": math.radians(TORSO_PITCH_THETA0_DEG), "shape": shape,
                                               "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
                                               "command_name": "base_velocity", "cmd_thr": TORSO_PITCH_CMD_THR})
 
@@ -119,8 +124,8 @@ def gene_arm_adduct(cfg, weight: float, q_safe: dict = None):
 def gene_arm_side_sway(cfg, weight: float):
     """+ rewards.arm_side_sway = mdp.arm_side_sway_walking at `weight` (< 0) on both shoulder roll + yaw, gated like arm_motion_walking"""
     am = cfg.rewards.arm_motion_walking
-    assert am.func is mdp.arm_motion_walking and am.weight == S4_T28["arm_motion_w"] and am.params["cmd_thr"] == ARM_SIDE_SWAY_CMD_THR, \
-        "[s5] the parent's arm_motion_walking (t28's -0.8474, |cmd| > 0.05) underneath: the side price sits ON TOP of it"
+    assert am.func is mdp.arm_motion_walking and am.weight < 0 and am.params["cmd_thr"] == ARM_SIDE_SWAY_CMD_THR, \
+        "[s5] arm_motion_walking (a live price, |cmd| > 0.05) underneath: the side price sits ON TOP of it"
     assert getattr(cfg.rewards, "arm_side_sway", None) is None, "[s5] no arm_side_sway term underneath"
     assert float(weight) < 0.0, f"[s5] arm_side_sway is a price (negative), got {weight}"
     cfg.rewards.arm_side_sway = RewTerm(func=mdp.arm_side_sway_walking, weight=float(weight),
@@ -129,11 +134,12 @@ def gene_arm_side_sway(cfg, weight: float):
 
 
 def study_s5(cfg, track_w=10.5824, base_angvel_w=-0.3, flat_orient_w=-4.5, torso_roll_w=-15.0, torso_angvel_w=-2.0,
-             torso_pitch_w=0.0, arm_adduct_w=0.0, arm_side_sway_w=0.0):
-    """the parent's chain (study_s4 at t28's nine weights, track_w passed through) + the band held at +-0.015 + the s5 levers. All
+             torso_pitch_w=0.0, arm_adduct_w=0.0, arm_side_sway_w=0.0, arm_dev_w=-8.5399, arm_motion_w=-0.8474):
+    """the parent's chain (study_s4 at t28's nine weights; track_w, arm_dev_w and arm_motion_w passed through = study_s4's own levers,
+    whose genes assert t57's weights underneath and that the value is a price) + the band held at +-0.015 + the s5 levers. All
     defaults = the parent: the centre's env.yaml == the milestone's apart from the band (see the module docstring). A new term's lever
     at 0 = the term absent; its sign is checked by its gene (torso_pitch_w > 0 income, arm_adduct_w / arm_side_sway_w < 0 prices)."""
-    study_s4(cfg, **{**S4_T28, "track_w": float(track_w)})
+    study_s4(cfg, **{**S4_T28, "track_w": float(track_w), "arm_dev_w": float(arm_dev_w), "arm_motion_w": float(arm_motion_w)})
     gene_band_hold(cfg, S5_BAND)
     for lever, w in (("base_angvel_w", base_angvel_w), ("flat_orient_w", flat_orient_w), ("torso_roll_w", torso_roll_w),
                      ("torso_angvel_w", torso_angvel_w)):

@@ -127,21 +127,32 @@ def main():
     print("torso_pitch_bonus: exp(-(theta/sigma)^2), ungated, bounded")
     sig = d(3.0)
     with redirect_stdout(io.StringIO()):
-        r = s5.torso_pitch_bonus(env, sigma=sig, asset_cfg=torso).cpu()
+        r = s5.torso_pitch_bonus(env, sigma=sig, shape="gauss", asset_cfg=torso).cpu()
     k = torch.exp(-torch.square(torch.tensor(want) / 3.0))
     check(torch.allclose(r, k, atol=1e-5), f"kernel {r.tolist()} == exp(-(theta/3deg)^2)")
     check(abs(float(r[4]) - 1.0) < 1e-6 and float(r.min()) >= 0.0 and float(r.max()) <= 1.0, "ceiling 1.0 upright, in [0, 1]")
     with redirect_stdout(io.StringIO()):
-        r0 = s5.torso_pitch_bonus(env, sigma=sig, theta0=d(-8.0), asset_cfg=torso).cpu()
+        rl = s5.torso_pitch_bonus(env, sigma=sig, shape="laplace", asset_cfg=torso).cpu()
+    kl = torch.exp(-torch.tensor(want).abs() / 3.0)
+    check(torch.allclose(rl, kl, atol=1e-5), f"laplace {[round(x, 4) for x in rl.tolist()]} == exp(-|theta|/3deg)")
+    check(float(rl[1]) > 0.06 and float(k[1]) < 0.001, f"at the -8 deg start lean the laplace kernel still pays {float(rl[1]):.3f} (gauss {float(k[1]):.5f})")
+    try:
+        with redirect_stdout(io.StringIO()):
+            s5.torso_pitch_bonus(env, sigma=sig, shape="tent", asset_cfg=torso)
+        check(False, "an unknown shape is refused")
+    except AssertionError:
+        check(True, "an unknown shape is refused")
+    with redirect_stdout(io.StringIO()):
+        r0 = s5.torso_pitch_bonus(env, sigma=sig, theta0=d(-8.0), shape="gauss", asset_cfg=torso).cpu()
     check(abs(float(r0[1]) - 1.0) < 1e-5 and abs(float(r0[4]) - math.exp(-(8 / 3) ** 2)) < 1e-5, "theta0 moves the kernel's centre (theta0 -8 deg: row 1 pays 1.0)")
     cmd[:] = 0.0
     cmd[0, 0] = 0.5
     with redirect_stdout(io.StringIO()):
-        r2 = s5.torso_pitch_bonus(env, sigma=sig, asset_cfg=torso).cpu()
+        r2 = s5.torso_pitch_bonus(env, sigma=sig, shape="gauss", asset_cfg=torso).cpu()
     check(torch.equal(r, r2), "the command does not change the reward (ungated: starts and stops are where the robot leans)")
     robot.data.body_quat_w[0, 1] = torch.tensor([float("nan")] * 4, device=dev)
     with redirect_stdout(io.StringIO()):
-        r3 = s5.torso_pitch_bonus(env, sigma=sig, asset_cfg=torso).cpu()
+        r3 = s5.torso_pitch_bonus(env, sigma=sig, shape="gauss", asset_cfg=torso).cpu()
     check(bool(torch.isfinite(r3).all()) and float(r3[0]) == 0.0, "a NaN quaternion pays 0, not NaN (Bible rule 14)")
 
     print("arm_adduct_hinge: sum_{L,R} max(0, q_in - q_safe), q_in by side")
@@ -189,13 +200,13 @@ def main():
     with redirect_stdout(buf):
         for t in range(2 * s5.PROOF_FAST + 1):
             env.common_step_counter = 1000 + t
-            s5.torso_pitch_bonus(env, sigma=d(3.0), asset_cfg=torso)
+            s5.torso_pitch_bonus(env, sigma=d(3.0), shape="gauss", asset_cfg=torso)
             s5.arm_adduct_hinge(env, q_safe_left=0.2, q_safe_right=0.2, asset_cfg=cfg)
             s5.arm_side_sway_walking(env, side)
         cmd[:] = 0.0
         for t in range(s5.PROOF_FAST + 1):
             env.common_step_counter = 2000 + t
-            s5.torso_pitch_bonus(env, sigma=d(3.0), asset_cfg=torso)
+            s5.torso_pitch_bonus(env, sigma=d(3.0), shape="gauss", asset_cfg=torso)
             s5.arm_adduct_hinge(env, q_safe_left=0.2, q_safe_right=0.2, asset_cfg=cfg)
             s5.arm_side_sway_walking(env, side)
     lines = [ln for ln in buf.getvalue().splitlines() if ln.startswith("[s5]") and "window" in ln]
