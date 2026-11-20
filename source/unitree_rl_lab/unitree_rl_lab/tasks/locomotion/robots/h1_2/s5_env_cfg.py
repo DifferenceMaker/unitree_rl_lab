@@ -14,21 +14,21 @@ So the CENTRE's env.yaml differs from the parent milestone's in exactly two plac
     curriculum.enc_ladder                       present (rungs 0.010 / 0.012 / 0.015) -> absent
 A NEW term at weight 0 is not added at all (bit-identical: the centre is the parent's env).
 
-Levers (centre = the parent; "pays" = the parent's final Episode_Reward per second, lm7r_encup_t28w.log @178146):
-  track_w          track_lin_vel_xy weight (study_s4's own lever; pays +4.99 /s)                                parent 10.5824
-  base_angvel_w    base_angular_velocity = ang_vel_xy_l2 on the pelvis (roll + pitch rate^2), ungated (-0.033)   parent -0.3
-  flat_orient_w    flat_orientation_l2 = |g_xy|^2 of the pelvis' projected gravity, ungated (-0.013)            parent -4.5
-  torso_roll_w     torso_roll_walk = torso roll rate^2 while |cmd| >= 0.03 (lm7j, -0.498)                        parent -15.0
-  torso_angvel_w   torso_ang_vel = torso |omega|^2 while STANDING (body_ang_vel_l2_standing, -0.112)             parent -2.0
-  torso_pitch_w    NEW torso_pitch = mdp.torso_pitch_bonus exp(-|theta| / 3 deg) (laplace), INCOME, ungated      parent 0 (absent)
-  arm_adduct_w     NEW arm_adduct = mdp.arm_adduct_hinge sum_{L,R} max(0, q_in - q_safe), HINGE, ungated        parent 0 (absent)
-  arm_side_sway_w  NEW arm_side_sway = mdp.arm_side_sway_walking (roll + yaw qd^2 walking): NOT a lever of the space (operator
-                   2026-11-20 ~18:40 "Won't this be overengineering the problem?" -- arm_motion_walking already prices every upper-arm
-                   axis); the gene keeps it at 0 = absent                                                     parent 0 (absent)
-  arm_dev_w        joint_deviation_arms = sum |q - q_default| over the 14 arm DOFs, ungated (study_s4's lever, -4.91)   parent -8.5399
-  arm_motion_w     arm_motion_walking = sum qd^2 over the 8 upper-arm DOFs while |cmd| > 0.05 (study_s4's, -3.00)  parent -0.8474
+Levers = <reward term>_w (operator 2026-11-20 ~18:45: "I like it when the levers are as close to the terms as possible"); centre = the
+parent; "pays" = the parent's Episode_Reward per second, mean of its last 100 iterations (lm7r_encup_t28w.log):
+  track_lin_vel_xy_w       track_lin_vel_xy (study_s4's track_w), pays +4.76 /s                                   parent 10.5824
+  base_angular_velocity_w  ang_vel_xy_l2 on the pelvis (roll + pitch rate^2), ungated, -0.033                    parent -0.3
+  flat_orientation_l2_w    |g_xy|^2 of the pelvis' projected gravity, ungated, -0.014                            parent -4.5
+  torso_roll_walk_w        torso roll rate^2 while |cmd| >= 0.03 (lm7j), -0.504                                   parent -15.0
+  torso_ang_vel_w          torso |omega|^2 while STANDING (body_ang_vel_l2_standing), -0.103                      parent -2.0
+  torso_pitch_w            NEW mdp.torso_pitch_bonus exp(-|theta| / 3 deg) (laplace), INCOME, ungated             parent 0 (absent)
+  arm_adduct_w             NEW mdp.arm_adduct_hinge sum_{L,R} max(0, q_in - 0.06 rad), HINGE, ungated             parent 0 (absent)
+  joint_deviation_arms_w   sum |q - q_default| over the 14 arm DOFs, ungated (study_s4's arm_dev_w), -4.91         parent -8.5399
+  arm_motion_walking_w     sum qd^2 over the 8 upper-arm DOFs while |cmd| > 0.05 (study_s4's arm_motion_w), -3.00  parent -0.8474
   (operator 2026-11-20 ~18:25: "I would much rather have frozen arms" -- frozen > front-back pitch swing > sideways, never inward: the
-  two s4 arm prices (grip -0.72 each in s3 / s4) join as levers; arm_side_sway keeps the sideways premium on top of arm_motion_walking.)
+  two s4 arm prices, grip -0.72 each in s3 / s4, join as levers.)
+  arm_side_sway_w          mdp.arm_side_sway_walking (roll + yaw qd^2 walking) is NOT a lever (operator ~18:40 "Won't this be
+                           overengineering the problem?" -- arm_motion_walking already prices every upper-arm axis); kept at 0 = absent.
 Everything else FIXED at the parent's values: t28's other six s4 weights, the pushes (push_velocity / sustained_push curricula, resumed
 at the top 1.5 m/s / 50 N by --resume_curriculum), the band +-0.015.
 """
@@ -47,10 +47,10 @@ from .study_env_cfg import study_s4, S2_BAND
 S5_PARENT_MILESTONE, S5_PARENT_IT = "lm7r_encup_t28w_2026-11-20", 178146
 S5_BAND = 0.015            # rad on the 13 leg + torso joints: the parent's final rung, held (operator: no ladder in s5)
 S5_PARENT_WEIGHTS = {      # lever -> (reward term, the parent's weight = the lever's default); all four exist in the parent's env.yaml
-    "base_angvel_w":  ("base_angular_velocity", -0.3),
-    "flat_orient_w":  ("flat_orientation_l2",   -4.5),
-    "torso_roll_w":   ("torso_roll_walk",       -15.0),
-    "torso_angvel_w": ("torso_ang_vel",         -2.0),
+    "base_angular_velocity_w": ("base_angular_velocity", -0.3),
+    "flat_orientation_l2_w":   ("flat_orientation_l2",   -4.5),
+    "torso_roll_walk_w":       ("torso_roll_walk",       -15.0),
+    "torso_ang_vel_w":         ("torso_ang_vel",         -2.0),
 }
 # torso_pitch's kernel width (Rule 31): sized from the parent's measured torso pitch in Isaac -- see the s5 HYPOTHESIS (aspired-isaac-lab
 # scripts/queue/s5/HYPOTHESIS.md) for the distribution, the earned fraction and the slope table.
@@ -139,16 +139,19 @@ def gene_arm_side_sway(cfg, weight: float):
                                                 "command_name": "base_velocity", "cmd_thr": ARM_SIDE_SWAY_CMD_THR})
 
 
-def study_s5(cfg, track_w=10.5824, base_angvel_w=-0.3, flat_orient_w=-4.5, torso_roll_w=-15.0, torso_angvel_w=-2.0,
-             torso_pitch_w=0.0, arm_adduct_w=0.0, arm_side_sway_w=0.0, arm_dev_w=-8.5399, arm_motion_w=-0.8474):
-    """the parent's chain (study_s4 at t28's nine weights; track_w, arm_dev_w and arm_motion_w passed through = study_s4's own levers,
-    whose genes assert t57's weights underneath and that the value is a price) + the band held at +-0.015 + the s5 levers. All
-    defaults = the parent: the centre's env.yaml == the milestone's apart from the band (see the module docstring). A new term's lever
-    at 0 = the term absent; its sign is checked by its gene (torso_pitch_w > 0 income, arm_adduct_w / arm_side_sway_w < 0 prices)."""
-    study_s4(cfg, **{**S4_T28, "track_w": float(track_w), "arm_dev_w": float(arm_dev_w), "arm_motion_w": float(arm_motion_w)})
+def study_s5(cfg, track_lin_vel_xy_w=10.5824, base_angular_velocity_w=-0.3, flat_orientation_l2_w=-4.5, torso_roll_walk_w=-15.0,
+             torso_ang_vel_w=-2.0, torso_pitch_w=0.0, arm_adduct_w=0.0, joint_deviation_arms_w=-8.5399, arm_motion_walking_w=-0.8474,
+             arm_side_sway_w=0.0):
+    """the parent's chain (study_s4 at t28's nine weights; track_lin_vel_xy_w / joint_deviation_arms_w / arm_motion_walking_w passed
+    through as study_s4's own track_w / arm_dev_w / arm_motion_w, whose genes assert t57's weights underneath and that the value has the
+    right sign) + the band held at +-0.015 + the s5 levers. All defaults = the parent: the centre's env.yaml == the milestone's apart from
+    the band (see the module docstring). A new term's lever at 0 = the term absent; its sign is checked by its gene (torso_pitch_w > 0
+    income, arm_adduct_w < 0 price). arm_side_sway_w is not a lever of the s5 space (0 = absent)."""
+    study_s4(cfg, **{**S4_T28, "track_w": float(track_lin_vel_xy_w), "arm_dev_w": float(joint_deviation_arms_w),
+                     "arm_motion_w": float(arm_motion_walking_w)})
     gene_band_hold(cfg, S5_BAND)
-    for lever, w in (("base_angvel_w", base_angvel_w), ("flat_orient_w", flat_orient_w), ("torso_roll_w", torso_roll_w),
-                     ("torso_angvel_w", torso_angvel_w)):
+    for lever, w in (("base_angular_velocity_w", base_angular_velocity_w), ("flat_orientation_l2_w", flat_orientation_l2_w),
+                     ("torso_roll_walk_w", torso_roll_walk_w), ("torso_ang_vel_w", torso_ang_vel_w)):
         gene_parent_weight(cfg, lever, w)
     if float(torso_pitch_w) != 0.0:
         gene_torso_pitch(cfg, torso_pitch_w)
