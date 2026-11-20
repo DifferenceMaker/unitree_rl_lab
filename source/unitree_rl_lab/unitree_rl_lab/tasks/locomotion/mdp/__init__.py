@@ -21,3 +21,4 @@ from .lm7i import *  # noqa: F401, F403
 from .lm7j import *  # noqa: F401, F403
 from .lm7l import *  # noqa: F401, F403
 from .lm7m import *  # noqa: F401, F403
+from .s5 import *  # noqa: F401, F403
